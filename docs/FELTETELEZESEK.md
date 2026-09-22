@@ -52,3 +52,51 @@
 A fejlesztő konténer proxyja blokkolja a külső API-kat (typesafe.ai, telegram, RPC-k). Ezért az élő Jev-hívás
 és a Telegram-üzenet tesztje a Mac Minin fut: `npm run verify:step1`. A DB-séma, a config, a kérdés-definíciók és a
 kulcs-kitakarás automatikus tesztekkel ellenőrizve (`npm test`).
+
+---
+
+# 2. lépés – tokenfigyelés (kiegészítés)
+
+## Tulajdonosi döntések (2026-09-22)
+- Jev kulcs: van. Robinhood Chainen **PONS** a launchpad (nem hood.fun). MEV-védett fizetős RPC nem kell.
+
+## Ellenőrzött címek és mechanika
+- **PONS v2 (Robinhood Chain)** – három egymástól független forrás egyezik (docs.ponsfamily.com/v2#contracts
+  keresőkivonat, Bitquery PONS-doksi, pons-sdk 0.1.4 és ponscli 0.1.1 npm csomagok):
+  factory `0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e` (TokenLaunched), helper/launch router `0xe33e…2948`,
+  meme hook `0xe5e7…e044`, Uniswap v4 PoolManager `0x8366a39cc670b4001a1121b8f6a443a643e40951`.
+  Mechanika: bonding curve (`buy`/`sell` a curve szerződésen, `quoteReserve`/`tokenReserve` olvasható),
+  graduáció Uniswap v4 poolba, likviditás véglegesen lockolva a hookban.
+  **Snipe-adó**: az első 5 másodpercben 99%-ról exponenciálisan nullára csökken (1 mp: ~25%, 2 mp: ~3%).
+  A mi 30–180 mp-es ablakunkat nem érinti, de vétel előtt `currentSnipeTaxBps(wallet)`-et mindig kiolvassuk,
+  és a `feeBps + creatorTaxBps` az effektív adó (kemény szűrő: eladási adó > 5% → kiesik).
+- **Clanker v4 (Base)** – clanker-sdk 4.2.19 (hivatalos): factory `0xE85A59c628F7d27878ACeB4bf3b35733630083a9`,
+  TokenCreated esemény (16 mező: token, admin, név, ticker, poolId, pairedToken, hook, locker, mevModule…).
+  Uniswap v4 pool hookkal; a locker a likviditást zárja. Ugyanez a factory Robinhood Chainen is él
+  (`0xD3f2cC1731b7Fd17f28798835C2E02f0a1839A94`), ezért ott is figyeljük.
+- **Uniswap-indítások**: Base v2 factory `0x8909…8eC6`, v3 factory `0x3312…FDfD`, v4 PoolManager `0x4985…b2b`
+  (BaseScan verified + Uniswap docs). Csak ETH/WETH-páros új pool számít tokennek. Robinhood Chainen csak a v4
+  PoolManagert figyeljük (a natív ETH a v4-ben a 0x0 cím, így WETH-cím nélkül is működik); a Robinhood WETH és
+  v2/v3 factory címeket hivatalos forrásból még nem erősítettem meg → később.
+- Launchpad-token graduációja Uniswapra **nem** új token: csak a pool-cím frissül.
+
+## RPC-kérdés (2.) – mi a lényeges különbség
+- A bot **másodpercenként kérdezi le a láncot** (új blokkok + események), két láncon, a nap 24 órájában.
+  Ez naponta nagyságrendileg 50–60 ezer RPC-hívás (Base 3 mp-enként, Robinhood 3 mp-enként, forrásonként egy
+  `eth_getLogs`).
+- **Publikus RPC** (mainnet.base.org, rpc.mainnet.chain.robinhood.com): ingyenes, de kérés/mp limit van, a
+  túllépést csendben elutasítja (429), és nincs garancia. Tokenfigyelésre menni fog, de a végrehajtásnál (5. lépés)
+  egy elutasított kérés = elcsúszott vétel/eladás. Ezért **a végrehajtás külön, megbízhatóbb RPC-n** kell fusson.
+- **Alchemy free**: havi 30M compute unit, 25 kérés/mp, minden hálózat (Base + Robinhood Chain is támogatott).
+  Egy `eth_getLogs` 75 CU, egy `eth_blockNumber` 10 CU. A mostani beállítás ≈ 40–60M CU/hó, tehát **a free
+  keret önmagában kevés** a folyamatos figyeléshez, pláne ha a másik projekted is ugyanazt a keretet fogyasztja
+  (a CU-keret fiókonként közös, nem appnként).
+- **Javaslat**: figyelés publikus RPC-n (ingyen, ha kiesik, csak késünk), végrehajtás + eladás-szimuláció
+  Alchemy-n (kevés hívás, de fontos, hogy átmenjen). Ehhez az `.env`-ben külön `*_PRIVATE_TX_RPC_URL` már van;
+  a következő lépésben átnevezem `*_EXEC_RPC_URL`-re. Ha a másik projekted keveset fogyaszt, a meglévő free
+  kulcs elég; különben új ingyenes Alchemy-fiók egy másik e-mailről.
+
+## Verify (a Mac Minin)
+1. `npm run verify:step2` → minden címen van kód, és az elmúlt ~1 órában jöttek események (PONS, Clanker, Uniswap).
+2. `npm start` → ~1 óra múlva `/status` Telegramon vagy újra `verify:step2`: a `tokens` táblában mindkét lánc
+   tokenjei szerepelnek launchpadonként bontva.
