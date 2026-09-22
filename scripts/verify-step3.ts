@@ -18,7 +18,7 @@ const [chainArg, addrArg] = process.argv.slice(2);
 const row = (chainArg && addrArg
   ? db.prepare("SELECT * FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(chainArg, addrArg)
   : chainArg
-    ? db.prepare("SELECT * FROM tokens WHERE launchpad = ? AND discovered_at < ? ORDER BY id DESC LIMIT 1").get(chainArg, Date.now() - 180_000)
+    ? db.prepare("SELECT * FROM tokens WHERE launchpad = ? AND discovered_at BETWEEN ? AND ? ORDER BY id DESC LIMIT 1").get(chainArg, Date.now() - 30 * 60_000, Date.now() - 180_000)
     : db.prepare("SELECT * FROM tokens ORDER BY id DESC LIMIT 1").get()) as TokenRow | undefined;
 if (!row) { console.log("❌ nincs ilyen token a DB-ben (előbb fusson a bot, vagy adj meg láncot és címet)"); process.exit(1); }
 console.log(`Token: ${row.chain}/${row.launchpad} ${row.symbol ?? "?"} ${row.address} (felfedezve ${new Date(row.discovered_at).toISOString()})`);
@@ -28,6 +28,7 @@ const snap = await collector.collect(row, cfg.evaluation.live_window_sec);
 console.log(JSON.stringify(snap, null, 1));
 const u = countUnknown(snap);
 console.log(`\n✅ ${u.total - u.unknown}/${u.total} mező kitöltve, ${u.unknown} unknown (${Date.now() - t0} ms): ${u.unknownKeys.join(", ")}`);
+if (collector.lastPoolError) console.log(`ℹ️ pool/curve lekérés hibája: ${collector.lastPoolError}`);
 if (snap.holders.fresh_wallet_ratio_top20 === "unknown" && collector.lastTxCountError) console.log(`ℹ️ tx-szám lekérés hibája (${row.chain} RPC): ${collector.lastTxCountError}`);
 collector.saveSnapshot(row, snap, cfg.db.max_snapshot_bytes);
 const saved = db.prepare("SELECT length(params_json) len FROM snapshots WHERE token_id = ? AND window_sec = ?").get(row.id, cfg.evaluation.live_window_sec) as { len: number };

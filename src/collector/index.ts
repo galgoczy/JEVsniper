@@ -18,6 +18,19 @@ export interface TokenRow {
 }
 
 const num = (v: bigint, dec = 18) => Number(formatUnits(v, dec));
+
+/** getLogs darabolva (a publikus RPC-k nagy blokktartományt elutasítanak); max. `maxSpan` blokkot néz vissza. */
+const CHUNK = 2000n;
+const MAX_SPAN = 20_000n;
+async function getLogsChunked<T>(from: bigint, to: bigint, fetch: (f: bigint, t: bigint) => Promise<T[]>): Promise<T[]> {
+  const start = to - from > MAX_SPAN ? to - MAX_SPAN : from;
+  const out: T[] = [];
+  for (let f = start; f <= to; f += CHUNK + 1n) {
+    const t = f + CHUNK > to ? to : f + CHUNK;
+    out.push(...await fetch(f, t));
+  }
+  return out;
+}
 const unk = "unknown" as const;
 
 /** ETH/USD Chainlinkről (Base), 60 mp cache. Robinhood Chainen is ezt használjuk (ETH = ETH). */
@@ -43,6 +56,7 @@ export class EthPrice {
 export class Collector {
   /** Utolsó tx-szám lekérési hiba (diagnosztika a verify-hez). */
   public lastTxCountError: string | null = null;
+  public lastPoolError: string | null = null;
   private codeCache = new Map<string, boolean>();
   constructor(private db: DB, private clients: Record<ChainKey, PublicClient>, private ethPrice: EthPrice) {}
 
@@ -73,6 +87,7 @@ export class Collector {
 
     // --- pool / curve állapot + swapok
     const ps = await this.poolState(t, c, pool, poolId, pair, decimals, fromBlock, head).catch((e) => {
+      this.lastPoolError = (e as Error).message.slice(0, 300);
       log.debug("poolState hiba", { token: t.address, error: (e as Error).message }); return null;
     });
 
@@ -222,7 +237,7 @@ export class Collector {
   }
 
   private async transfers(c: PublicClient, token: Address, from: bigint, to: bigint, _dec: number): Promise<TransferRec[]> {
-    const logs = await c.getLogs({ address: token, event: transferEventAbi[0], fromBlock: from, toBlock: to });
+    const logs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: token, event: transferEventAbi[0], fromBlock: f, toBlock: t }));
     return logs.map((l) => ({ from: l.args.from!, to: l.args.to!, value: l.args.value!, block: l.blockNumber! }));
   }
 
@@ -268,7 +283,7 @@ export class Collector {
       out.graduated = grad === true;
       out.sellSimulation = typeof q === "bigint" && q > 0n && grad === false ? "ok" : grad === true ? "not_supported" : "failed";
       const curveEvents = ponsCurveAbi.filter((x) => x.type === "event");
-      const rawLogs = await c.getLogs({ address: pool, events: curveEvents, fromBlock: from, toBlock: to });
+      const rawLogs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, events: curveEvents, fromBlock: f, toBlock: t }) as Promise<unknown[]>);
       const logs = rawLogs as unknown as Array<{ eventName: string; args: Record<string, bigint | string>; blockNumber: bigint }>;
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber)));
       for (const l of logs) {
@@ -282,7 +297,8 @@ export class Collector {
     }
 
     if ((t.mechanics === "v4" || t.mechanics === "v4_hook") && poolId && A.uniswapV4PoolManager) {
-      const logs = await c.getLogs({ address: A.uniswapV4PoolManager, event: uniswapV4SwapAbi[0], args: { id: poolId }, fromBlock: from, toBlock: to });
+      const pm = A.uniswapV4PoolManager;
+      const logs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pm, event: uniswapV4SwapAbi[0], args: { id: poolId }, fromBlock: f, toBlock: t }));
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber!)));
       for (const l of logs) {
         const a0 = l.args.amount0!, a1 = l.args.amount1!;
@@ -309,7 +325,7 @@ export class Collector {
         out.liquidityNative = num(rq);
         if (rt > 0n) out.priceNative = Number(rq) / Number(rt) * 10 ** (dec - 18);
       }
-      const logs = await c.getLogs({ address: pool, event: uniswapV2PairAbi[0], fromBlock: from, toBlock: to });
+      const logs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, event: uniswapV2PairAbi[0], fromBlock: f, toBlock: t }));
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber!)));
       for (const l of logs) {
         const tokOut = isT0 ? l.args.amount0Out! : l.args.amount1Out!, tokIn = isT0 ? l.args.amount0In! : l.args.amount1In!;
@@ -331,7 +347,7 @@ export class Collector {
       ]);
       const isT0 = t0 ? isAddressEqual(t0, t.address) : tokenIsC0;
       if (slot) out.priceNative = priceFromSqrtX96(slot[0], isT0, dec);
-      const logs = await c.getLogs({ address: pool, event: uniswapV3PoolAbi[0], fromBlock: from, toBlock: to });
+      const logs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, event: uniswapV3PoolAbi[0], fromBlock: f, toBlock: t }));
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber!)));
       for (const l of logs) {
         const tokenAmt = isT0 ? l.args.amount0! : l.args.amount1!, quoteAmt = isT0 ? l.args.amount1! : l.args.amount0!;
