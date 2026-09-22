@@ -79,8 +79,11 @@ export class PonsCurveRoute implements Route {
   async buildSell(tokensIn: bigint, minOut: bigint, recipient: Address, _deadline: number, owner: Address): Promise<TxRequest[]> {
     const txs: TxRequest[] = [];
     const allowance = await this.client.readContract({ address: this.token, abi: erc20WriteAbi, functionName: "allowance", args: [owner, this.curve] });
-    if (allowance < tokensIn) txs.push({ to: this.token, value: 0n, label: "approve(curve)",
-      data: encodeFunctionData({ abi: erc20WriteAbi, functionName: "approve", args: [this.curve, tokensIn] }) });
+    if (allowance < tokensIn) {
+      const balance = await this.client.readContract({ address: this.token, abi: erc20WriteAbi, functionName: "balanceOf", args: [owner] });
+      txs.push({ to: this.token, value: 0n, label: "approve(curve)",
+        data: encodeFunctionData({ abi: erc20WriteAbi, functionName: "approve", args: [this.curve, balance > tokensIn ? balance : tokensIn] }) });
+    }
     txs.push({ to: this.curve, value: 0n, label: "sell(curve)",
       data: encodeFunctionData({ abi: ponsCurveAbi, functionName: "sell", args: [tokensIn, minOut, recipient] }) });
     return txs;
@@ -139,15 +142,19 @@ export class UniswapV4Route implements Route {
   async buildSell(tokensIn: bigint, minOut: bigint, recipient: Address, deadlineSec: number, owner: Address): Promise<TxRequest[]> {
     const txs: TxRequest[] = [];
     const permit2 = this.A.permit2!, router = this.A.universalRouter!;
-    const [erc20Allowance, p2] = await Promise.all([
+    const [erc20Allowance, p2, balance] = await Promise.all([
       this.client.readContract({ address: this.token, abi: erc20WriteAbi, functionName: "allowance", args: [owner, permit2] }),
       this.client.readContract({ address: permit2, abi: permit2Abi, functionName: "allowance", args: [owner, this.token, router] }),
+      this.client.readContract({ address: this.token, abi: erc20WriteAbi, functionName: "balanceOf", args: [owner] }),
     ]);
+    // Approve a teljes tartott mennyiségre (= a szükséges: ennyit fogunk lépcsőkben eladni), 7 napra (moon bag limit),
+    // hogy pozíciónként egyszer kelljen, ne eladásonként (2 tx ≈ 0,013 USD megtakarítás eladásonként).
+    const approveAmt = balance > tokensIn ? balance : tokensIn;
     if (erc20Allowance < tokensIn) txs.push({ to: this.token, value: 0n, label: "approve(permit2)",
-      data: encodeFunctionData({ abi: erc20WriteAbi, functionName: "approve", args: [permit2, tokensIn] }) });
+      data: encodeFunctionData({ abi: erc20WriteAbi, functionName: "approve", args: [permit2, approveAmt] }) });
     const now = Math.floor(Date.now() / 1000);
     if (p2[0] < tokensIn || p2[1] < now + 60) txs.push({ to: permit2, value: 0n, label: "permit2.approve(router)",
-      data: encodeFunctionData({ abi: permit2Abi, functionName: "approve", args: [this.token, router, tokensIn, now + 30 * 60] }) });
+      data: encodeFunctionData({ abi: permit2Abi, functionName: "approve", args: [this.token, router, approveAmt, now + 7 * 24 * 3600] }) });
     const data = encodeV4SwapCalldata({ poolKey: this.poolKey, zeroForOne: this.tokenIsC0, amountIn: tokensIn, minOut, inputCurrency: this.token, outputCurrency: ZERO, recipient,
       deadline: BigInt(now + deadlineSec) });
     txs.push({ to: router, data, value: 0n, label: "sell(v4 UR)" });

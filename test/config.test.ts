@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { loadConfig, ConfigSchema } from "../src/config.js";
 import { openDb, ensureCompoundState, ensureDailyState } from "../src/db/index.js";
 import { scoreTo100, entryQuestions } from "../src/jev/questions.js";
-import { redact } from "../src/env.js";
+import { redact, registerSecrets } from "../src/env.js";
 import { parseCommand } from "../src/telegram.js";
 
 test("config.yaml valid és a kockázati limitek a specifikáció szerintiek", () => {
@@ -39,9 +39,12 @@ test("Jev score → 0–100 skálázás és 12 belépési kérdés", () => {
   assert.equal(Object.keys(entryQuestions).length, 12);
 });
 
-test("kulcsok kitakarása a logban", () => {
+test("kulcsok kitakarása a logban, tx-hash nem", () => {
   const key = "0x" + "a".repeat(64);
+  registerSecrets([key]);
   assert.ok(!redact(`key=${key}`).includes(key));
+  const hash = "0x" + "b".repeat(64);
+  assert.ok(redact(`hash=${hash}`).includes(hash));
   assert.ok(!redact("123456789:AAHfakefakefakefakefakefakefakefake").includes("AAHfake"));
 });
 

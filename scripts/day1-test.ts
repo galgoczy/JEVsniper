@@ -23,10 +23,10 @@ const ethPrice = new EthPrice(clients.base);
 const [a1, a2, a3] = process.argv.slice(2);
 
 if (a1 === "pick" || !a1) {
-  // Javaslat: az utolsó 1–6 órában felfedezett, szűrőn átment tokenek, a legtöbb vétellel; PONS előnyben (curve), Base-en Clanker/v4 PoolKey-vel.
+  // Javaslat: az utolsó 24 órában (min. 20 perce) felfedezett, szűrőn átment tokenek, a legtöbb vétellel; PONS előnyben (curve), Base-en Clanker/v4 PoolKey-vel.
   const rows = db.prepare(`SELECT t.chain, t.launchpad, t.symbol, t.address, t.graduated_at, t.pool_key_json, s.params_json FROM tokens t JOIN snapshots s ON s.token_id = t.id
-    WHERE s.window_sec = ? AND t.status != 'filtered' AND t.discovered_at BETWEEN ? AND ? ORDER BY s.id DESC LIMIT 2000`)
-    .all(cfg.evaluation.live_window_sec, Date.now() - 6 * 3600_000, Date.now() - 3600_000) as { chain: string; launchpad: string; symbol: string | null; address: string; graduated_at: number | null; pool_key_json: string | null; params_json: string }[];
+    WHERE s.window_sec = ? AND t.status != 'filtered' AND t.discovered_at BETWEEN ? AND ? ORDER BY s.id DESC LIMIT 4000`)
+    .all(cfg.evaluation.live_window_sec, Date.now() - 24 * 3600_000, Date.now() - 20 * 60_000) as { chain: string; launchpad: string; symbol: string | null; address: string; graduated_at: number | null; pool_key_json: string | null; params_json: string }[];
   const scored = rows.map((r) => { const p = JSON.parse(r.params_json); return { ...r, buys: Number(p.dynamics?.buys) || 0, holders: Number(p.holders?.count) || 0, liq: Number(p.contract?.liquidity_usd) || 0 }; });
   for (const chain of ["robinhood", "base"] as const) {
     const cands = scored.filter((r) => r.chain === chain && (chain === "robinhood" ? r.launchpad === "pons" : (r.launchpad === "clanker" || r.launchpad === "uniswap") && r.pool_key_json))
