@@ -30,7 +30,8 @@ export const rpcUrls = (list: string) => list.split(",").map((u) => u.trim()).fi
  */
 export function publicClient(key: ChainKey, rpcUrl: string): PublicClient {
   const urls = rpcUrls(rpcUrl);
-  const transports = urls.map((u) => http(u, { timeout: 10_000, retryCount: 1, retryDelay: 300 }));
+  // JSON-RPC batch: több hívás egy HTTP-kérésben (a publikus RPC-k többsége HTTP-kérésenként számol)
+  const transports = urls.map((u) => http(u, { timeout: 10_000, retryCount: 1, retryDelay: 500, batch: { wait: 40, batchSize: 25 } }));
   const transport = transports.length === 1 ? transports[0]! : fallback(transports, { rank: false, retryCount: 0 });
   return createPublicClient({ chain: CHAINS[key], transport });
 }

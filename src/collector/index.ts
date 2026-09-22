@@ -56,7 +56,25 @@ export class EthPrice {
   }
 }
 
+interface LogCache { lastBlock: bigint; transfers: TransferRec[]; swaps: SwapRec[]; launchPrice: number | null; at: number }
+
 export class Collector {
+  /** Tokenenként az eddig lekért transzferek/swapok – a következő ablakban csak az új blokkokat kérjük. */
+  private logCache = new Map<number, LogCache>();
+  private blockTsCache = new Map<string, number>();
+  private txCountCache = new Map<string, { n: number; at: number }>();
+  private running: Record<ChainKey, number> = { base: 0, robinhood: 0 };
+  private waiters: Record<ChainKey, Array<() => void>> = { base: [], robinhood: [] };
+  /** Láncenként max. ennyi gyűjtés fut egyszerre (RPC-kímélés). */
+  static MAX_CONCURRENT = 2;
+
+  private async acquire(chain: ChainKey) {
+    if (this.running[chain] < Collector.MAX_CONCURRENT) { this.running[chain]++; return; }
+    await new Promise<void>((r) => this.waiters[chain].push(r));
+    this.running[chain]++;
+  }
+  private release(chain: ChainKey) { this.running[chain]--; this.waiters[chain].shift()?.(); }
+
   /** Utolsó tx-szám lekérési hiba (diagnosztika a verify-hez). */
   public lastTxCountError: string | null = null;
   public lastPoolError: string | null = null;
@@ -67,10 +85,17 @@ export class Collector {
   constructor(private db: DB, private clients: Record<ChainKey, PublicClient>, private ethPrice: EthPrice) {}
 
   async collect(t: TokenRow, windowSec: number): Promise<ParamSnapshot> {
+    await this.acquire(t.chain);
+    try { return await this.collectInner(t, windowSec); } finally { this.release(t.chain); }
+  }
+
+  private async collectInner(t: TokenRow, windowSec: number): Promise<ParamSnapshot> {
     const c = this.clients[t.chain];
     currentChain = t.chain;
     this.errors = [];
     const takenAt = nowMs();
+    // régi cache-bejegyzések kidobása (memória)
+    for (const [id, v] of this.logCache) if (takenAt - v.at > 15 * 60_000) this.logCache.delete(id);
     const [head, ethUsd, gasPrice] = await Promise.all([c.getBlockNumber(), this.ethPrice.get(), c.getGasPrice().catch(() => null)]);
     const headBlock = await c.getBlock({ blockNumber: head }).catch(() => null);
     const fromBlock = BigInt(t.discovered_block ?? Number(head));
@@ -79,12 +104,22 @@ export class Collector {
     const pair = (t.pair_token ?? ZERO) as Address;
 
     // --- szerződés
-    const [code, decimalsR, supplyR, ownerR] = await Promise.all([
+    const [code, mc] = await Promise.all([
       c.getCode({ address: t.address }).catch(() => undefined),
-      c.readContract({ address: t.address, abi: erc20Abi, functionName: "decimals" }).catch(this.err("decimals")),
-      c.readContract({ address: t.address, abi: erc20Abi, functionName: "totalSupply" }).catch(this.err("totalSupply")),
-      c.readContract({ address: t.address, abi: ownableAbi, functionName: "owner" }).catch(() => null),
+      c.multicall({ allowFailure: true, contracts: [
+        { address: t.address, abi: erc20Abi, functionName: "decimals" },
+        { address: t.address, abi: erc20Abi, functionName: "totalSupply" },
+        { address: t.address, abi: ownableAbi, functionName: "owner" },
+        { address: t.address, abi: erc20Abi, functionName: "name" },
+        { address: t.address, abi: erc20Abi, functionName: "symbol" },
+      ] }).catch((e) => { this.err("multicall(token)")(e); return null; }),
     ]);
+    const mcv = (i: number) => (mc && mc[i]?.status === "success" ? mc[i]!.result : null);
+    const decimalsR = mcv(0) as number | null, supplyR = mcv(1) as bigint | null, ownerR = mcv(2) as Address | null;
+    if ((!t.name || !t.symbol) && (mcv(3) || mcv(4))) {
+      t.name = t.name ?? (mcv(3) as string | null); t.symbol = t.symbol ?? (mcv(4) as string | null);
+      this.db.prepare("UPDATE tokens SET name = COALESCE(name, ?), symbol = COALESCE(symbol, ?) WHERE id = ?").run(mcv(3), mcv(4), t.id);
+    }
     const decimals = decimalsR ?? 18;
     const totalSupply = supplyR ?? 0n;
     const bytecodeHash = code ? keccak256(code) : "0x";
@@ -93,31 +128,36 @@ export class Collector {
     const knownTemplate = this.isKnownTemplate(t, bytecodeHash);
     if (bytecodeHash !== "0x") this.db.prepare("UPDATE tokens SET bytecode_hash = ? WHERE id = ?").run(bytecodeHash, t.id);
 
+
+    // --- transzferek → holderek
+    const cache = this.logCache.get(t.id) ?? { lastBlock: fromBlock - 1n, transfers: [], swaps: [], launchPrice: null, at: takenAt };
+    const logFrom = cache.lastBlock + 1n;
+    if (head >= logFrom) {
+      const fresh = await this.transfers(c, t.address, logFrom, head, decimals).catch((e) => { this.err("Transfer-logok")(e); return null; });
+      if (fresh) cache.transfers.push(...fresh);
+    }
+    const transfers = cache.transfers;
+
+    // --- pool / curve állapot + swapok (a swapok is inkrementálisan a cache-be)
     // --- pool / curve állapot + swapok
-    const ps = await this.poolState(t, c, pool, poolId, pair, decimals, fromBlock, head).catch((e) => {
+    const ps = await this.poolState(t, c, pool, poolId, pair, decimals, logFrom, head, cache).catch((e) => {
       this.lastPoolError = (e as Error).message.slice(0, 300); this.err("pool/curve")(e);
       log.debug("poolState hiba", { token: t.address, error: (e as Error).message }); return null;
     });
-
-    // --- transzferek → holderek
-    const transfers = await this.transfers(c, t.address, fromBlock, head, decimals).catch((e) => { this.err("Transfer-logok")(e); return [] as TransferRec[]; });
-    // név/ticker pótlása, ha felfedezéskor nem sikerült (PONS eseményben nincs név)
-    if (!t.name || !t.symbol) {
-      const [nm, sy] = await Promise.all([
-        c.readContract({ address: t.address, abi: erc20Abi, functionName: "name" }).catch(this.err("name")),
-        c.readContract({ address: t.address, abi: erc20Abi, functionName: "symbol" }).catch(this.err("symbol")),
-      ]);
-      if (nm || sy) { t.name = t.name ?? nm; t.symbol = t.symbol ?? sy; this.db.prepare("UPDATE tokens SET name = COALESCE(name, ?), symbol = COALESCE(symbol, ?) WHERE id = ?").run(nm, sy, t.id); }
-    }
+    cache.lastBlock = head; cache.at = takenAt; this.logCache.set(t.id, cache);
     const contractSenders = await this.contractSet(c, transfers.map((x) => x.from));
     const hs = holderStats(transfers, { pool: pool ?? (ps?.poolAddressForTransfers ?? null), creator: t.creator, totalSupply, contractSenders });
 
     // --- top20 wallet: friss-e (tx-szám), listák
-    const top20 = hs.top20;
+    const top20 = hs.top20.slice(0, 10); // top10 elég a friss-arányhoz, fele annyi hívás
     const txCounts: Array<number | null> = [];
-    for (let i = 0; i < top20.length; i += 5) { // 5-ös adagokban, hogy a publikus RPC ne dobja el
-      txCounts.push(...await Promise.all(top20.slice(i, i + 5).map((a) => c.getTransactionCount({ address: a as Address })
-        .catch((e) => { this.lastTxCountError = (e as Error).message.slice(0, 300); this.err("tx-szám")(e); return null; }))));
+    for (const a of top20) {
+      const cached = this.txCountCache.get(a);
+      if (cached && takenAt - cached.at < 10 * 60_000) { txCounts.push(cached.n); continue; }
+      const n = await c.getTransactionCount({ address: a as Address })
+        .catch((e) => { this.lastTxCountError = (e as Error).message.slice(0, 300); this.err("tx-szám")(e); return null; });
+      if (n !== null) this.txCountCache.set(a, { n, at: takenAt });
+      txCounts.push(n);
     }
     const known = txCounts.filter((n): n is number => n !== null);
     const freshRatio: U<number> = known.length ? known.filter((n) => n <= 3).length / known.length : unk;
@@ -260,19 +300,25 @@ export class Collector {
   private async blockTs(c: PublicClient, blocks: Set<bigint>): Promise<Map<bigint, number>> {
     const m = new Map<bigint, number>();
     const arr = [...blocks].sort((a, b) => (a < b ? -1 : 1));
-    // csak első/utolsó blokk időbélyege, a többi lineárisan interpolálva (spórolás RPC-vel)
+    // csak első/utolsó blokk időbélyege (cache-elve), a többi lineárisan interpolálva
     if (!arr.length) return m;
-    const [b0, b1] = await Promise.all([c.getBlock({ blockNumber: arr[0]! }), c.getBlock({ blockNumber: arr.at(-1)! })]);
-    const t0 = Number(b0.timestamp) * 1000, t1 = Number(b1.timestamp) * 1000;
+    const ts = async (b: bigint) => {
+      const k = `${currentChain}:${b}`;
+      const hit = this.blockTsCache.get(k); if (hit) return hit;
+      const v = Number((await c.getBlock({ blockNumber: b })).timestamp) * 1000;
+      this.blockTsCache.set(k, v); if (this.blockTsCache.size > 5000) this.blockTsCache.clear();
+      return v;
+    };
+    const [t0, t1] = await Promise.all([ts(arr[0]!), ts(arr.at(-1)!)]);
     const span = Number(arr.at(-1)! - arr[0]!) || 1;
     for (const b of arr) m.set(b, t0 + ((t1 - t0) * Number(b - arr[0]!)) / span);
     return m;
   }
 
-  private async poolState(t: TokenRow, c: PublicClient, pool: Address | null, poolId: `0x${string}` | null, pair: Address, dec: number, from: bigint, to: bigint) {
+  private async poolState(t: TokenRow, c: PublicClient, pool: Address | null, poolId: `0x${string}` | null, pair: Address, dec: number, from: bigint, to: bigint, cache: LogCache) {
     const A = ADDRESSES[t.chain];
     const out = {
-      swaps: [] as SwapRec[], priceNative: unk as U<number>, liquidityNative: null as number | null, launchPriceNative: null as number | null,
+      swaps: cache.swaps, priceNative: unk as U<number>, liquidityNative: null as number | null, launchPriceNative: cache.launchPrice,
       sellSimulation: unk as U<"ok" | "failed" | "not_supported">, buyTaxPct: unk as U<number>, sellTaxPct: unk as U<number>,
       curveProgressPct: unk as U<number>, graduated: undefined as boolean | undefined, estGraduationMin: unk as U<number>,
       poolAddressForTransfers: null as string | null,
@@ -281,9 +327,11 @@ export class Collector {
 
     if (t.mechanics === "bonding_curve" && pool) {
       out.poolAddressForTransfers = pool;
-      const rd = <F extends "quoteReserve" | "tokenReserve" | "reservedTokens" | "feeBps" | "creatorTaxBps" | "graduated" | "isNativeQuote">(fn: F) =>
-        c.readContract({ address: pool, abi: ponsCurveAbi, functionName: fn }).catch(this.err(`curve.${fn}`));
-      const [q, tk, rs, fee, tax, grad] = await Promise.all([rd("quoteReserve"), rd("tokenReserve"), rd("reservedTokens"), rd("feeBps"), rd("creatorTaxBps"), rd("graduated")]);
+      const fns = ["quoteReserve", "tokenReserve", "reservedTokens", "feeBps", "creatorTaxBps", "graduated"] as const;
+      const mc = await c.multicall({ allowFailure: true, contracts: fns.map((fn) => ({ address: pool, abi: ponsCurveAbi, functionName: fn })) })
+        .catch((e) => { this.err("multicall(curve)")(e); return null; });
+      const v = (i: number) => (mc && mc[i]?.status === "success" ? mc[i]!.result : null);
+      const [q, tk, rs, fee, tax, grad] = [v(0) as bigint | null, v(1) as bigint | null, v(2) as bigint | null, v(3) as bigint | null, v(4) as bigint | null, v(5) as boolean | null];
       if (typeof q === "bigint" && typeof tk === "bigint" && tk > 0n) {
         out.priceNative = Number(q) / Number(tk) * 10 ** (dec - 18);
         out.liquidityNative = num(q);
@@ -300,7 +348,7 @@ export class Collector {
       // Csak előzetes jelzés: a valódi eladás-szimuláció (eth_call) az 5. lépésben. RPC-hiba → unknown, nem "failed".
       out.sellSimulation = grad === true ? "not_supported" : typeof q === "bigint" && typeof tk === "bigint" && tk > 0n ? "ok" : unk;
       const curveEvents = ponsCurveAbi.filter((x) => x.type === "event");
-      const rawLogs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, events: curveEvents, fromBlock: f, toBlock: t }) as Promise<unknown[]>);
+      const rawLogs = to < from ? [] : await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, events: curveEvents, fromBlock: f, toBlock: t }) as Promise<unknown[]>);
       const logs = rawLogs as unknown as Array<{ eventName: string; args: Record<string, bigint | string>; blockNumber: bigint }>;
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber)));
       for (const l of logs) {
@@ -309,13 +357,14 @@ export class Collector {
         const tokens = num((isBuy ? l.args.tokensOut : l.args.tokensIn) as bigint, dec);
         out.swaps.push({ buyer: String(isBuy ? l.args.buyer : l.args.seller), isBuy, native, tokens, block: l.blockNumber, ts: ts.get(l.blockNumber) ?? 0, priceNative: tokens > 0 ? native / tokens : null });
       }
-      if (out.swaps[0]?.priceNative) out.launchPriceNative = out.swaps[0].priceNative;
+      if (out.launchPriceNative === null && out.swaps[0]?.priceNative) out.launchPriceNative = out.swaps[0].priceNative;
+      cache.launchPrice = out.launchPriceNative;
       return out;
     }
 
     if ((t.mechanics === "v4" || t.mechanics === "v4_hook") && poolId && A.uniswapV4PoolManager) {
       const pm = A.uniswapV4PoolManager;
-      const logs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pm, event: uniswapV4SwapAbi[0], args: { id: poolId }, fromBlock: f, toBlock: t }));
+      const logs = to < from ? [] : await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pm, event: uniswapV4SwapAbi[0], args: { id: poolId }, fromBlock: f, toBlock: t }));
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber!)));
       for (const l of logs) {
         const a0 = l.args.amount0!, a1 = l.args.amount1!;
@@ -324,7 +373,7 @@ export class Collector {
         const price = priceFromSqrtX96(l.args.sqrtPriceX96!, tokenIsC0, dec);
         out.swaps.push({ buyer: l.args.sender!, isBuy, native: Math.abs(num(quoteAmt)), tokens: Math.abs(num(tokenAmt, dec)), block: l.blockNumber!, ts: ts.get(l.blockNumber!) ?? 0, priceNative: price });
       }
-      if (out.swaps.length) { out.priceNative = out.swaps.at(-1)!.priceNative!; out.launchPriceNative = out.swaps[0]!.priceNative; }
+      if (out.swaps.length) { out.priceNative = out.swaps.at(-1)!.priceNative!; if (out.launchPriceNative === null) out.launchPriceNative = out.swaps[0]!.priceNative; cache.launchPrice = out.launchPriceNative; }
       out.sellSimulation = "not_supported"; // v4 quoter a végrehajtási modulban (5. lépés)
       out.buyTaxPct = 0; out.sellTaxPct = 0; // v4 poolnál a hook-díj a Swap eventben (fee), adó nincs
       return out;
@@ -332,17 +381,19 @@ export class Collector {
 
     if (t.mechanics === "v2" && pool) {
       out.poolAddressForTransfers = pool;
-      const [res, t0] = await Promise.all([
-        c.readContract({ address: pool, abi: uniswapV2PairAbi, functionName: "getReserves" }).catch(() => null),
-        c.readContract({ address: pool, abi: uniswapV2PairAbi, functionName: "token0" }).catch(() => null),
-      ]);
+      const mc2 = await c.multicall({ allowFailure: true, contracts: [
+        { address: pool, abi: uniswapV2PairAbi, functionName: "getReserves" },
+        { address: pool, abi: uniswapV2PairAbi, functionName: "token0" },
+      ] }).catch((e) => { this.err("multicall(v2)")(e); return null; });
+      const res = mc2?.[0]?.status === "success" ? mc2[0].result : null;
+      const t0 = mc2?.[1]?.status === "success" ? mc2[1].result : null;
       const isT0 = t0 ? isAddressEqual(t0, t.address) : tokenIsC0;
       if (res) {
         const rt = isT0 ? res[0] : res[1], rq = isT0 ? res[1] : res[0];
         out.liquidityNative = num(rq);
         if (rt > 0n) out.priceNative = Number(rq) / Number(rt) * 10 ** (dec - 18);
       }
-      const logs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, event: uniswapV2PairAbi[0], fromBlock: f, toBlock: t }));
+      const logs = to < from ? [] : await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, event: uniswapV2PairAbi[0], fromBlock: f, toBlock: t }));
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber!)));
       for (const l of logs) {
         const tokOut = isT0 ? l.args.amount0Out! : l.args.amount1Out!, tokIn = isT0 ? l.args.amount0In! : l.args.amount1In!;
@@ -351,27 +402,31 @@ export class Collector {
         const native = num(isBuy ? qIn : qOut), tokens = num(isBuy ? tokOut : tokIn, dec);
         out.swaps.push({ buyer: l.args.to!, isBuy, native, tokens, block: l.blockNumber!, ts: ts.get(l.blockNumber!) ?? 0, priceNative: tokens > 0 ? native / tokens : null });
       }
-      if (out.swaps[0]?.priceNative) out.launchPriceNative = out.swaps[0].priceNative;
+      if (out.launchPriceNative === null && out.swaps[0]?.priceNative) out.launchPriceNative = out.swaps[0].priceNative;
+      cache.launchPrice = out.launchPriceNative;
       out.sellSimulation = unk; // v2 eladás-szimuláció az 5. lépésben (router getAmountsOut + eth_call)
       return out;
     }
 
     if (t.mechanics === "v3" && pool) {
       out.poolAddressForTransfers = pool;
-      const [slot, t0] = await Promise.all([
-        c.readContract({ address: pool, abi: uniswapV3PoolAbi, functionName: "slot0" }).catch(() => null),
-        c.readContract({ address: pool, abi: uniswapV3PoolAbi, functionName: "token0" }).catch(() => null),
-      ]);
+      const mc3 = await c.multicall({ allowFailure: true, contracts: [
+        { address: pool, abi: uniswapV3PoolAbi, functionName: "slot0" },
+        { address: pool, abi: uniswapV3PoolAbi, functionName: "token0" },
+      ] }).catch((e) => { this.err("multicall(v3)")(e); return null; });
+      const slot = mc3?.[0]?.status === "success" ? mc3[0].result : null;
+      const t0 = mc3?.[1]?.status === "success" ? mc3[1].result : null;
       const isT0 = t0 ? isAddressEqual(t0, t.address) : tokenIsC0;
       if (slot) out.priceNative = priceFromSqrtX96(slot[0], isT0, dec);
-      const logs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, event: uniswapV3PoolAbi[0], fromBlock: f, toBlock: t }));
+      const logs = to < from ? [] : await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, event: uniswapV3PoolAbi[0], fromBlock: f, toBlock: t }));
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber!)));
       for (const l of logs) {
         const tokenAmt = isT0 ? l.args.amount0! : l.args.amount1!, quoteAmt = isT0 ? l.args.amount1! : l.args.amount0!;
         const isBuy = tokenAmt < 0n;
         out.swaps.push({ buyer: l.args.recipient!, isBuy, native: Math.abs(num(quoteAmt)), tokens: Math.abs(num(tokenAmt, dec)), block: l.blockNumber!, ts: ts.get(l.blockNumber!) ?? 0, priceNative: priceFromSqrtX96(l.args.sqrtPriceX96!, isT0, dec) });
       }
-      if (out.swaps[0]?.priceNative) out.launchPriceNative = out.swaps[0].priceNative;
+      if (out.launchPriceNative === null && out.swaps[0]?.priceNative) out.launchPriceNative = out.swaps[0].priceNative;
+      cache.launchPrice = out.launchPriceNative;
       out.sellSimulation = "not_supported";
       return out;
     }

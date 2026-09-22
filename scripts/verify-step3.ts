@@ -24,7 +24,9 @@ if (!row) { console.log("❌ nincs ilyen token a DB-ben (előbb fusson a bot, va
 console.log(`Token: ${row.chain}/${row.launchpad} ${row.symbol ?? "?"} ${row.address} (felfedezve ${new Date(row.discovered_at).toISOString()})`);
 const collector = new Collector(db, clients, new EthPrice(clients.base));
 const t0 = Date.now();
-const snap = await collector.collect(row, cfg.evaluation.live_window_sec);
+let snap;
+try { snap = await collector.collect(row, cfg.evaluation.live_window_sec); }
+catch (e) { console.log(`❌ RPC-hiba a gyűjtés elején: ${(e as Error).message.split("\n").slice(0, 4).join(" | ")}`); process.exit(1); }
 console.log(JSON.stringify(snap, null, 1));
 const u = countUnknown(snap);
 console.log(`\n✅ ${u.total - u.unknown}/${u.total} mező kitöltve, ${u.unknown} unknown (${Date.now() - t0} ms): ${u.unknownKeys.join(", ")}`);
