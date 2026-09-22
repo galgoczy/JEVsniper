@@ -385,6 +385,7 @@ export class Collector {
           const b = await route.quoteBuy(probe);
           const sOut = (await route.quoteSell(b.amountOut)).amountOut;
           out.sellSimulation = sOut > 0n ? "ok" : "failed";
+          if (b.estLiquidityNative !== undefined) out.liquidityNative = b.estLiquidityNative;
           const roundTrip = Number(sOut) / Number(probe); // 1 = veszteségmentes; a díjak + csúszás miatt < 1
           out.sellTaxPct = Math.max(0, Math.round((1 - roundTrip) * 10000) / 100 / 2); // oda-vissza veszteség fele ≈ effektív egyirányú költség
           if (out.priceNative === unk && b.amountOut > 0n) out.priceNative = Number(probe) / Number(b.amountOut) * 10 ** (dec - 18);

@@ -7,7 +7,11 @@ import { universalRouterAbi, v4QuoterAbi, permit2Abi, erc20WriteAbi, UR_COMMAND_
 
 export interface PoolKey { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }
 export interface TxRequest { to: Address; data: Hex; value: bigint; label: string }
-export interface Quote { amountOut: bigint; feeWei: bigint; taxWei: bigint; note?: string }
+export interface Quote {
+  amountOut: bigint; feeWei: bigint; taxWei: bigint; note?: string;
+  /** Árhatás %-ban (a teljes összeg átlagára a kis próbaösszeghez képest); becsült ETH-likviditás ebből. */
+  priceImpactPct?: number; estLiquidityNative?: number;
+}
 
 /** Egy vételi/eladási útvonal: árajánlat + tranzakció(k) összeállítása. A küldés az Executor dolga. */
 export interface Route {
@@ -125,10 +129,17 @@ export class UniswapV4Route implements Route {
       args: [{ poolKey: this.poolKey, zeroForOne, exactAmount: amountIn, hookData: "0x" }] });
     return result[0];
   }
-  async quoteBuy(nativeIn: bigint) {
+  async quoteBuy(nativeIn: bigint): Promise<Quote> {
     if (!isAddressEqual(this.quoteCurrency, ZERO)) throw new Error("csak natív ETH-páros v4 pool támogatott");
-    const out = await this.quote(!this.tokenIsC0, nativeIn); // ETH→token: ha a token currency1, akkor zeroForOne
-    return { amountOut: out, feeWei: (nativeIn * BigInt(this.poolKey.fee & 0x7fffff)) / 1_000_000n, taxWei: 0n };
+    const zfo = !this.tokenIsC0; // ETH→token: ha a token currency1, akkor zeroForOne
+    const small = nativeIn / 20n > 0n ? nativeIn / 20n : 1n;
+    const [out, outSmall] = await Promise.all([this.quote(zfo, nativeIn), this.quote(zfo, small)]);
+    // átlagár a teljes összegre vs. a kis összegre: 1 - (out/nativeIn) / (outSmall/small)
+    const impact = outSmall > 0n ? Math.max(0, 1 - (Number(out) / Number(nativeIn)) / (Number(outSmall) / Number(small))) : 1;
+    // konstans-szorzat közelítés: impact ≈ x/(R+x) → R ≈ x·(1−i)/i (nativeIn ETH-ban)
+    const x = Number(nativeIn) / 1e18;
+    const estLiquidityNative = impact > 0.0005 ? (x * (1 - impact)) / impact : x / 0.0005;
+    return { amountOut: out, feeWei: (nativeIn * BigInt(this.poolKey.fee & 0x7fffff)) / 1_000_000n, taxWei: 0n, priceImpactPct: impact * 100, estLiquidityNative };
   }
   async quoteSell(tokensIn: bigint) {
     const out = await this.quote(this.tokenIsC0, tokensIn);

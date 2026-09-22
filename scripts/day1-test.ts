@@ -61,6 +61,10 @@ catch (e) {
   console.log(`❌ Nem árazható, ez a token nem vehető meg: ${reason}\n   Válassz másik jelöltet (npm run day1 -- pick).`); process.exit(1);
 }
 console.log(`Árajánlat vétel: ${formatUnits(q.amountOut, 18)} token, díj ${usd(q.feeWei)} USD, adó ${usd(q.taxWei)} USD ${q.note ?? ""}`);
+if (q.priceImpactPct !== undefined) {
+  console.log(`Árhatás: ${q.priceImpactPct.toFixed(2)}% (plafon ${cfg.execution.max_price_impact_pct}%), becsült likviditás ≈ ${q.estLiquidityNative?.toFixed(4)} ETH ≈ ${((q.estLiquidityNative ?? 0) * eth).toFixed(0)} USD`);
+  if (q.priceImpactPct > cfg.execution.max_price_impact_pct) { console.log("❌ Túl sekély pool, ezt a bot nem venné meg. Válassz másik jelöltet."); process.exit(1); }
+}
 const buyTx = route.buildBuy(oneUsdWei, (q.amountOut * 92n) / 100n, ex.address, cfg.execution.deadline_sec);
 const gas = await clients[chain].estimateGas({ account: ex.address, to: buyTx.to, data: buyTx.data, value: buyTx.value });
 const gp = await clients[chain].getGasPrice();

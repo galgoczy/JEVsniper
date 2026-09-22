@@ -113,6 +113,7 @@ export const ConfigSchema = z.object({
   execution: z.object({
     max_slippage_pct: pct,
     panic_slippage_pct: pct,
+    max_price_impact_pct: pct,
     deadline_sec: z.number().int().positive(),
     retry_failed_tx_once: z.boolean(),
   }),

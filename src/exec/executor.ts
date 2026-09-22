@@ -128,16 +128,30 @@ export class Executor {
   async tokenBalance(token: Address): Promise<bigint> {
     return this.client.readContract({ address: token, abi: erc20WriteAbi, functionName: "balanceOf", args: [this.address] });
   }
+  /** Egyenleg egy tx után: a több publikus végpont közül egy lemaradt csomópont még a régi értéket adhatja → újrakérdezés, amíg változik (max ~4 mp). */
+  async tokenBalanceAfter(token: Address, before: bigint, expectChange = true): Promise<bigint> {
+    let b = before;
+    for (let i = 0; i < 8; i++) {
+      b = await this.tokenBalance(token);
+      if (!expectChange || b !== before) return b;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return b;
+  }
   async nativeBalance(): Promise<bigint> { return this.client.getBalance({ address: this.address }); }
 
   /** Vétel: árajánlat, slippage, küldés. Visszaadja a kapott tokenmennyiséget (balance-különbségből). */
   async buy(route: Route, token: Address, nativeIn: bigint, slippagePct: number, opts: { positionId?: number | null; bypassStop?: boolean } = {}) {
     const q = await route.quoteBuy(nativeIn, this.address);
+    if (q.priceImpactPct !== undefined && q.priceImpactPct > this.cfg.execution.max_price_impact_pct) {
+      throw new GasCapError(`árhatás ${q.priceImpactPct.toFixed(1)}% > ${this.cfg.execution.max_price_impact_pct}% (becsült likviditás ${q.estLiquidityNative?.toFixed(4)} ETH) – túl sekély pool, nincs vétel`);
+    }
     const minOut = (q.amountOut * BigInt(Math.round((100 - slippagePct) * 100))) / 10000n;
     const before = await this.tokenBalance(token);
     const tx = route.buildBuy(nativeIn, minOut, this.address, this.cfg.execution.deadline_sec);
     const r = await this.sendWithRetry(tx, { positionId: opts.positionId, kind: "buy", bypassStop: opts.bypassStop, estPrice: Number(nativeIn) / Number(q.amountOut) });
-    const after = r.ok ? await this.tokenBalance(token) : before;
+    const after = r.ok ? await this.tokenBalanceAfter(token, before) : before;
+    if (r.ok && after === before) log.warn("vétel sikeres, de a tokenegyenleg nem változott – nem szabványos token?", { token });
     return { ...r, quote: q, minOut, tokensReceived: after - before };
   }
 
@@ -149,6 +163,7 @@ export class Executor {
     const maxSlip = this.cfg.execution.panic_slippage_pct;
     const ladder = opts.panic ? [maxSlip] : [startSlippagePct, Math.min(maxSlip, startSlippagePct * 2), maxSlip].filter((v, i, a) => a.indexOf(v) === i);
     let last: SendResult | null = null;
+    if (tokensIn <= 0n) return { ok: false, hash: null, nonce: -1, gasUsed: 0n, gasCostWei: 0n, gasUsd: null, blockNumber: null, error: "nincs eladható tokenmennyiség", latencyMs: 0, label: "sell", quote: null, slippagePct: 0, nativeReceived: 0n, unsellable: true };
     for (const slip of ladder) {
       let q;
       try { q = await route.quoteSell(tokensIn); }
@@ -156,6 +171,7 @@ export class Executor {
       const minOut = (q.amountOut * BigInt(Math.round((100 - slip) * 100))) / 10000n;
       const txs = await route.buildSell(tokensIn, minOut, this.address, this.cfg.execution.deadline_sec, this.address);
       const before = await this.nativeBalance();
+      const tokBefore = await this.tokenBalance(token);
       let failed = false;
       for (const tx of txs) {
         const r = await this.send(tx, { isSell: true, bypassStop: true, positionId: opts.positionId, kind: tx.label.startsWith("approve") || tx.label.startsWith("permit2") ? "approve" : "sell" });
@@ -163,6 +179,7 @@ export class Executor {
         if (!r.ok) { failed = true; break; }
       }
       if (!failed && last) {
+        await this.tokenBalanceAfter(token, tokBefore); // várjuk meg, míg a csomópont látja az eladást
         const after = await this.nativeBalance();
         return { ...last, quote: q, slippagePct: slip, nativeReceived: after - before + last.gasCostWei, unsellable: false };
       }

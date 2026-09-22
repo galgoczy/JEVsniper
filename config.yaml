@@ -117,6 +117,8 @@ monitoring:
 execution:
   max_slippage_pct: 8
   panic_slippage_pct: 25
+  # ha a pozíció mérete ennél nagyobb árhatást okoz a poolban, nincs vétel (sekély pool = nem lehet kiszállni)
+  max_price_impact_pct: 10
   deadline_sec: 30
   retry_failed_tx_once: true
 
