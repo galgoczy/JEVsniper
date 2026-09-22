@@ -65,3 +65,15 @@ test("veszélyes szelektorok a bytecode-ban", () => {
   assert.deepEqual(findDangerousSelectors("0x60806040"), []);
   assert.equal(median([3, 1, 2]), 2); assert.equal(median([]), null);
 });
+
+test("holderStats: routerből/PoolManagerből kapott token nem airdrop", () => {
+  const ROUTER = "0xrouter";
+  const tr = [
+    { from: ZERO, to: POOL, value: 1000n * E, block: 1n },
+    { from: ROUTER, to: "0xa", value: 10n * E, block: 2n },
+    { from: ROUTER, to: "0xb", value: 10n * E, block: 2n },
+    { from: "0xeoa", to: "0xc", value: 10n * E, block: 3n },
+  ];
+  const h = holderStats(tr, { pool: POOL, creator: null, totalSupply: 1000n * E, contractSenders: new Set([ROUTER]) });
+  assert.ok(Math.abs(h.airdrop_received_ratio - 1 / 3) < 1e-9); // csak 0xc
+});

@@ -10,7 +10,8 @@ export interface SwapRec { buyer: string; isBuy: boolean; native: number; tokens
 const lc = (a: string) => a.toLowerCase();
 const ZERO = "0x0000000000000000000000000000000000000000";
 
-export function holderStats(transfers: TransferRec[], opts: { pool: string | null; creator: string | null; totalSupply: bigint }) {
+export function holderStats(transfers: TransferRec[], opts: { pool: string | null; creator: string | null; totalSupply: bigint; contractSenders?: Set<string> }) {
+  const contracts = new Set([...(opts.contractSenders ?? [])].map(lc));
   const bal = new Map<string, bigint>();
   const receivedNotFromPool = new Set<string>();
   const pool = opts.pool ? lc(opts.pool) : null;
@@ -24,7 +25,8 @@ export function holderStats(transfers: TransferRec[], opts: { pool: string | nul
     if (creator && f === creator && to !== pool) transfersFromCreator++;
     if (creator && to === creator) creatorReceived += t.value;
     if (creator && f === creator && to === pool) creatorSentToPool += t.value;
-    if (f !== pool && f !== ZERO && to !== pool && to !== creator) receivedNotFromPool.add(to);
+    // airdrop = sima walletből (nem pool/router/PoolManager szerződésből) kapott token
+    if (f !== pool && f !== ZERO && !contracts.has(f) && to !== pool && to !== creator) receivedNotFromPool.add(to);
   }
   const excluded = new Set([ZERO, pool, creator].filter(Boolean) as string[]);
   const holders = [...bal.entries()].filter(([a, v]) => v > 0n && !excluded.has(a)).sort((x, y) => (y[1] > x[1] ? 1 : y[1] < x[1] ? -1 : 0));

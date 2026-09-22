@@ -41,6 +41,9 @@ export class EthPrice {
 }
 
 export class Collector {
+  /** Utolsó tx-szám lekérési hiba (diagnosztika a verify-hez). */
+  public lastTxCountError: string | null = null;
+  private codeCache = new Map<string, boolean>();
   constructor(private db: DB, private clients: Record<ChainKey, PublicClient>, private ethPrice: EthPrice) {}
 
   async collect(t: TokenRow, windowSec: number): Promise<ParamSnapshot> {
@@ -75,13 +78,15 @@ export class Collector {
 
     // --- transzferek → holderek
     const transfers = await this.transfers(c, t.address, fromBlock, head, decimals).catch(() => [] as TransferRec[]);
-    const hs = holderStats(transfers, { pool: pool ?? (ps?.poolAddressForTransfers ?? null), creator: t.creator, totalSupply });
+    const contractSenders = await this.contractSet(c, transfers.map((x) => x.from));
+    const hs = holderStats(transfers, { pool: pool ?? (ps?.poolAddressForTransfers ?? null), creator: t.creator, totalSupply, contractSenders });
 
     // --- top20 wallet: friss-e (tx-szám), listák
     const top20 = hs.top20;
     const txCounts: Array<number | null> = [];
     for (let i = 0; i < top20.length; i += 5) { // 5-ös adagokban, hogy a publikus RPC ne dobja el
-      txCounts.push(...await Promise.all(top20.slice(i, i + 5).map((a) => c.getTransactionCount({ address: a as Address }).catch(() => null))));
+      txCounts.push(...await Promise.all(top20.slice(i, i + 5).map((a) => c.getTransactionCount({ address: a as Address })
+        .catch((e) => { this.lastTxCountError = (e as Error).message.slice(0, 300); return null; }))));
     }
     const known = txCounts.filter((n): n is number => n !== null);
     const freshRatio: U<number> = known.length ? known.filter((n) => n <= 3).length / known.length : unk;
@@ -178,6 +183,20 @@ export class Collector {
     this.db.prepare(`INSERT OR REPLACE INTO snapshots(token_id, window_sec, taken_at, block_number, price_native, reserve_native, reserve_token, params_json)
       VALUES (?,?,?,?,?,?,?,?)`).run(t.id, snap.meta_snapshot.window_sec, snap.meta_snapshot.taken_at, snap.meta_snapshot.block, price,
       typeof snap.contract.liquidity_native === "number" ? snap.contract.liquidity_native : null, null, json);
+  }
+
+  /** Mely küldők szerződések (pool, router, PoolManager) – ezek vételt jelentenek, nem airdropot. */
+  private async contractSet(c: PublicClient, addrs: string[]): Promise<Set<string>> {
+    const ZERO_L = ZERO.toLowerCase();
+    const uniq = [...new Set(addrs.map((a) => a.toLowerCase()))].filter((a) => a !== ZERO_L);
+    const todo = uniq.filter((a) => !this.codeCache.has(a)).slice(0, 60);
+    for (let i = 0; i < todo.length; i += 5) {
+      await Promise.all(todo.slice(i, i + 5).map(async (a) => {
+        const code = await c.getCode({ address: a as Address }).catch(() => undefined);
+        if (code !== undefined) this.codeCache.set(a, code !== "0x" && code.length > 2);
+      }));
+    }
+    return new Set(uniq.filter((a) => this.codeCache.get(a) === true));
   }
 
   private isKnownTemplate(t: TokenRow, hash: string): U<boolean> {

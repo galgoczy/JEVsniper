@@ -28,6 +28,7 @@ const snap = await collector.collect(row, cfg.evaluation.live_window_sec);
 console.log(JSON.stringify(snap, null, 1));
 const u = countUnknown(snap);
 console.log(`\n✅ ${u.total - u.unknown}/${u.total} mező kitöltve, ${u.unknown} unknown (${Date.now() - t0} ms): ${u.unknownKeys.join(", ")}`);
+if (snap.holders.fresh_wallet_ratio_top20 === "unknown" && collector.lastTxCountError) console.log(`ℹ️ tx-szám lekérés hibája (${row.chain} RPC): ${collector.lastTxCountError}`);
 collector.saveSnapshot(row, snap, cfg.db.max_snapshot_bytes);
 const saved = db.prepare("SELECT length(params_json) len FROM snapshots WHERE token_id = ? AND window_sec = ?").get(row.id, cfg.evaluation.live_window_sec) as { len: number };
 console.log(`✅ pillanatkép mentve a DB-be (${saved.len} bájt, limit ${cfg.db.max_snapshot_bytes})`);
