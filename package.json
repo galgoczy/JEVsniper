@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "tsx src/index.ts",
-    "verify:step1": "tsx scripts/verify-step1.ts"
+    "verify:step1": "tsx scripts/verify-step1.ts",
+    "verify:step2": "tsx scripts/verify-step2.ts"
   },
   "repository": {
     "type": "git",

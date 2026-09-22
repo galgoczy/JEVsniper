@@ -7,6 +7,7 @@ import { publicClient, type ChainKey } from "./chains/index.js";
 import { stopFileExists, createStopFile, removeStopFile } from "./killswitch.js";
 import { log } from "./logger.js";
 import { privateKeyToAccount } from "viem/accounts";
+import { ChainWatcher } from "./watchers/index.js";
 
 /**
  * Főprogram – 1. lépés: váz. Indul, ellenőrzi a configot/env-et, megnyitja a DB-t,
@@ -39,6 +40,22 @@ async function main() {
     }
   }
 
+  // 2. lépés: tokenfigyelés láncenként
+  const watchers: ChainWatcher[] = [];
+  for (const key of ["base", "robinhood"] as ChainKey[]) {
+    if (!cfg.chains[key].enabled) continue;
+    const w = new ChainWatcher(key, publicClient(key, rpc[key]), db, {
+      pollIntervalMs: cfg.watcher[key].poll_interval_ms,
+      maxBlockRange: cfg.watcher[key].max_block_range,
+      confirmations: cfg.watcher[key].confirmations,
+      enabledSources: cfg.watcher[key].sources,
+    });
+    watchers.push(w);
+    void w.start();
+  }
+  const tokenCounts = () => db.prepare("SELECT chain, launchpad, COUNT(*) n FROM tokens WHERE discovered_at > ? GROUP BY chain, launchpad")
+    .all(Date.now() - 24 * 3600 * 1000) as { chain: string; launchpad: string; n: number }[];
+
   const status = () => [
     `Jev Sniper – ${cfg.mode}`,
     `wallet: ${account.address}`,
@@ -46,6 +63,8 @@ async function main() {
     `nyitott élő pozíciók: ${open.length}`,
     `ma: belépés ${daily.entries}/${cfg.risk.max_entries_per_day}, PnL ${daily.realized_pnl_usd.toFixed(2)} USD, Jev-költség ${jev.dailyCostUsd().toFixed(4)} USD`,
     `compound: betét ${compound.deposit_usd}, kassza ${compound.growth_pool_usd.toFixed(2)}, tartalék ${compound.reserve_usd.toFixed(2)}, pozícióméret ${compound.position_usd.toFixed(2)} USD`,
+    `tokenek (24h): ${tokenCounts().map((r) => `${r.chain}/${r.launchpad}=${r.n}`).join(", ") || "még nincs"}`,
+    `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
     `Jev: ${jev.paused ? "szünetel" : "ok"}`,
   ].join("\n");
@@ -69,6 +88,7 @@ async function main() {
     log.info("Leállás", { sig });
     logEvent(db, "shutdown", sig);
     tg.stopPolling();
+    watchers.forEach((w) => w.stop());
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);

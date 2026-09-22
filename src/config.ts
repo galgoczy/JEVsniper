@@ -12,6 +12,13 @@ const ChainCfg = z.object({
   native_symbol: z.string(),
 });
 
+const WatcherCfg = z.object({
+  poll_interval_ms: z.number().int().min(500),
+  max_block_range: z.number().int().min(1).max(2000),
+  confirmations: z.number().int().min(0),
+  sources: z.record(z.string(), z.boolean()),
+});
+
 export const ConfigSchema = z.object({
   mode: z.enum(["live", "dry_run"]),
   chains: z.object({ base: ChainCfg, robinhood: ChainCfg }),
@@ -41,6 +48,10 @@ export const ConfigSchema = z.object({
     recalc_minutes: z.number().int().positive(),
     eth_24h_drop_pct_risk_off: pct,
     risk_off_close_phases: z.array(z.enum(["pre_tp1", "post_tp1", "moon_bag"])),
+  }),
+  watcher: z.object({
+    base: WatcherCfg,
+    robinhood: WatcherCfg,
   }),
   evaluation: z.object({
     windows_sec: z.array(z.number().int().positive()).min(1),
