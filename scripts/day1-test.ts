@@ -1,8 +1,9 @@
 /**
  * 1. napi végrehajtási próba (spec 3.): 1 USD-s valódi tranzakciók.
- *   npm run day1 -- pick                       → tokenjavaslat láncenként a DB-ből (nem küld semmit)
- *   npm run day1 -- <lánc> <cím>               → SZÁRAZ próba: árajánlat, gas-becslés, nincs küldés
- *   npm run day1 -- <lánc> <cím> --confirm     → ÉLES: vétel 1 USD, eladás 50%, eladás maradék, szándékosan
+ *   npm run day1 -- pick                       → sorszámozott jelöltek láncenként, élő árhatással (nem küld semmit)
+ *   npm run day1 -- <sorszám>                  → SZÁRAZ próba: árajánlat, gas-becslés, nincs küldés
+ *   npm run day1 -- <sorszám> --confirm        → ÉLES: vétel 1 USD, eladás 50%, eladás maradék, szándékosan
+ *   (a <lánc> <cím> forma továbbra is működik)
  *                                                  sikertelen eladás, nonce-ellenőrzés; gas műveletenként
  * A /stop és /panic próbája a futó boton, Telegramról.
  */
@@ -14,6 +15,7 @@ import { EthPrice, type TokenRow } from "../src/collector/index.js";
 import { Executor } from "../src/exec/executor.js";
 import { routeFor } from "../src/exec/routes.js";
 import { formatEther, formatUnits, getAddress, parseEther } from "viem";
+import fs from "node:fs";
 
 const cfg = loadConfig();
 const env = loadEnv();
@@ -22,25 +24,52 @@ const clients = { base: publicClient("base", env.BASE_RPC_URL), robinhood: publi
 const ethPrice = new EthPrice(clients.base);
 const [a1, a2, a3] = process.argv.slice(2);
 
+const CAND_FILE = "data/day1-candidates.json";
 if (a1 === "pick" || !a1) {
-  // Javaslat: az utolsó 24 órában (min. 20 perce) felfedezett, szűrőn átment tokenek, a legtöbb vétellel; PONS előnyben (curve), Base-en Clanker/v4 PoolKey-vel.
-  const rows = db.prepare(`SELECT t.chain, t.launchpad, t.symbol, t.address, t.graduated_at, t.pool_key_json, s.params_json FROM tokens t JOIN snapshots s ON s.token_id = t.id
+  // Javaslat: az utolsó 24 órában (min. 20 perce) felfedezett, szűrőn átment tokenek; mindegyikre élő árajánlat + árhatás.
+  const rows = db.prepare(`SELECT t.chain, t.launchpad, t.symbol, t.address, t.mechanics, t.pool_address, t.graduated_at, t.pool_key_json, s.params_json FROM tokens t JOIN snapshots s ON s.token_id = t.id
     WHERE s.window_sec = ? AND t.status != 'filtered' AND t.discovered_at BETWEEN ? AND ? ORDER BY s.id DESC LIMIT 4000`)
-    .all(cfg.evaluation.live_window_sec, Date.now() - 24 * 3600_000, Date.now() - 20 * 60_000) as { chain: string; launchpad: string; symbol: string | null; address: string; graduated_at: number | null; pool_key_json: string | null; params_json: string }[];
-  const scored = rows.map((r) => { const p = JSON.parse(r.params_json); return { ...r, buys: Number(p.dynamics?.buys) || 0, holders: Number(p.holders?.count) || 0, liq: Number(p.contract?.liquidity_usd) || 0, sellSim: p.contract?.sell_simulation as string }; })
-    .filter((r) => r.sellSim !== "failed");
+    .all(cfg.evaluation.live_window_sec, Date.now() - 24 * 3600_000, Date.now() - 20 * 60_000) as { chain: string; launchpad: string; symbol: string | null; address: string; mechanics: string; pool_address: string | null; graduated_at: number | null; pool_key_json: string | null; params_json: string }[];
+  const seen = new Set<string>();
+  const scored = rows.map((r) => { const p = JSON.parse(r.params_json); return { ...r, buys: Number(p.dynamics?.buys) || 0, holders: Number(p.holders?.count) || 0, sellSim: p.contract?.sell_simulation as string }; })
+    .filter((r) => r.sellSim !== "failed" && !seen.has(r.chain + r.address) && seen.add(r.chain + r.address));
+  const eth0 = await ethPrice.get(); const ethUsd = typeof eth0 === "number" ? eth0 : 0;
+  const list: { n: number; chain: string; address: string; symbol: string | null; launchpad: string }[] = [];
+  let n = 0;
   for (const chain of ["robinhood", "base"] as const) {
     const cands = scored.filter((r) => r.chain === chain && (chain === "robinhood" ? r.launchpad === "pons" : (r.launchpad === "clanker" || r.launchpad === "uniswap") && r.pool_key_json))
-      .sort((a, b) => b.buys - a.buys).slice(0, 3);
-    console.log(`\n== ${chain} javaslatok (vételek / holderek az élő ablakban):`);
+      .sort((a, b) => b.buys - a.buys).slice(0, 5);
+    console.log(`\n== ${chain}`);
     if (!cands.length) console.log("   nincs jelölt (fusson tovább a bot)");
-    for (const c of cands) console.log(`   ${c.launchpad} ${c.symbol ?? "?"} ${c.address}  vételek=${c.buys} holderek=${c.holders} ${c.graduated_at ? "(graduált)" : ""}`);
+    for (const c of cands) {
+      n++;
+      let verdict = "";
+      try {
+        const route = await routeFor(clients[chain], chain, c);
+        const wei = parseEther((cfg.risk.base_position_usd / (ethUsd || 1)).toFixed(18));
+        const q = await route.quoteBuy(wei, "0x0000000000000000000000000000000000000001");
+        const imp = q.priceImpactPct;
+        const okImp = imp === undefined || imp <= cfg.execution.max_price_impact_pct;
+        verdict = `${okImp ? "✅" : "❌"} árhatás ${imp !== undefined ? imp.toFixed(1) + "%" : "n/a"}${q.estLiquidityNative !== undefined ? `, likv. ≈ ${(q.estLiquidityNative * ethUsd).toFixed(0)} USD` : ""} (${route.kind})`;
+      } catch (e) { verdict = `❌ nem árazható (${(e as Error).message.includes("NotEnoughLiquidity") || (e as Error).message.includes("6190b2b0") ? "nincs likviditás" : (e as Error).message.split("\n")[0]!.slice(0, 50)})`; }
+      console.log(`  [${n}] ${c.launchpad} ${(c.symbol ?? "?").padEnd(10)} vételek=${String(c.buys).padStart(3)} holderek=${String(c.holders).padStart(3)} ${c.graduated_at ? "graduált " : ""} ${verdict}`);
+      list.push({ n, chain, address: c.address, symbol: c.symbol, launchpad: c.launchpad });
+    }
   }
-  console.log("\nÉles próba: npm run day1 -- <lánc> <cím> --confirm");
+  fs.writeFileSync(CAND_FILE, JSON.stringify(list, null, 1));
+  console.log(`\nSzáraz próba:  npm run day1 -- <sorszám>\nÉles próba:    npm run day1 -- <sorszám> --confirm`);
   process.exit(0);
 }
 
-const chain = a1 as ChainKey, address = getAddress(a2!), confirm = a3 === "--confirm";
+// sorszám → jelölt a mentett listából
+let chainArg = a1!, addrArg = a2, confirmArg = a3;
+if (/^\d+$/.test(a1!)) {
+  const list = JSON.parse(fs.readFileSync(CAND_FILE, "utf8")) as { n: number; chain: string; address: string }[];
+  const c = list.find((x) => x.n === Number(a1));
+  if (!c) { console.log("❌ nincs ilyen sorszám – előbb: npm run day1 -- pick"); process.exit(1); }
+  chainArg = c.chain; addrArg = c.address; confirmArg = a2;
+}
+const chain = chainArg as ChainKey, address = getAddress(addrArg!), confirm = confirmArg === "--confirm";
 const row = db.prepare("SELECT * FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(chain, address) as TokenRow | undefined;
 if (!row) { console.log("❌ a token nincs a DB-ben"); process.exit(1); }
 const sendUrl = (chain === "base" ? env.BASE_PRIVATE_TX_RPC_URL : env.ROBINHOOD_PRIVATE_TX_RPC_URL) || rpcUrls(chain === "base" ? env.BASE_RPC_URL : env.ROBINHOOD_RPC_URL)[0]!;
