@@ -8,8 +8,12 @@ import { stopFileExists, createStopFile, removeStopFile } from "./killswitch.js"
 import { log } from "./logger.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { ChainWatcher } from "./watchers/index.js";
-import { Collector, CollectorScheduler, EthPrice, tokenRow } from "./collector/index.js";
+import { Collector, CollectorScheduler, EthPrice, tokenRow, type TokenRow } from "./collector/index.js";
 import { applyHardFilters } from "./filters/index.js";
+import { Executor } from "./exec/executor.js";
+import { routeFor } from "./exec/routes.js";
+import { rpcUrls } from "./chains/index.js";
+import { getAddress } from "viem";
 
 /**
  * Főprogram – 1. lépés: váz. Indul, ellenőrzi a configot/env-et, megnyitja a DB-t,
@@ -27,6 +31,30 @@ async function main() {
   const open = openPositions(db, "live");
 
   const jev = new JevClient(db, cfg, env.TYPESAFE_API_KEY);
+  const ethPrice = new EthPrice(publicClient("base", env.BASE_RPC_URL));
+  // 5. lépés: végrehajtók láncenként (küldés a privát/MEV-védett RPC-n, ha van, különben az első RPC-n)
+  const executors: Partial<Record<ChainKey, Executor>> = {};
+  for (const key of ["base", "robinhood"] as ChainKey[]) {
+    if (!cfg.chains[key].enabled) continue;
+    const sendUrl = (key === "base" ? env.BASE_PRIVATE_TX_RPC_URL : env.ROBINHOOD_PRIVATE_TX_RPC_URL) || rpcUrls(key === "base" ? env.BASE_RPC_URL : env.ROBINHOOD_RPC_URL)[0]!;
+    executors[key] = new Executor(key, publicClient(key, key === "base" ? env.BASE_RPC_URL : env.ROBINHOOD_RPC_URL), db, cfg, env.WALLET_PRIVATE_KEY as `0x${string}`, sendUrl, () => ethPrice.get());
+  }
+  /** /panic: minden nyitott élő pozíció eladása azonnal, magas csúszással. */
+  const panicSellAll = async (): Promise<string> => {
+    const rows = db.prepare("SELECT t.*, p.id AS position_id, p.tokens_remaining FROM positions p JOIN tokens t ON t.id = p.token_id WHERE p.arm = 'live' AND p.closed_at IS NULL").all() as Array<TokenRow & { position_id: number; tokens_remaining: number }>;
+    const out: string[] = [];
+    for (const r of rows) {
+      const ex = executors[r.chain as ChainKey]; if (!ex) continue;
+      try {
+        const route = await routeFor(ex.client, r.chain as ChainKey, r);
+        const bal = await ex.tokenBalance(getAddress(r.address));
+        const res = await ex.sell(route, getAddress(r.address), bal, cfg.execution.panic_slippage_pct, { positionId: r.position_id, panic: true });
+        db.prepare("UPDATE positions SET tokens_remaining = ?, phase = ?, closed_at = ?, close_reason = 'panic' WHERE id = ?").run(res.unsellable ? Number(r.tokens_remaining) : 0, res.unsellable ? "unsellable" : "closed", res.unsellable ? null : Date.now(), r.position_id);
+        out.push(`${r.symbol ?? r.address}: ${res.unsellable ? "NEM ELADHATÓ" : "eladva"} ${res.hash ?? ""}`);
+      } catch (e) { out.push(`${r.symbol ?? r.address}: hiba ${(e as Error).message.slice(0, 80)}`); }
+    }
+    return out.length ? out.join("\n") : "nincs nyitott élő pozíció";
+  };
   const tg = new Telegram(env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, cfg.telegram.poll_interval_ms);
 
   const rpc: Record<ChainKey, string> = { base: env.BASE_RPC_URL, robinhood: env.ROBINHOOD_RPC_URL };
@@ -44,7 +72,7 @@ async function main() {
 
   // 3. lépés: paramétergyűjtő (30/60/180 mp-nél pillanatkép minden új tokenről)
   const clients = { base: publicClient("base", rpc.base), robinhood: publicClient("robinhood", rpc.robinhood) };
-  const collector = new Collector(db, clients, new EthPrice(clients.base));
+  const collector = new Collector(db, clients, ethPrice);
   // 4. lépés: kemény szűrők minden pillanatképre (az élő ablaknál dönt, a többinél csak naplóz)
   const scheduler = new CollectorScheduler(db, collector, cfg.evaluation.windows_sec, cfg.db.max_snapshot_bytes, (t, snap) => {
     applyHardFilters(db, cfg, t, snap);
@@ -91,8 +119,11 @@ async function main() {
       case "status": return status();
       case "stop": createStopFile("telegram /stop"); logEvent(db, "stop", "telegram"); return "⛔ STOP: nincs új belépés. /resume old fel.";
       case "resume": removeStopFile(); logEvent(db, "resume", "telegram"); return "▶️ STOP feloldva.";
-      case "panic": logEvent(db, "panic", "telegram"); createStopFile("telegram /panic");
-        return "🚨 PANIC fogadva. (A tényleges eladás az 5. lépésben – végrehajtási modul – kerül be.)";
+      case "panic": {
+        logEvent(db, "panic", "telegram"); createStopFile("telegram /panic");
+        await tg.send("🚨 PANIC: STOP beállítva, minden nyitott élő pozíció eladása indul…");
+        return "🚨 PANIC eredmény:\n" + (await panicSellAll());
+      }
       case "help": return "/status /stop /resume /panic";
     }
   });

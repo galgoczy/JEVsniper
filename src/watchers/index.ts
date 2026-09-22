@@ -91,11 +91,17 @@ export class ChainWatcher {
   }
 
   private async upsertToken(t: NewToken) {
-    const existing = this.db.prepare("SELECT id, launchpad FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(t.chain, t.address) as { id: number; launchpad: string } | undefined;
+    const existing = this.db.prepare("SELECT id, launchpad, discovered_block FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(t.chain, t.address) as { id: number; launchpad: string; discovered_block: number | null } | undefined;
     if (existing) {
-      // Launchpad-token graduált Uniswapra: csak a pool-adatot frissítjük, nem új token.
       if (t.launchpad === "uniswap" && existing.launchpad !== "uniswap") {
-        this.db.prepare("UPDATE tokens SET graduated_at = COALESCE(graduated_at, ?) WHERE id = ?").run(nowMs(), existing.id);
+        // Launchpad-token v4 poolja: ugyanabban a blokkban (Clanker) → nem graduáció, csak a PoolKey; későbbi blokkban (PONS) → graduáció.
+        const sameBlock = existing.discovered_block !== null && BigInt(existing.discovered_block) === t.blockNumber;
+        this.db.prepare("UPDATE tokens SET graduated_at = CASE WHEN ? THEN graduated_at ELSE COALESCE(graduated_at, ?) END, pool_key_json = COALESCE(pool_key_json, ?) WHERE id = ?")
+          .run(sameBlock ? 1 : 0, nowMs(), t.poolKey ? JSON.stringify(t.poolKey) : null, existing.id);
+      } else if (t.launchpad !== "uniswap" && existing.launchpad === "uniswap") {
+        // A v4 Initialize hamarabb jött, mint a launchpad TokenCreated eseménye (ugyanaz a tx): pótoljuk a launchpad-adatokat.
+        this.db.prepare("UPDATE tokens SET launchpad = ?, creator = COALESCE(?, creator), mechanics = ?, name = COALESCE(name, ?), symbol = COALESCE(symbol, ?), graduated_at = NULL, graduation_threshold = COALESCE(?, graduation_threshold) WHERE id = ?")
+          .run(t.launchpad, t.creator, t.mechanics, t.name, t.symbol, t.graduationThreshold?.toString() ?? null, existing.id);
       }
       return;
     }
@@ -103,8 +109,8 @@ export class ChainWatcher {
       const meta = await this.readErc20(t.address);
       t.name = t.name ?? meta.name; t.symbol = t.symbol ?? meta.symbol;
     }
-    const info = this.db.prepare(`INSERT OR IGNORE INTO tokens(chain, address, creator, launchpad, mechanics, pool_address, pair_token, name, symbol, discovered_at, discovered_block, status, graduation_threshold)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,'new',?)`).run(t.chain, t.address, t.creator, t.launchpad, t.mechanics, t.pool, t.pairToken, t.name, t.symbol, nowMs(), Number(t.blockNumber), t.graduationThreshold?.toString() ?? null);
+    const info = this.db.prepare(`INSERT OR IGNORE INTO tokens(chain, address, creator, launchpad, mechanics, pool_address, pair_token, name, symbol, discovered_at, discovered_block, status, graduation_threshold, pool_key_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'new',?,?)`).run(t.chain, t.address, t.creator, t.launchpad, t.mechanics, t.pool, t.pairToken, t.name, t.symbol, nowMs(), Number(t.blockNumber), t.graduationThreshold?.toString() ?? null, t.poolKey ? JSON.stringify(t.poolKey) : null);
     if (info.changes === 0) return;
     this.stats.tokens++;
     const id = Number(info.lastInsertRowid);

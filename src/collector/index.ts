@@ -15,6 +15,7 @@ export interface TokenRow {
   pool_address: string | null; pair_token: string | null; name: string | null; symbol: string | null;
   discovered_at: number; discovered_block: number | null; graduated_at: number | null;
   graduation_threshold?: string | null;
+  pool_key_json?: string | null;
 }
 
 const num = (v: bigint, dec = 18) => Number(formatUnits(v, dec));

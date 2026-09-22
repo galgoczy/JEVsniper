@@ -133,3 +133,38 @@ mellett ez ~2,5 hívás/mp. Ha a publikus RPC 429-et ad, a `watcher` és a gyűj
 ## Verify (a Mac Minin, futó bot mellett is)
 `npm run verify:step3` → a DB legutóbbi tokenjére kiírja az összes mezőt és az unknown-ok listáját.
 `npm run verify:step3 -- robinhood 0x...` → adott PONS-tokenre. Elvárás: minden mező kitöltve vagy `unknown`, hiba nélkül.
+
+---
+
+# 5. lépés – végrehajtás (kiegészítés)
+
+## Útvonalak
+- **PONS curve** (graduáció előtt): `buy(quoteIn,minOut,recipient)` payable, `sell(tokensIn,minOut,recipient)` approve után
+  (csak a curve-nek, csak az eladandó mennyiségre). Árajánlat a curve képletéből (pons-sdk `quoteNativeCurveBuy/Sell`),
+  a `currentSnipeTaxBps(wallet)` figyelembevételével. Graduációt a factory `getLaunchedToken(token).phase == 2` jelzi.
+- **Uniswap v4** (Clanker Base-en, PONS graduáció után, Uniswap-indítások): Universal Router `execute` –
+  V4_SWAP [SWAP_EXACT_IN_SINGLE, SETTLE_ALL, TAKE_ALL] + SWEEP. Árajánlat = eladás-szimuláció a hivatalos v4 Quoterrel
+  (`quoteExactInputSingle`, eth_call). Eladáshoz Permit2: ERC20 `approve(Permit2, pontos mennyiség)` +
+  `Permit2.approve(token, router, mennyiség, 30 perc)`. PoolKey a PoolManager `Initialize` eseményéből (DB `pool_key_json`),
+  PONS-nál a factory rekordból (poolFee, tickSpacing, meme hook).
+- **v2/v3 útvonal még nincs** (Base közvetlen Uniswap-indítások egy része); a következő lépésekben, ha a tölcsér indokolja.
+
+## Címek (forrás)
+- Base: Universal Router `0x6fF5…9b43`, v4 Quoter `0x0d5e…048D` (BaseScan címkézett, Uniswap docs v4 deployments).
+- Robinhood: Universal Router `0x06af…BF99` (Uniswap docs, 2026-07-06 újratelepítés; a pons-sdk még a régi `0x8876…0904`-et
+  használja), Quoter `0x8Dc1…8F94` (egyezik a pons-sdk quoterével), Permit2 kanonikus.
+- Ha a Robinhood Universal Router címe mégis a régi lenne, az 1. napi próba száraz futása (`estimateGas`) azonnal jelzi.
+
+## Executor
+- Nonce: max(lánc pending, DB `nonces`) – újraindítás után a DB-ből folytat. Gas: becslés ×1,2; USD-plafon vételnél
+  `max_gas_per_tx_usd`, eladásnál `max_gas_per_sell_usd`. OP-stack L1 díj (Base) a nyugtából, ha van (`l1Fee`).
+- Sikertelen szimuláció (revert): nem küld, gas nincs, de `fills`-be `failed` és a hibaszámláló nő. Sikertelen küldés: egy
+  újrapróbálás (config). `max_consecutive_failed_tx` elérésekor nincs új vétel (`/resume` old fel).
+- Eladás: mindig friss árajánlat; csúszás-lépcső: alap → 2× → `panic_slippage_pct`; ha egyik sem megy → `unsellable`.
+- STOP-fájl: vételt tilt, eladást nem. `/panic`: STOP + minden nyitott élő pozíció eladása a panic-csúszással.
+- MEV: küldés opcionálisan külön RPC-n (`*_PRIVATE_TX_RPC_URL`); Base-en a sequencer privát mempoolja az alapvédelem.
+
+## 1. napi próba
+`npm run day1 -- pick` → jelöltek; `npm run day1 -- <lánc> <cím>` → száraz (árajánlat, gas-becslés, nincs küldés);
+`--confirm` → éles: vétel 1 USD, szándékosan sikertelen eladás (10× minOut), eladás 50%, maradék eladása, nonce-ellenőrzés,
+gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegramról.

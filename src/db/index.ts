@@ -13,6 +13,7 @@ const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ["tokens", "graduated_at", "INTEGER"],
   ["tokens", "bytecode_hash", "TEXT"],
   ["tokens", "graduation_threshold", "TEXT"],
+  ["tokens", "pool_key_json", "TEXT"],
 ];
 
 function migrate(db: DB) {

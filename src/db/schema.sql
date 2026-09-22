@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS tokens (
   graduated_at INTEGER,
   bytecode_hash TEXT,
   graduation_threshold TEXT,           -- PONS: quote wei (stringként, bigint)
+  pool_key_json TEXT,                  -- Uniswap v4 PoolKey {currency0,currency1,fee,tickSpacing,hooks}
   UNIQUE(chain, address)
 );
 
