@@ -101,6 +101,11 @@ CREATE TABLE IF NOT EXISTS positions (
   closed_at INTEGER,
   close_reason TEXT,
   gross_pnl_usd REAL, fees_usd REAL, gas_usd REAL, jev_cost_usd REAL, net_pnl_usd REAL,
+  stages_done INTEGER NOT NULL DEFAULT 0,
+  native_received REAL NOT NULL DEFAULT 0,
+  next_check_at INTEGER,
+  creator_balance_at_entry REAL,
+  liquidity_at_entry REAL,
   UNIQUE(token_id, arm, exit_plan, window_sec)
 );
 
@@ -178,6 +183,18 @@ CREATE TABLE IF NOT EXISTS wallet_lists (
   occurrences INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY(chain, address, list)
+);
+
+-- Címkézett tokenek 24 órás sorsa (tanuláshoz, kalibrációhoz): elérte-e előbb a 2x-et, mint a -40%-ot
+CREATE TABLE IF NOT EXISTS token_outcomes (
+  token_id INTEGER PRIMARY KEY REFERENCES tokens(id),
+  ref_price REAL NOT NULL,
+  ref_at INTEGER NOT NULL,
+  max_multiple REAL NOT NULL DEFAULT 1,
+  min_multiple REAL NOT NULL DEFAULT 1,
+  first_hit TEXT,                     -- tp1_first | stop_first | NULL
+  hit_at INTEGER,
+  done_at INTEGER                     -- 24h után lezárva (neither_24h, ha first_hit NULL)
 );
 
 CREATE TABLE IF NOT EXISTS events (

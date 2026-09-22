@@ -188,3 +188,27 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
   gyűjtés, szűrés és árnyékkarok (rule_score, random_control) tovább futnak.
 - **Nyitott kérdés**: az élő vétel most a spec küszöbeivel azonnal élesedik, amint a bot fut a 6. lépéssel. Ha előbb
   1–2 nap árnyékfutást akarsz Jev-adattal, a `config.yaml` `mode: dry_run` erre való (minden fut, tx nem megy ki).
+
+---
+
+# 7. lépés – tartás, kiszállás, vészkilépés (kiegészítés)
+
+- **Árfeed kötegelve**, láncenként, a monitor 15 mp-es tick-jén: PONS curve-ök multicall (reserves, graduált), v4 poolok
+  PoolManager Swap események poolId-listával (200-as adagok), creator-egyenlegek multicall. Egy tick ≈ 3–4 RPC-hívás láncra,
+  a nyitott pozíciók számától nagyrészt függetlenül. Blokkonkénti futás a spec szerint, Jev nélkül.
+- **Kiszállási tervek** tiszta függvényben (`src/exit/plans.ts`): élő (2x 50%, 5x 30%, moon bag 20x / trailing -50% csak 5x
+  után / 7 nap), moon10/moon30, trail40/trail60, B (2,5x/3x/4x/6x 25%-onként), C (2x 50%, majd csúcstól -35%).
+  Kézzel végigszámolt példa a `verify:step7`-ben egyezik (1 USD → 6,2x bruttó, 5,09 USD nettó a modell-költségekkel).
+- **Vészfékek**: -40% a belépéshez, creator eladta 20%-át (egyenleg a belépéskorihoz képest), likviditás -30% (PONS curve;
+  v4-nél unknown), eladás-szimuláció sikertelen (a csúszás-lépcső után "unsellable", 5 percenként újra), risk_off →
+  config szerinti fázisok. Ismert scammer-wallet nagy eladása: a 12. lépés listái után él.
+- **Jev hold/exit** csak élő pozíciókra, az adaptív ütemben (15 mp / 60 mp / 5 perc / moon bag 15 perc), könnyű
+  állapottal (szorzó, csúcs, tartási idő, forgalom az utolsó ellenőrzés óta, creator-eladás). P(exit) > 0,6 → zárás.
+  Napi Jev-keret elérésekor a hold-kérdések kimaradnak, a vészfékek és tervlépcsők futnak.
+- **Árnyék-pozíciók**: szimulált vétel és eladás a költségmodellel (gas a mért lánconkénti értékből, díj: curve 2% /
+  pool 1%, csúszás x/(R+x) a likviditásból, MEV 0,3%); `fills` táblába `simulated` sorok. Csak támogatott útvonalú
+  tokenekre (PONS curve, v4 PoolKey-vel) nyílnak.
+- **24 órás kimenet-követés** (`token_outcomes`): minden tokenre, ahol bármelyik kar belépett: max/min szorzó, előbb 2x
+  vagy előbb -40%. Ez adja a kalibrációs táblát (9.) és a tanult modell címkéjét (13.).
+- **Élő pozíció zárása**: nettó = (kapott − befektetett ETH)·ETH/USD − gas − Jev-költség; napi PnL frissül; a compound-
+  kezelő (8.) erre a horogra (`onLiveClosed`) kapcsolódik.

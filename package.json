@@ -13,7 +13,8 @@
     "verify:step3": "tsx scripts/verify-step3.ts",
     "verify:step4": "tsx scripts/verify-step4.ts",
     "day1": "tsx scripts/day1-test.ts",
-    "verify:step6": "tsx scripts/verify-step6.ts"
+    "verify:step6": "tsx scripts/verify-step6.ts",
+    "verify:step7": "tsx scripts/verify-step7.ts"
   },
   "repository": {
     "type": "git",

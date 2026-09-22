@@ -123,6 +123,11 @@ execution:
   deadline_sec: 30
   retry_failed_tx_once: true
 
+# Árnyékkarok költségmodellje (8.) – az 1. napi mérésből; heti korrekció a riport alapján
+cost_model:
+  base:      { gas_buy_usd: 0.004, gas_sell_usd: 0.005, default_slippage_pct: 2, mev_allowance_pct: 0.3 }
+  robinhood: { gas_buy_usd: 0.025, gas_sell_usd: 0.030, default_slippage_pct: 2, mev_allowance_pct: 0.3 }
+
 telegram:
   enabled: true
   poll_interval_ms: 3000

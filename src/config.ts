@@ -12,6 +12,10 @@ const ChainCfg = z.object({
   native_symbol: z.string(),
 });
 
+const CostCfg = z.object({
+  gas_buy_usd: z.number().min(0), gas_sell_usd: z.number().min(0), default_slippage_pct: pct, mev_allowance_pct: pct,
+});
+
 const WatcherCfg = z.object({
   poll_interval_ms: z.number().int().min(500),
   max_block_range: z.number().int().min(1).max(2000),
@@ -117,6 +121,10 @@ export const ConfigSchema = z.object({
     max_price_impact_pct: pct,
     deadline_sec: z.number().int().positive(),
     retry_failed_tx_once: z.boolean(),
+  }),
+  cost_model: z.object({
+    base: CostCfg,
+    robinhood: CostCfg,
   }),
   telegram: z.object({ enabled: z.boolean(), poll_interval_ms: z.number().int().positive() }),
   report: z.object({ daily_time_utc: z.string(), output_dir: z.string() }),

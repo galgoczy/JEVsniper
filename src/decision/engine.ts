@@ -14,6 +14,7 @@ import type { RegimeGate } from "./regime.js";
 import type { Executor } from "../exec/executor.js";
 import { routeFor } from "../exec/routes.js";
 import { log } from "../logger.js";
+import { shadowCost } from "../exit/costmodel.js";
 
 export interface EngineDeps {
   db: DB; cfg: Config; jev: JevClient; regime: RegimeGate;
@@ -60,11 +61,15 @@ export class DecisionEngine {
     arms.push({ arm: "rule_score", res: ruleScoreArm(snap) });
     arms.push({ arm: "random_control", res: randomControlArm(t.address, cfg.entry.random_control_share) });
 
+    const supported = t.mechanics === "bonding_curve" || ((t.mechanics === "v4" || t.mechanics === "v4_hook") && !!t.pool_key_json);
     const posUsd = currentPositionUsd(db, cfg);
     const ins = db.prepare("INSERT INTO decisions(token_id, arm, window_sec, regime, decided_at, enter, reason, size_usd, jev_call_id) VALUES (?,?,?,?,?,?,?,?,?)");
     for (const a of arms) {
       ins.run(t.id, a.arm, w, regime, nowMs(), a.res.enter ? 1 : 0, a.res.reasons.join(","), a.res.enter ? posUsd * a.res.sizeMultiplier : null, callId);
-      if (a.res.enter && price !== null) this.openShadow(t, a.arm, w, price, Math.min(cfg.risk.max_position_usd, posUsd * a.res.sizeMultiplier));
+      if (a.res.enter && price !== null && supported) {
+        this.openShadow(t, a.arm, w, price, Math.min(cfg.risk.max_position_usd, posUsd * a.res.sizeMultiplier), snap);
+        db.prepare("INSERT OR IGNORE INTO token_outcomes(token_id, ref_price, ref_at) VALUES (?,?,?)").run(t.id, price, nowMs());
+      }
     }
 
     // 3) élő belépés csak az élő ablakban
@@ -77,10 +82,18 @@ export class DecisionEngine {
     await this.enterLive(t, snap, labels, Math.min(cfg.risk.max_position_usd, posUsd * live.sizeMultiplier), w);
   }
 
-  private openShadow(t: TokenRow, arm: string, w: number, price: number, sizeUsd: number) {
-    const ins = this.d.db.prepare(`INSERT OR IGNORE INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, peak_price_native)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,'pre_tp1',?)`);
-    for (const plan of SHADOW_EXIT_PLANS) ins.run(t.id, t.chain, arm, plan, w, nowMs(), price, sizeUsd, 0, 0, 0, price);
+  private openShadow(t: TokenRow, arm: string, w: number, price: number, sizeUsd: number, snap: ParamSnapshot) {
+    // szimulált vétel a költségmodellel: díj + csúszás + MEV levonva a kapott tokenből; gas a pozícióra
+    const { cfg } = this.d;
+    const ethUsd = num(snap.meta_snapshot.eth_usd) ?? 0;
+    const sizeNative = ethUsd > 0 ? sizeUsd / ethUsd : 0;
+    const feePct = t.launchpad === "pons" && !t.graduated_at ? 2 : 1;
+    const c = shadowCost(t.chain, "buy", sizeNative, { feePct, liquidityNative: num(snap.contract.liquidity_native) }, cfg.cost_model);
+    const tokens = price > 0 ? c.netNative / price : 0;
+    const creatorBal = num(snap.creator.token_share_pct) !== null && num(snap.contract.total_supply) !== null ? (num(snap.creator.token_share_pct)! / 100) * num(snap.contract.total_supply)! : null;
+    const ins = this.d.db.prepare(`INSERT OR IGNORE INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, peak_price_native, gas_usd, creator_balance_at_entry, liquidity_at_entry, next_check_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'pre_tp1',?,?,?,?,?)`);
+    for (const plan of SHADOW_EXIT_PLANS) ins.run(t.id, t.chain, arm, plan, w, nowMs(), price, sizeUsd, sizeNative, tokens, tokens, price, c.gasUsd, creatorBal, num(snap.contract.liquidity_native), nowMs());
   }
 
   private async enterLive(t: TokenRow, snap: ParamSnapshot, labels: Labels, sizeUsd: number, w: number) {
@@ -103,7 +116,9 @@ export class DecisionEngine {
       }
       const tokens = Number(r.tokensReceived) / 1e18;
       const entryPrice = Number(wei) / Number(r.tokensReceived);
-      db.prepare("UPDATE positions SET tokens_bought = ?, tokens_remaining = ?, entry_price_native = ?, peak_price_native = ?, gas_usd = ? WHERE id = ?").run(tokens, tokens, entryPrice, entryPrice, r.gasUsd ?? 0, posId);
+      const creatorBal = num(snap.creator.token_share_pct) !== null && num(snap.contract.total_supply) !== null ? (num(snap.creator.token_share_pct)! / 100) * num(snap.contract.total_supply)! : null;
+      db.prepare("UPDATE positions SET tokens_bought = ?, tokens_remaining = ?, entry_price_native = ?, peak_price_native = ?, gas_usd = ?, creator_balance_at_entry = ?, liquidity_at_entry = ?, next_check_at = ? WHERE id = ?")
+        .run(tokens, tokens, entryPrice, entryPrice, r.gasUsd ?? 0, creatorBal, num(snap.contract.liquidity_native), nowMs(), posId);
       db.prepare("INSERT INTO daily_state(day, entries) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET entries = entries + 1").run(todayUtc());
       db.prepare("UPDATE tokens SET status = 'entered' WHERE id = ?").run(t.id);
       await this.d.notify(`🟢 VÉTEL ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${sizeUsd.toFixed(2)} USD\nP(2x előbb)=${labels.p_tp1.toFixed(2)} vevőminőség=${labels.buyer_quality} minta=${labels.trade_pattern} időzítés=${labels.entry_timing}\ngas ${(r.gasUsd ?? 0).toFixed(4)} USD, tx ${r.hash}`);

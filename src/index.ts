@@ -15,6 +15,8 @@ import { routeFor } from "./exec/routes.js";
 import { rpcUrls } from "./chains/index.js";
 import { RegimeGate } from "./decision/regime.js";
 import { DecisionEngine } from "./decision/engine.js";
+import { PriceFeed } from "./exit/pricefeed.js";
+import { PositionMonitor } from "./exit/monitor.js";
 import { getAddress } from "viem";
 
 /**
@@ -82,6 +84,11 @@ async function main() {
   }));
   const engine = new DecisionEngine({ db, cfg, jev, regime, executors, ethUsd: () => ethPrice.get(), notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
   await regime.refresh(true).catch((e) => log.warn("rezsim init hiba", { error: (e as Error).message }));
+  // 7. lépés: tartás-figyelés, kiszállás (élő + árnyék), 24 órás kimenet-követés
+  const feeds = { base: new PriceFeed("base", clients.base, db), robinhood: new PriceFeed("robinhood", clients.robinhood, db) };
+  const monitor = new PositionMonitor({ db, cfg, jev, executors, feeds, ethUsd: () => ethPrice.get(), regime: () => regime.regime,
+    notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
+  monitor.start(15_000);
   const regimeTimer = setInterval(() => void regime.refresh().catch(() => undefined), 60_000);
 
   // 4. lépés: kemény szűrők minden pillanatképre; 6. lépés: döntés (élő ablakban belépés, máshol árnyék)
@@ -111,7 +118,7 @@ async function main() {
     `Jev Sniper – ${cfg.mode}`,
     `wallet: ${account.address}`,
     ...chainStatus,
-    `nyitott élő pozíciók: ${open.length}`,
+    `nyitott élő pozíciók: ${(db.prepare("SELECT COUNT(*) n FROM positions WHERE arm='live' AND closed_at IS NULL").get() as { n: number }).n}, árnyék: ${(db.prepare("SELECT COUNT(*) n FROM positions WHERE arm NOT IN ('live','day1_test') AND closed_at IS NULL").get() as { n: number }).n}, lezárt élő (24h): ${(db.prepare("SELECT COUNT(*) n, COALESCE(SUM(net_pnl_usd),0) s FROM positions WHERE arm='live' AND closed_at > ?").get(Date.now() - 86_400_000) as { n: number; s: number }).n}`,
     `ma: belépés ${daily.entries}/${cfg.risk.max_entries_per_day}, PnL ${daily.realized_pnl_usd.toFixed(2)} USD, Jev-költség ${jev.dailyCostUsd().toFixed(4)} USD`,
     `compound: betét ${compound.deposit_usd}, kassza ${compound.growth_pool_usd.toFixed(2)}, tartalék ${compound.reserve_usd.toFixed(2)}, pozícióméret ${compound.position_usd.toFixed(2)} USD`,
     `tokenek (24h): ${tokenCounts().map((r) => `${r.chain}/${r.launchpad}=${r.n}`).join(", ") || "még nincs"}`,
@@ -148,6 +155,7 @@ async function main() {
     watchers.forEach((w) => w.stop());
     scheduler.stop();
     clearInterval(regimeTimer);
+    monitor.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);
