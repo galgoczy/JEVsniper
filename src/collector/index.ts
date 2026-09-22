@@ -20,13 +20,16 @@ export interface TokenRow {
 const num = (v: bigint, dec = 18) => Number(formatUnits(v, dec));
 
 /** getLogs darabolva (a publikus RPC-k nagy blokktartományt elutasítanak); max. `maxSpan` blokkot néz vissza. */
-const CHUNK = 2000n;
-const MAX_SPAN = 20_000n;
+// Robinhood Chain ~0,26 mp blokkidő → kisebb darab; a verify:step2 800 blokkal biztosan működött
+const CHUNK: Record<ChainKey, bigint> = { base: 2000n, robinhood: 500n };
+const MAX_SPAN: Record<ChainKey, bigint> = { base: 20_000n, robinhood: 20_000n };
+let currentChain: ChainKey = "base";
 async function getLogsChunked<T>(from: bigint, to: bigint, fetch: (f: bigint, t: bigint) => Promise<T[]>): Promise<T[]> {
-  const start = to - from > MAX_SPAN ? to - MAX_SPAN : from;
+  const chunk = CHUNK[currentChain], span = MAX_SPAN[currentChain];
+  const start = to - from > span ? to - span : from;
   const out: T[] = [];
-  for (let f = start; f <= to; f += CHUNK + 1n) {
-    const t = f + CHUNK > to ? to : f + CHUNK;
+  for (let f = start; f <= to; f += chunk + 1n) {
+    const t = f + chunk > to ? to : f + chunk;
     out.push(...await fetch(f, t));
   }
   return out;
@@ -57,11 +60,16 @@ export class Collector {
   /** Utolsó tx-szám lekérési hiba (diagnosztika a verify-hez). */
   public lastTxCountError: string | null = null;
   public lastPoolError: string | null = null;
+  /** Az utolsó collect() során elnyelt RPC-hibák (diagnosztika). */
+  public errors: string[] = [];
+  private err(where: string) { return (e: unknown) => { this.errors.push(`${where}: ${(e as Error).message.split("\n")[0]!.slice(0, 160)}`); return null; }; }
   private codeCache = new Map<string, boolean>();
   constructor(private db: DB, private clients: Record<ChainKey, PublicClient>, private ethPrice: EthPrice) {}
 
   async collect(t: TokenRow, windowSec: number): Promise<ParamSnapshot> {
     const c = this.clients[t.chain];
+    currentChain = t.chain;
+    this.errors = [];
     const takenAt = nowMs();
     const [head, ethUsd, gasPrice] = await Promise.all([c.getBlockNumber(), this.ethPrice.get(), c.getGasPrice().catch(() => null)]);
     const headBlock = await c.getBlock({ blockNumber: head }).catch(() => null);
@@ -73,8 +81,8 @@ export class Collector {
     // --- szerződés
     const [code, decimalsR, supplyR, ownerR] = await Promise.all([
       c.getCode({ address: t.address }).catch(() => undefined),
-      c.readContract({ address: t.address, abi: erc20Abi, functionName: "decimals" }).catch(() => null),
-      c.readContract({ address: t.address, abi: erc20Abi, functionName: "totalSupply" }).catch(() => null),
+      c.readContract({ address: t.address, abi: erc20Abi, functionName: "decimals" }).catch(this.err("decimals")),
+      c.readContract({ address: t.address, abi: erc20Abi, functionName: "totalSupply" }).catch(this.err("totalSupply")),
       c.readContract({ address: t.address, abi: ownableAbi, functionName: "owner" }).catch(() => null),
     ]);
     const decimals = decimalsR ?? 18;
@@ -87,12 +95,20 @@ export class Collector {
 
     // --- pool / curve állapot + swapok
     const ps = await this.poolState(t, c, pool, poolId, pair, decimals, fromBlock, head).catch((e) => {
-      this.lastPoolError = (e as Error).message.slice(0, 300);
+      this.lastPoolError = (e as Error).message.slice(0, 300); this.err("pool/curve")(e);
       log.debug("poolState hiba", { token: t.address, error: (e as Error).message }); return null;
     });
 
     // --- transzferek → holderek
-    const transfers = await this.transfers(c, t.address, fromBlock, head, decimals).catch(() => [] as TransferRec[]);
+    const transfers = await this.transfers(c, t.address, fromBlock, head, decimals).catch((e) => { this.err("Transfer-logok")(e); return [] as TransferRec[]; });
+    // név/ticker pótlása, ha felfedezéskor nem sikerült (PONS eseményben nincs név)
+    if (!t.name || !t.symbol) {
+      const [nm, sy] = await Promise.all([
+        c.readContract({ address: t.address, abi: erc20Abi, functionName: "name" }).catch(this.err("name")),
+        c.readContract({ address: t.address, abi: erc20Abi, functionName: "symbol" }).catch(this.err("symbol")),
+      ]);
+      if (nm || sy) { t.name = t.name ?? nm; t.symbol = t.symbol ?? sy; this.db.prepare("UPDATE tokens SET name = COALESCE(name, ?), symbol = COALESCE(symbol, ?) WHERE id = ?").run(nm, sy, t.id); }
+    }
     const contractSenders = await this.contractSet(c, transfers.map((x) => x.from));
     const hs = holderStats(transfers, { pool: pool ?? (ps?.poolAddressForTransfers ?? null), creator: t.creator, totalSupply, contractSenders });
 
@@ -101,7 +117,7 @@ export class Collector {
     const txCounts: Array<number | null> = [];
     for (let i = 0; i < top20.length; i += 5) { // 5-ös adagokban, hogy a publikus RPC ne dobja el
       txCounts.push(...await Promise.all(top20.slice(i, i + 5).map((a) => c.getTransactionCount({ address: a as Address })
-        .catch((e) => { this.lastTxCountError = (e as Error).message.slice(0, 300); return null; }))));
+        .catch((e) => { this.lastTxCountError = (e as Error).message.slice(0, 300); this.err("tx-szám")(e); return null; }))));
     }
     const known = txCounts.filter((n): n is number => n !== null);
     const freshRatio: U<number> = known.length ? known.filter((n) => n <= 3).length / known.length : unk;
@@ -109,7 +125,7 @@ export class Collector {
 
     // --- creator
     const [creatorTx, creatorBal] = t.creator
-      ? await Promise.all([c.getTransactionCount({ address: t.creator }).catch(() => null), c.getBalance({ address: t.creator }).catch(() => null)])
+      ? await Promise.all([c.getTransactionCount({ address: t.creator }).catch(this.err("creator tx-szám")), c.getBalance({ address: t.creator }).catch(this.err("creator egyenleg"))])
       : [null, null];
     const creatorRows = t.creator ? this.db.prepare("SELECT COUNT(*) n, SUM(discovered_at > ?) n24, SUM(graduated_at IS NOT NULL) g FROM tokens WHERE chain = ? AND lower(creator) = lower(?) AND id != ?")
       .get(takenAt - 86_400_000, t.chain, t.creator, t.id) as { n: number; n24: number | null; g: number | null } : { n: 0, n24: 0, g: 0 };
@@ -266,7 +282,7 @@ export class Collector {
     if (t.mechanics === "bonding_curve" && pool) {
       out.poolAddressForTransfers = pool;
       const rd = <F extends "quoteReserve" | "tokenReserve" | "reservedTokens" | "feeBps" | "creatorTaxBps" | "graduated" | "isNativeQuote">(fn: F) =>
-        c.readContract({ address: pool, abi: ponsCurveAbi, functionName: fn }).catch(() => null);
+        c.readContract({ address: pool, abi: ponsCurveAbi, functionName: fn }).catch(this.err(`curve.${fn}`));
       const [q, tk, rs, fee, tax, grad] = await Promise.all([rd("quoteReserve"), rd("tokenReserve"), rd("reservedTokens"), rd("feeBps"), rd("creatorTaxBps"), rd("graduated")]);
       if (typeof q === "bigint" && typeof tk === "bigint" && tk > 0n) {
         out.priceNative = Number(q) / Number(tk) * 10 ** (dec - 18);
@@ -281,7 +297,8 @@ export class Collector {
       }
       if (typeof fee === "bigint" && typeof tax === "bigint") { out.buyTaxPct = Number(fee + tax) / 100; out.sellTaxPct = Number(fee + tax) / 100; }
       out.graduated = grad === true;
-      out.sellSimulation = typeof q === "bigint" && q > 0n && grad === false ? "ok" : grad === true ? "not_supported" : "failed";
+      // Csak előzetes jelzés: a valódi eladás-szimuláció (eth_call) az 5. lépésben. RPC-hiba → unknown, nem "failed".
+      out.sellSimulation = grad === true ? "not_supported" : typeof q === "bigint" && typeof tk === "bigint" && tk > 0n ? "ok" : unk;
       const curveEvents = ponsCurveAbi.filter((x) => x.type === "event");
       const rawLogs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pool, events: curveEvents, fromBlock: f, toBlock: t }) as Promise<unknown[]>);
       const logs = rawLogs as unknown as Array<{ eventName: string; args: Record<string, bigint | string>; blockNumber: bigint }>;
