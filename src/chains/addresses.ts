@@ -1,4 +1,4 @@
-import type { Address } from "viem";
+import { getAddress, type Address } from "viem";
 import type { ChainKey } from "./index.js";
 
 /**
@@ -7,7 +7,7 @@ import type { ChainKey } from "./index.js";
  */
 export const ZERO: Address = "0x0000000000000000000000000000000000000000";
 
-export const ADDRESSES: Record<ChainKey, {
+type AddressBook = {
   weth: Address;
   clankerV4Factory?: Address;
   ponsV2Factory?: Address;
@@ -19,7 +19,9 @@ export const ADDRESSES: Record<ChainKey, {
   universalRouter?: Address;
   v4Quoter?: Address;
   permit2?: Address;
-}> = {
+};
+
+const RAW: Record<ChainKey, AddressBook> = {
   base: {
     // OP-stack előre telepített WETH9 (Base docs)
     weth: "0x4200000000000000000000000000000000000006",
@@ -56,3 +58,8 @@ export const ADDRESSES: Record<ChainKey, {
     permit2: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
   },
 };
+
+/** Minden cím EIP-55 checksum formára hozva (a viem elutasítja a rossz kis-nagybetű-mintát). */
+export const ADDRESSES: Record<ChainKey, AddressBook> = Object.fromEntries(
+  Object.entries(RAW).map(([chain, book]) => [chain, Object.fromEntries(Object.entries(book).map(([k, v]) => [k, v ? getAddress(v.toLowerCase()) : v]))]),
+) as Record<ChainKey, AddressBook>;
