@@ -76,9 +76,13 @@ export class DecisionEngine {
     if (w !== cfg.evaluation.live_window_sec || !labels) return;
     const live = arms.find((a) => a.arm === "live_rule")!.res;
     if (!live.enter) return;
-    const block = riskBlock(db, cfg, t, { jevPaused: this.d.jev.paused, regime, consecutiveFailed: this.d.executors[t.chain]?.consecutiveFailed ?? 0 });
+    const block = cfg.mode === "dry_run" ? "dry_run" : riskBlock(db, cfg, t, { jevPaused: this.d.jev.paused, regime, consecutiveFailed: this.d.executors[t.chain]?.consecutiveFailed ?? 0 });
     ins.run(t.id, "live", w, regime, nowMs(), block ? 0 : 1, block ?? "enter", block ? null : posUsd * live.sizeMultiplier, callId);
-    if (block) { log.info(`Élő belépés blokkolva: ${block}`, { token: t.symbol }); return; }
+    if (block) {
+      log.info(`Élő belépés blokkolva: ${block}`, { token: t.symbol });
+      if (block === "dry_run") await this.d.notify(`🧪 dry_run: az élő szabály BELÉPNE ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${posUsd.toFixed(2)} USD-vel (P(2x)=${labels.p_tp1.toFixed(2)}, vevőminőség ${labels.buyer_quality}, ${labels.trade_pattern}, ${labels.entry_timing})`);
+      return;
+    }
     await this.enterLive(t, snap, labels, Math.min(cfg.risk.max_position_usd, posUsd * live.sizeMultiplier), w);
   }
 
@@ -106,14 +110,18 @@ export class DecisionEngine {
     const token = getAddress(t.address);
     try {
       const route = await routeFor(ex.client, t.chain, t);
-      const posId = Number(db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase)
-        VALUES (?,?,'live','live',?,?,?,?,?,0,0,'pre_tp1')`).run(t.id, t.chain, w, nowMs(), num(snap.dynamics.price_native) ?? 0, sizeUsd, Number(wei) / 1e18).lastInsertRowid);
-      const r = await ex.buy(route, token, wei, cfg.execution.max_slippage_pct, { positionId: posId });
+      // A pozíció sora csak sikeres vétel után jön létre; a sikertelen vétel gas-költsége a fills táblába kerül (position_id nélkül)
+      const r = await ex.buy(route, token, wei, cfg.execution.max_slippage_pct, {});
       if (!r.ok || r.tokensReceived <= 0n) {
-        db.prepare("UPDATE positions SET phase = 'closed', closed_at = ?, close_reason = ?, net_pnl_usd = ? WHERE id = ?").run(nowMs(), `buy_failed:${r.error ?? "no_tokens"}`, -(r.gasUsd ?? 0), posId);
+        db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason, gas_usd, net_pnl_usd) VALUES (?,?,'live','live',?,?,?,?,?,0,0,'closed',?,?,?,?)")
+          .run(t.id, t.chain, w, nowMs(), num(snap.dynamics.price_native) ?? 0, sizeUsd, Number(wei) / 1e18, nowMs(), `buy_failed:${r.error ?? "no_tokens"}`, r.gasUsd ?? 0, -(r.gasUsd ?? 0));
         await this.d.notify(`⚠️ Vétel sikertelen ${t.chain}/${t.symbol ?? t.address}: ${r.error ?? "nem jött token"}`);
         return;
       }
+      const posId = Number(db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase)
+        VALUES (?,?,'live','live',?,?,?,?,?,0,0,'pre_tp1')`).run(t.id, t.chain, w, nowMs(), num(snap.dynamics.price_native) ?? 0, sizeUsd, Number(wei) / 1e18).lastInsertRowid);
+      db.prepare("INSERT INTO fills(position_id, chain, kind, is_live, at, tx_hash, nonce, block_number, status, real_gas_usd, amount_in) VALUES (?,?,'buy',1,?,?,?,?,'success',?,?)")
+        .run(posId, t.chain, nowMs(), r.hash, r.nonce, r.blockNumber !== null ? Number(r.blockNumber) : null, r.gasUsd, Number(wei) / 1e18);
       const tokens = Number(r.tokensReceived) / 1e18;
       const entryPrice = Number(wei) / Number(r.tokensReceived);
       const creatorBal = num(snap.creator.token_share_pct) !== null && num(snap.contract.total_supply) !== null ? (num(snap.creator.token_share_pct)! / 100) * num(snap.contract.total_supply)! : null;

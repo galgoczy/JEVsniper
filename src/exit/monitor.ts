@@ -43,6 +43,8 @@ export class PositionMonitor {
     this.d.db.prepare(`INSERT OR IGNORE INTO token_outcomes(token_id, ref_price, ref_at) SELECT token_id, entry_price_native, opened_at FROM positions
       WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm NOT IN ('live','day1_test') AND entry_price_native > 0 AND opened_at > ?`).run(now - 86_400_000);
     const inv = this.d.db.prepare("UPDATE positions SET phase = 'closed', closed_at = ?, close_reason = 'invalid_no_tokens', net_pnl_usd = 0 WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm NOT IN ('live','day1_test')").run(now);
+    const invLive = this.d.db.prepare("UPDATE positions SET phase = 'closed', closed_at = ?, close_reason = 'buy_failed:dry_run', net_pnl_usd = 0 WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm = 'live'").run(now);
+    if (invLive.changes) log.info(`Vétel nélküli élő pozíció-sorok lezárva (dry_run maradék): ${invLive.changes}`);
     if (inv.changes) log.info(`Érvénytelen (token nélküli) árnyék-pozíciók lezárva: ${inv.changes}`);
     this.timer = setInterval(() => void this.tick(), tickMs); void this.tick();
   }
