@@ -102,7 +102,10 @@ if (!confirm) { console.log("\nSzáraz próba kész. Éles: ugyanez --confirm ka
 
 // ---- ÉLES ----
 const posId = Number(db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase)
-  VALUES (?,?,'day1_test','live',?,?,0,?,?,0,0,'pre_tp1')`).run(row.id, chain, cfg.evaluation.live_window_sec, nowMs(), cfg.risk.base_position_usd, Number(formatEther(oneUsdWei))).lastInsertRowid);
+  VALUES (?,?,'day1_test',?,?,?,0,?,?,0,0,'pre_tp1')`).run(row.id, chain, `day1_${Date.now()}`, cfg.evaluation.live_window_sec, nowMs(), cfg.risk.base_position_usd, Number(formatEther(oneUsdWei))).lastInsertRowid);
+const tokBefore = await ex.tokenBalance(address);
+const ethBefore = await ex.nativeBalance();
+if (tokBefore > 0n) console.log(`ℹ️ már van ${formatUnits(tokBefore, 18)} token a walletben ebből (előző próba maradéka) – a végén ezt is eladjuk`);
 const ops: { op: string; ok: boolean; gasUsd: number | null; hash: string | null; note: string }[] = [];
 const nonce0 = await ex.nextNonce();
 
@@ -133,6 +136,9 @@ console.log("\n== Eredmény");
 for (const o of ops) console.log(`${o.ok ? "✅" : "❌"} ${o.op}: gas ${o.gasUsd !== null ? o.gasUsd.toFixed(4) + " USD" : "-"} ${o.hash ?? ""} ${o.note}`);
 const fills = db.prepare("SELECT kind, status, real_gas_usd, est_gas_usd, tx_hash FROM fills WHERE position_id = ? ORDER BY id").all(posId) as Record<string, unknown>[];
 console.log(`\nDB fills (${fills.length} sor):`); for (const f of fills) console.log("  ", JSON.stringify(f));
+const ethAfter = await ex.nativeBalance();
+const pnlUsd = (Number(formatEther(ethAfter - ethBefore))) * eth;
+console.log(`\nKör mérlege (ETH-egyenleg változás, gasszal együtt): ${pnlUsd >= 0 ? "+" : ""}${pnlUsd.toFixed(4)} USD az 1 USD-s pozícióra`);
 const gasSum = ops.reduce((s, o) => s + (o.gasUsd ?? 0), 0);
 console.log(`\nÖsszes gas ebben a körben: ${gasSum.toFixed(4)} USD → javasolt max_gas_per_tx_usd ≈ ${Math.max(0.05, (Math.max(...ops.map((o) => o.gasUsd ?? 0)) * 2)).toFixed(3)} (config.yaml risk.)`);
 db.close();
