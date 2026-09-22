@@ -17,6 +17,7 @@ import { RegimeGate } from "./decision/regime.js";
 import { DecisionEngine } from "./decision/engine.js";
 import { PriceFeed } from "./exit/pricefeed.js";
 import { PositionMonitor } from "./exit/monitor.js";
+import { CompoundManager } from "./compound/index.js";
 import { getAddress } from "viem";
 
 /**
@@ -86,8 +87,11 @@ async function main() {
   await regime.refresh(true).catch((e) => log.warn("rezsim init hiba", { error: (e as Error).message }));
   // 7. lépés: tartás-figyelés, kiszállás (élő + árnyék), 24 órás kimenet-követés
   const feeds = { base: new PriceFeed("base", clients.base, db), robinhood: new PriceFeed("robinhood", clients.robinhood, db) };
+  // 8. lépés: compound-kezelő (lezárt élő pozíciók könyvelése, napi méret-újraszámolás)
+  const compoundMgr = new CompoundManager(db, cfg, (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)));
+  const compoundTimer = compoundMgr.schedule();
   const monitor = new PositionMonitor({ db, cfg, jev, executors, feeds, ethUsd: () => ethPrice.get(), regime: () => regime.regime,
-    notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
+    notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)), onLiveClosed: (p) => compoundMgr.onLiveClosed(p.net_pnl_usd) });
   monitor.start(15_000);
   const regimeTimer = setInterval(() => void regime.refresh().catch(() => undefined), 60_000);
 
@@ -156,6 +160,7 @@ async function main() {
     scheduler.stop();
     clearInterval(regimeTimer);
     monitor.stop();
+    clearInterval(compoundTimer);
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);

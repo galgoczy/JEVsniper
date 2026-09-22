@@ -212,3 +212,17 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
   vagy előbb -40%. Ez adja a kalibrációs táblát (9.) és a tanult modell címkéjét (13.).
 - **Élő pozíció zárása**: nettó = (kapott − befektetett ETH)·ETH/USD − gas − Jev-költség; napi PnL frissül; a compound-
   kezelő (8.) erre a horogra (`onLiveClosed`) kapcsolódik.
+
+---
+
+# 8. lépés – compound-kezelő (kiegészítés)
+
+- Nyereség 30% → növekedési kassza, 70% → tartalék; veszteség a betétből, majd a kasszából, a tartalékot soha.
+- Forgó tőke = betét + kassza; csúcs követve; csúcstól -30% → a kassza fele számít a méretbe, amíg új csúcs nincs.
+- Méret naponta 0:00 UTC (`compound.recalc_time_utc`): min(max, alap + effektív kassza / max_open_positions); menet közben
+  a nyitott pozíciók mérete nem változik (a méretet a belépés pillanatában olvassa a döntési motor).
+- Opcionális kar (`require_positive_vs_random_control`, alapból ki): a méretnövelés csak akkor, ha az utolsó 7 nap élő
+  átlagos nettója jobb, mint a random_control kar élő tervének átlagos nettója.
+- Verify (`npm run verify:step8`): 3 nyerő (+2, +3, +5), 2 vesztes (−1, −0,8) → kassza 3,00, tartalék 7,00, betét 28,20,
+  méret 1,20; utána −10 → forgó tőke −32% a csúcstól → kassza felezve → méret 1,10; tartalék érintetlen. Egyezik.
+- A tartalék "elkerítése": a riport mutatja; a bot nem utal ki (a tulajdonos hetente kézzel).
