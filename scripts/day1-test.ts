@@ -27,7 +27,8 @@ if (a1 === "pick" || !a1) {
   const rows = db.prepare(`SELECT t.chain, t.launchpad, t.symbol, t.address, t.graduated_at, t.pool_key_json, s.params_json FROM tokens t JOIN snapshots s ON s.token_id = t.id
     WHERE s.window_sec = ? AND t.status != 'filtered' AND t.discovered_at BETWEEN ? AND ? ORDER BY s.id DESC LIMIT 4000`)
     .all(cfg.evaluation.live_window_sec, Date.now() - 24 * 3600_000, Date.now() - 20 * 60_000) as { chain: string; launchpad: string; symbol: string | null; address: string; graduated_at: number | null; pool_key_json: string | null; params_json: string }[];
-  const scored = rows.map((r) => { const p = JSON.parse(r.params_json); return { ...r, buys: Number(p.dynamics?.buys) || 0, holders: Number(p.holders?.count) || 0, liq: Number(p.contract?.liquidity_usd) || 0 }; });
+  const scored = rows.map((r) => { const p = JSON.parse(r.params_json); return { ...r, buys: Number(p.dynamics?.buys) || 0, holders: Number(p.holders?.count) || 0, liq: Number(p.contract?.liquidity_usd) || 0, sellSim: p.contract?.sell_simulation as string }; })
+    .filter((r) => r.sellSim !== "failed");
   for (const chain of ["robinhood", "base"] as const) {
     const cands = scored.filter((r) => r.chain === chain && (chain === "robinhood" ? r.launchpad === "pons" : (r.launchpad === "clanker" || r.launchpad === "uniswap") && r.pool_key_json))
       .sort((a, b) => b.buys - a.buys).slice(0, 3);
@@ -52,7 +53,13 @@ console.log(`Token: ${chain}/${row.launchpad} ${row.symbol ?? "?"} ${address}\nW
 
 const route = await routeFor(clients[chain], chain, row);
 console.log(`Útvonal: ${route.kind}`);
-const q = await route.quoteBuy(oneUsdWei, ex.address);
+let q;
+try { q = await route.quoteBuy(oneUsdWei, ex.address); }
+catch (e) {
+  const m = (e as Error).message;
+  const reason = m.includes("NotEnoughLiquidity") || m.includes("6190b2b0") ? "a poolnak nincs likviditása (Quoter: NotEnoughLiquidity)" : m.split("\n")[0]!.slice(0, 160);
+  console.log(`❌ Nem árazható, ez a token nem vehető meg: ${reason}\n   Válassz másik jelöltet (npm run day1 -- pick).`); process.exit(1);
+}
 console.log(`Árajánlat vétel: ${formatUnits(q.amountOut, 18)} token, díj ${usd(q.feeWei)} USD, adó ${usd(q.taxWei)} USD ${q.note ?? ""}`);
 const buyTx = route.buildBuy(oneUsdWei, (q.amountOut * 92n) / 100n, ex.address, cfg.execution.deadline_sec);
 const gas = await clients[chain].estimateGas({ account: ex.address, to: buyTx.to, data: buyTx.data, value: buyTx.value });

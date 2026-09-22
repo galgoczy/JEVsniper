@@ -7,6 +7,7 @@ import { erc20Abi } from "../abis/uniswap.js";
 import { ponsCurveAbi } from "../abis/pons.js";
 import { uniswapV2PairAbi, uniswapV3PoolAbi, uniswapV4SwapAbi, transferEventAbi, ownableAbi, chainlinkAggregatorAbi } from "../abis/pools.js";
 import { holderStats, swapStats, priceFromSqrtX96, findDangerousSelectors, type SwapRec, type TransferRec } from "./stats.js";
+import { UniswapV4Route, type PoolKey } from "../exec/routes.js";
 import type { ParamSnapshot, U } from "./types.js";
 import { log } from "../logger.js";
 
@@ -375,8 +376,24 @@ export class Collector {
         out.swaps.push({ buyer: l.args.sender!, isBuy, native: Math.abs(num(quoteAmt)), tokens: Math.abs(num(tokenAmt, dec)), block: l.blockNumber!, ts: ts.get(l.blockNumber!) ?? 0, priceNative: price });
       }
       if (out.swaps.length) { out.priceNative = out.swaps.at(-1)!.priceNative!; if (out.launchPriceNative === null) out.launchPriceNative = out.swaps[0]!.priceNative; cache.launchPrice = out.launchPriceNative; }
-      out.sellSimulation = "not_supported"; // v4 quoter a végrehajtási modulban (5. lépés)
       out.buyTaxPct = 0; out.sellTaxPct = 0; // v4 poolnál a hook-díj a Swap eventben (fee), adó nincs
+      // Eladás-szimuláció a hivatalos v4 Quoterrel: kis próbavétel, majd a kapott mennyiség eladása (2 eth_call).
+      if (t.pool_key_json) {
+        try {
+          const route = new UniswapV4Route(c, t.chain, t.address, JSON.parse(t.pool_key_json) as PoolKey);
+          const probe = 10n ** 15n; // 0,001 ETH
+          const b = await route.quoteBuy(probe);
+          const sOut = (await route.quoteSell(b.amountOut)).amountOut;
+          out.sellSimulation = sOut > 0n ? "ok" : "failed";
+          const roundTrip = Number(sOut) / Number(probe); // 1 = veszteségmentes; a díjak + csúszás miatt < 1
+          out.sellTaxPct = Math.max(0, Math.round((1 - roundTrip) * 10000) / 100 / 2); // oda-vissza veszteség fele ≈ effektív egyirányú költség
+          if (out.priceNative === unk && b.amountOut > 0n) out.priceNative = Number(probe) / Number(b.amountOut) * 10 ** (dec - 18);
+        } catch (e) {
+          const m = (e as Error).message;
+          out.sellSimulation = m.includes("NotEnoughLiquidity") || m.includes("6190b2b0") || m.includes("reverted") ? "failed" : unk;
+          if (out.sellSimulation === unk) this.err("v4 quoter")(e);
+        }
+      } else out.sellSimulation = unk;
       return out;
     }
 
