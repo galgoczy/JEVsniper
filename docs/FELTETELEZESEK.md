@@ -226,3 +226,17 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Verify (`npm run verify:step8`): 3 nyerő (+2, +3, +5), 2 vesztes (−1, −0,8) → kassza 3,00, tartalék 7,00, betét 28,20,
   méret 1,20; utána −10 → forgó tőke −32% a csúcstól → kassza felezve → méret 1,10; tartalék érintetlen. Egyezik.
 - A tartalék "elkerítése": a riport mutatja; a bot nem utal ki (a tulajdonos hetente kézzel).
+
+---
+
+# 9. lépés – riport (kiegészítés)
+
+- Napi riport markdownban (`reports/YYYY-MM-DD.md`, config `report.daily_time_utc`) + rövid Telegram-összefoglaló;
+  kézzel bármikor: Telegram `/report` vagy `npm run report`.
+- Tartalom a spec szerint: tölcsér (új → kiesett okonként → értékelt → átment → élő szabály → élő belépés, blokkolás okai),
+  élő (lezárt, nettó, fix költségek aránya, tx-ek becsült vs valódi gas, kilépési okok, Jev-hívások/költség/késés),
+  compound-állapot és méretváltozások, árnyékkarok karonként/ablakonként/tervenként (n, találat, medián és átlag szorzó,
+  nettó Σ, átlag, bootstrap 90% CI, top 3 nélkül, random_control-hoz mérve), csúcs-szorzók (≥2x/5x/10x/20x) és
+  trailing-kilépések, rezsim szerinti bontás, kalibrációs tábla (P(2x előbb) sávok vs. 24h valós kimenet),
+  címke-informativitás, kimenet-követés, listák, vesztes sorozat, Jev-hibaarány, rezsim-idővonal.
+- Verify (`npm run verify:step9`): a riport számai közvetlen SQL-lel keresztellenőrizve (random_control átlag, új tokenek).
