@@ -8,6 +8,7 @@ import { stopFileExists, createStopFile, removeStopFile } from "./killswitch.js"
 import { log } from "./logger.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { ChainWatcher } from "./watchers/index.js";
+import { Collector, CollectorScheduler, EthPrice, tokenRow } from "./collector/index.js";
 
 /**
  * Főprogram – 1. lépés: váz. Indul, ellenőrzi a configot/env-et, megnyitja a DB-t,
@@ -40,15 +41,21 @@ async function main() {
     }
   }
 
+  // 3. lépés: paramétergyűjtő (30/60/180 mp-nél pillanatkép minden új tokenről)
+  const clients = { base: publicClient("base", rpc.base), robinhood: publicClient("robinhood", rpc.robinhood) };
+  const collector = new Collector(db, clients, new EthPrice(clients.base));
+  const scheduler = new CollectorScheduler(db, collector, cfg.evaluation.windows_sec, cfg.db.max_snapshot_bytes);
+
   // 2. lépés: tokenfigyelés láncenként
   const watchers: ChainWatcher[] = [];
   for (const key of ["base", "robinhood"] as ChainKey[]) {
     if (!cfg.chains[key].enabled) continue;
-    const w = new ChainWatcher(key, publicClient(key, rpc[key]), db, {
+    const w = new ChainWatcher(key, clients[key], db, {
       pollIntervalMs: cfg.watcher[key].poll_interval_ms,
       maxBlockRange: cfg.watcher[key].max_block_range,
       confirmations: cfg.watcher[key].confirmations,
       enabledSources: cfg.watcher[key].sources,
+      onToken: (_t, id) => { const row = tokenRow(db, id); if (row) scheduler.schedule(row); },
     });
     watchers.push(w);
     void w.start();
@@ -64,6 +71,7 @@ async function main() {
     `ma: belépés ${daily.entries}/${cfg.risk.max_entries_per_day}, PnL ${daily.realized_pnl_usd.toFixed(2)} USD, Jev-költség ${jev.dailyCostUsd().toFixed(4)} USD`,
     `compound: betét ${compound.deposit_usd}, kassza ${compound.growth_pool_usd.toFixed(2)}, tartalék ${compound.reserve_usd.toFixed(2)}, pozícióméret ${compound.position_usd.toFixed(2)} USD`,
     `tokenek (24h): ${tokenCounts().map((r) => `${r.chain}/${r.launchpad}=${r.n}`).join(", ") || "még nincs"}`,
+    `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
     `Jev: ${jev.paused ? "szünetel" : "ok"}`,
@@ -89,6 +97,7 @@ async function main() {
     logEvent(db, "shutdown", sig);
     tg.stopPolling();
     watchers.forEach((w) => w.stop());
+    scheduler.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);

@@ -5,14 +5,29 @@ import { fileURLToPath } from "node:url";
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+
+/** Meglévő DB-hez hozzáadott oszlopok (a CREATE TABLE IF NOT EXISTS ezeket nem pótolja). */
+const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
+  ["tokens", "pair_token", "TEXT"],
+  ["tokens", "graduated_at", "INTEGER"],
+  ["tokens", "bytecode_hash", "TEXT"],
+];
+
+function migrate(db: DB) {
+  for (const [table, column, ddl] of ADDED_COLUMNS) {
+    const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
 
 export function openDb(file: string): DB {
   fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   const db = new Database(file);
   const schemaPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "schema.sql");
   db.exec(fs.readFileSync(schemaPath, "utf8"));
-  db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
+  migrate(db);
+  db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
   return db;
 }
 

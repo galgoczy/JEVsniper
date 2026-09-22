@@ -88,7 +88,7 @@ export class ChainWatcher {
     if (existing) {
       // Launchpad-token graduált Uniswapra: csak a pool-adatot frissítjük, nem új token.
       if (t.launchpad === "uniswap" && existing.launchpad !== "uniswap") {
-        this.db.prepare("UPDATE tokens SET pool_address = COALESCE(pool_address, ?) WHERE id = ?").run(t.pool, existing.id);
+        this.db.prepare("UPDATE tokens SET graduated_at = COALESCE(graduated_at, ?) WHERE id = ?").run(nowMs(), existing.id);
       }
       return;
     }
@@ -96,8 +96,8 @@ export class ChainWatcher {
       const meta = await this.readErc20(t.address);
       t.name = t.name ?? meta.name; t.symbol = t.symbol ?? meta.symbol;
     }
-    const info = this.db.prepare(`INSERT OR IGNORE INTO tokens(chain, address, creator, launchpad, mechanics, pool_address, name, symbol, discovered_at, discovered_block, status)
-      VALUES (?,?,?,?,?,?,?,?,?,?,'new')`).run(t.chain, t.address, t.creator, t.launchpad, t.mechanics, t.pool, t.name, t.symbol, nowMs(), Number(t.blockNumber));
+    const info = this.db.prepare(`INSERT OR IGNORE INTO tokens(chain, address, creator, launchpad, mechanics, pool_address, pair_token, name, symbol, discovered_at, discovered_block, status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'new')`).run(t.chain, t.address, t.creator, t.launchpad, t.mechanics, t.pool, t.pairToken, t.name, t.symbol, nowMs(), Number(t.blockNumber));
     if (info.changes === 0) return;
     this.stats.tokens++;
     const id = Number(info.lastInsertRowid);

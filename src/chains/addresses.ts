@@ -15,6 +15,7 @@ export const ADDRESSES: Record<ChainKey, {
   uniswapV2Factory?: Address;
   uniswapV3Factory?: Address;
   uniswapV4PoolManager?: Address;
+  chainlinkEthUsd?: Address;
 }> = {
   base: {
     // OP-stack előre telepített WETH9 (Base docs)
@@ -27,6 +28,8 @@ export const ADDRESSES: Record<ChainKey, {
     uniswapV3Factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
     // Uniswap v4 deployments (Base); BaseScan "Uniswap V4: Pool Manager"
     uniswapV4PoolManager: "0x498581fF718922c3f8e6A244956aF099B2652b2b",
+    // Chainlink ETH/USD aggregátor Base-en (docs.chain.link price feed lista)
+    chainlinkEthUsd: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
   },
   robinhood: {
     // Robinhood Chain WETH címét hivatalos forrásból még nem erősítettem meg → a v4 poolokban

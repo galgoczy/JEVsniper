@@ -100,3 +100,36 @@ kulcs-kitakarás automatikus tesztekkel ellenőrizve (`npm test`).
 1. `npm run verify:step2` → minden címen van kód, és az elmúlt ~1 órában jöttek események (PONS, Clanker, Uniswap).
 2. `npm start` → ~1 óra múlva `/status` Telegramon vagy újra `verify:step2`: a `tokens` táblában mindkét lánc
    tokenjei szerepelnek launchpadonként bontva.
+
+---
+
+# 3. lépés – on-chain paramétergyűjtő (kiegészítés)
+
+## Mit gyűjt és honnan
+- Minden új tokenre 30 / 60 / 180 mp-nél pillanatkép (`snapshots` tábla, JSON, méretkorlát a configból).
+- **Szerződés**: bytecode-hash (ismert sablon: PONS/Clanker gyári token, vagy ≥3 másik token ugyanazzal a hash-sel),
+  veszélyes szelektorok a bytecode-ban (mint/pause/blacklist/setTax/openTrading – közelítés), `owner()` renounce,
+  effektív adók (PONS: `feeBps + creatorTaxBps`; v4 pool: 0, a hook-díj külön), likviditás (PONS: `quoteReserve`;
+  v2: reserves; v3/v4: unknown – a singleton PoolManager miatt), graduált-e.
+- **Eladás-szimuláció**: PONS curve-nél a curve-képlet (ok/failed); v2/v3/v4-nél `not_supported`/`unknown` –
+  a valódi eladás-szimulációt (eth_call a routeren) az 5. lépés hozza, mert ugyanaz a kód kell a kilépéshez is.
+- **Holderek**: a token `Transfer` eseményeiből a felfedezés blokkjától: holder-szám, top1/top10 (creator és pool nélkül),
+  airdrop-arány (nem a poolból kapott tokent), creator részesedése és eladott hányada. Top20 wallet tx-száma → friss arány.
+  Funding-klaszterek: `unknown` (minden wallet első bejövő tx-ét kellene lekérni; explorer API kell, 11. lépés).
+- **Dinamika**: swap-eseményekből (PONS CurveBuy/CurveSell, v4 PoolManager Swap poolId-szűréssel, v2/v3 Swap):
+  vétel/eladás szám és volumen, egyedi vevők, gyorsulás, ár (sqrtPriceX96-ból v3/v4-nél), csúcs-visszaesés, volatilitás,
+  nagy eladások (> likviditás 5%-a). Blokk-időbélyeg: első és utolsó blokk lekérve, a köztesek interpolálva (RPC-spórolás).
+- **Bot-arány**: a launch blokkjában vagy +2 blokkon belül vásárlók aránya.
+- **Creator**: korábbi tokenjei a saját DB-ből (szám, 24h, graduált), tx-szám és egyenleg. Sors (rugolt/halt) még nem:
+  a 7. lépés kilépés-követése után lesz adat.
+- **ETH/USD**: Chainlink aggregátor Base-en, 60 mp cache; Robinhood Chainen is ezt használjuk.
+- **Social, logó, funding-klaszter, launchpad-rang**: `unknown` (11. lépés, külső adatforrás kell).
+- Multicall3 a kanonikus címen Robinhood Chainen is (genesis deploy) – a viem lánc-definícióba felvéve.
+
+## RPC-terhelés
+Tokenenként és ablakonként ≈ 8 + top20 tx-szám (20) hívás, tehát ~30; 3 ablak → ~90 hívás/token. Óránként 100 token
+mellett ez ~2,5 hívás/mp. Ha a publikus RPC 429-et ad, a `watcher` és a gyűjtő logban jelzi; ilyenkor Alchemy-kulcs.
+
+## Verify (a Mac Minin, futó bot mellett is)
+`npm run verify:step3` → a DB legutóbbi tokenjére kiírja az összes mezőt és az unknown-ok listáját.
+`npm run verify:step3 -- robinhood 0x...` → adott PONS-tokenre. Elvárás: minden mező kitöltve vagy `unknown`, hiba nélkül.

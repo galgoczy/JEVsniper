@@ -14,6 +14,8 @@ export const robinhoodChain: Chain = defineChain({
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
   blockExplorers: { default: { name: "Blockscout", url: "https://robinhoodchain.blockscout.com" } },
+  // Multicall3 genesis-deploy a kanonikus címen (multicall3.com lista, Robinhood Chain 4663)
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
 
 export const CHAINS: Record<ChainKey, Chain> = { base, robinhood: robinhoodChain };

@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS tokens (
   discovered_block INTEGER,
   status TEXT NOT NULL DEFAULT 'new',  -- new | filtered | evaluated | entered | skipped
   filter_reason TEXT,
+  pair_token TEXT,
+  graduated_at INTEGER,
+  bytecode_hash TEXT,
   UNIQUE(chain, address)
 );
 
