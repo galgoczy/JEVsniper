@@ -96,8 +96,8 @@ export class ChainWatcher {
       const meta = await this.readErc20(t.address);
       t.name = t.name ?? meta.name; t.symbol = t.symbol ?? meta.symbol;
     }
-    const info = this.db.prepare(`INSERT OR IGNORE INTO tokens(chain, address, creator, launchpad, mechanics, pool_address, pair_token, name, symbol, discovered_at, discovered_block, status)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,'new')`).run(t.chain, t.address, t.creator, t.launchpad, t.mechanics, t.pool, t.pairToken, t.name, t.symbol, nowMs(), Number(t.blockNumber));
+    const info = this.db.prepare(`INSERT OR IGNORE INTO tokens(chain, address, creator, launchpad, mechanics, pool_address, pair_token, name, symbol, discovered_at, discovered_block, status, graduation_threshold)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'new',?)`).run(t.chain, t.address, t.creator, t.launchpad, t.mechanics, t.pool, t.pairToken, t.name, t.symbol, nowMs(), Number(t.blockNumber), t.graduationThreshold?.toString() ?? null);
     if (info.changes === 0) return;
     this.stats.tokens++;
     const id = Number(info.lastInsertRowid);

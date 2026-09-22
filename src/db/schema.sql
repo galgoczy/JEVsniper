@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS tokens (
   pair_token TEXT,
   graduated_at INTEGER,
   bytecode_hash TEXT,
+  graduation_threshold TEXT,           -- PONS: quote wei (stringként, bigint)
   UNIQUE(chain, address)
 );
 

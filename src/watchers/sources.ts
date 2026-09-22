@@ -19,6 +19,7 @@ export interface NewToken {
   symbol: string | null;
   blockNumber: bigint;
   txHash: `0x${string}` | null;
+  graduationThreshold?: bigint;            // PONS: ennyi quote (wei) után graduál a curve
 }
 
 export interface LogSource {
@@ -61,7 +62,7 @@ export function sourcesFor(chain: ChainKey, enabled: Record<string, boolean>): L
         return {
           chain, address: args.token, creator: args.deployer, launchpad: "pons", mechanics: "bonding_curve",
           pool: args.curve, pairToken: args.pairToken, name: null, symbol: null,
-          blockNumber: log.blockNumber ?? 0n, txHash: log.transactionHash,
+          blockNumber: log.blockNumber ?? 0n, txHash: log.transactionHash, graduationThreshold: args.graduationThreshold,
         };
       },
     });

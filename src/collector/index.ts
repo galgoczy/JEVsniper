@@ -14,6 +14,7 @@ export interface TokenRow {
   id: number; chain: ChainKey; address: Address; creator: Address | null; launchpad: string; mechanics: string;
   pool_address: string | null; pair_token: string | null; name: string | null; symbol: string | null;
   discovered_at: number; discovered_block: number | null; graduated_at: number | null;
+  graduation_threshold?: string | null;
 }
 
 const num = (v: bigint, dec = 18) => Number(formatUnits(v, dec));
@@ -78,7 +79,10 @@ export class Collector {
 
     // --- top20 wallet: friss-e (tx-szám), listák
     const top20 = hs.top20;
-    const txCounts = await Promise.all(top20.map((a) => c.getTransactionCount({ address: a as Address }).catch(() => null)));
+    const txCounts: Array<number | null> = [];
+    for (let i = 0; i < top20.length; i += 5) { // 5-ös adagokban, hogy a publikus RPC ne dobja el
+      txCounts.push(...await Promise.all(top20.slice(i, i + 5).map((a) => c.getTransactionCount({ address: a as Address }).catch(() => null))));
+    }
     const known = txCounts.filter((n): n is number => n !== null);
     const freshRatio: U<number> = known.length ? known.filter((n) => n <= 3).length / known.length : unk;
     const lists = this.walletLists(t.chain, [...top20, ...(ps?.swaps.map((s) => s.buyer) ?? [])]);
@@ -233,10 +237,13 @@ export class Collector {
       if (typeof q === "bigint" && typeof tk === "bigint" && tk > 0n) {
         out.priceNative = Number(q) / Number(tk) * 10 ** (dec - 18);
         out.liquidityNative = num(q);
-        const sellable = typeof rs === "bigint" ? tk - rs : tk;
-        // haladás: mennyi fogyott a (kezdeti) eladható készletből – a kezdeti készletet az első transzferből nem tudjuk, ezért becslés a totalSupply 80%-ával
-        out.curveProgressPct = unk;
-        void sellable;
+        const threshold = t.graduation_threshold ? BigInt(t.graduation_threshold) : null;
+        if (threshold && threshold > 0n) {
+          out.curveProgressPct = Math.min(100, Number((q * 10000n) / threshold) / 100);
+          const elapsedMin = Math.max((nowMs() - t.discovered_at) / 60_000, 0.1);
+          const rate = num(q) / elapsedMin; // ETH/perc eddigi átlag
+          out.estGraduationMin = rate > 0 ? Math.round((num(threshold - q) / rate) * 10) / 10 : unk;
+        }
       }
       if (typeof fee === "bigint" && typeof tax === "bigint") { out.buyTaxPct = Number(fee + tax) / 100; out.sellTaxPct = Number(fee + tax) / 100; }
       out.graduated = grad === true;
