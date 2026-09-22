@@ -1,0 +1,120 @@
+# Jev Sniper Bot – minden paraméter és küszöb itt állítható.
+# A kockázati limitek (risk) CSAK itt állíthatók, kódban nincs felülírás.
+
+mode: live            # live | dry_run  (dry_run: minden fut, de nem küld tranzakciót)
+
+chains:
+  base:
+    enabled: true
+    chain_id: 8453
+    native_symbol: ETH
+  robinhood:
+    enabled: true
+    chain_id: 4663
+    native_symbol: ETH
+
+risk:
+  base_position_usd: 1
+  max_position_usd: 10
+  deposit_cap_usd: 30
+  max_open_positions: 15
+  max_entries_per_hour: 10
+  max_entries_per_day: 60
+  daily_loss_limit_pct_of_working_capital: 25
+  max_consecutive_failed_tx: 3
+  # Az 1. napi mérés után állítandó (irány: pozícióméret 5%-a, min. 0,05 USD)
+  max_gas_per_tx_usd: 0.05
+  max_gas_per_sell_usd: 0.15
+  jev_daily_budget_usd: 1.0
+  one_entry_per_token: true
+  max_entries_per_creator_per_day: 1
+
+compound:
+  profit_share_to_growth_pool: 0.30   # 30% növekedési kassza, 70% tartalék
+  drawdown_halving_pct: 30            # forgó tőke csúcstól -30% → growth_pool felezve a méretszámításban
+  recalc_time_utc: "00:00"
+  require_positive_vs_random_control: false   # opcionális kar, alapból ki
+  random_control_lookback_days: 7
+
+regime:
+  recalc_minutes: 60
+  eth_24h_drop_pct_risk_off: 8        # kemény felülírás: ETH 24h esés efölött → risk_off
+  risk_off_close_phases: ["pre_tp1"]  # mely fázisú pozíciók záródjanak risk_off-nál
+
+evaluation:
+  windows_sec: [30, 60, 180]
+  live_window_sec: 60
+
+jev:
+  model: jev-latest
+  timeout_ms: 8000
+  max_retries: 2
+  # ár: 0,042 USD / 1M input token (typesafe.ai, 2026-09); output ingyenes
+  usd_per_million_input_tokens: 0.042
+  pause_after_consecutive_errors: 3
+  pause_minutes: 5
+
+hard_filters:
+  max_sell_tax_pct: 5
+  min_initial_liquidity_usd: 500
+  creator_prior_rug_ratio_max: 0.5
+  funding_cluster_top20_max: 6
+  airdrop_received_ratio_max: 0.5
+  known_scammer_wallets_max: 1
+
+entry:
+  contract_risk_clean_min_p: 0.7
+  bad_wallet_pattern_max_p: 0.5
+  bad_crowd_type_max_p: 0.5
+  buyer_quality_min: 40
+  tp1_first_min_p:
+    hot: 0.30
+    normal: 0.35
+    cold: 0.45
+  size_boost:
+    multiplier: 1.5
+    buyer_quality_min: 70
+    smart_money_min: 3
+    tp1_first_min_p: 0.5
+  random_control_share: 0.20
+
+exit_plan:
+  tp1_multiple: 2.0
+  tp1_sell_pct: 50
+  tp2_multiple: 5.0
+  tp2_sell_pct: 30
+  moon_bag_pct: 20
+  moon_target_multiple: 20
+  trailing_stop_pct: 50
+  trailing_active_after_tp2: true
+  moon_bag_max_days: 7
+  jev_exit_min_p: 0.6
+
+emergency:
+  price_drop_pct: 40
+  creator_sell_pct: 20
+  liquidity_drop_pct: 30
+
+monitoring:
+  first_5min_interval_sec: 15
+  after_5min_interval_sec: 60
+  after_1h_interval_sec: 300
+  moon_bag_interval_sec: 900
+
+execution:
+  max_slippage_pct: 8
+  panic_slippage_pct: 25
+  deadline_sec: 30
+  retry_failed_tx_once: true
+
+telegram:
+  enabled: true
+  poll_interval_ms: 3000
+
+report:
+  daily_time_utc: "06:00"
+  output_dir: reports
+
+db:
+  path: data/jev-sniper.db
+  max_snapshot_bytes: 16384

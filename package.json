@@ -1,0 +1,43 @@
+{
+  "name": "jev-sniper",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/index.ts",
+    "verify:step1": "tsx scripts/verify-step1.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/galgoczy/JEVsniper.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/galgoczy/JEVsniper/issues"
+  },
+  "homepage": "https://github.com/galgoczy/JEVsniper#readme",
+  "type": "module",
+  "private": "true",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^18.0.2",
+    "viem": "^2.56.8",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
