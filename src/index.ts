@@ -13,6 +13,8 @@ import { applyHardFilters } from "./filters/index.js";
 import { Executor } from "./exec/executor.js";
 import { routeFor } from "./exec/routes.js";
 import { rpcUrls } from "./chains/index.js";
+import { RegimeGate } from "./decision/regime.js";
+import { DecisionEngine } from "./decision/engine.js";
 import { getAddress } from "viem";
 
 /**
@@ -73,9 +75,19 @@ async function main() {
   // 3. lépés: paramétergyűjtő (30/60/180 mp-nél pillanatkép minden új tokenről)
   const clients = { base: publicClient("base", rpc.base), robinhood: publicClient("robinhood", rpc.robinhood) };
   const collector = new Collector(db, clients, ethPrice);
-  // 4. lépés: kemény szűrők minden pillanatképre (az élő ablaknál dönt, a többinél csak naplóz)
-  const scheduler = new CollectorScheduler(db, collector, cfg.evaluation.windows_sec, cfg.db.max_snapshot_bytes, (t, snap) => {
-    applyHardFilters(db, cfg, t, snap);
+  // 6. lépés: rezsim-kapu (óránként) + döntési motor
+  const regime = new RegimeGate(db, cfg, jev, () => ethPrice.get(), async () => ({
+    base: cfg.chains.base.enabled ? Number(await clients.base.getGasPrice().catch(() => 0)) / 1e9 : null,
+    robinhood: cfg.chains.robinhood.enabled ? Number(await clients.robinhood.getGasPrice().catch(() => 0)) / 1e9 : null,
+  }));
+  const engine = new DecisionEngine({ db, cfg, jev, regime, executors, ethUsd: () => ethPrice.get(), notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
+  await regime.refresh(true).catch((e) => log.warn("rezsim init hiba", { error: (e as Error).message }));
+  const regimeTimer = setInterval(() => void regime.refresh().catch(() => undefined), 60_000);
+
+  // 4. lépés: kemény szűrők minden pillanatképre; 6. lépés: döntés (élő ablakban belépés, máshol árnyék)
+  const scheduler = new CollectorScheduler(db, collector, cfg.evaluation.windows_sec, cfg.db.max_snapshot_bytes, async (t, snap) => {
+    const f = applyHardFilters(db, cfg, t, snap);
+    await engine.onSnapshot(t, snap, f.pass);
   });
 
   // 2. lépés: tokenfigyelés láncenként
@@ -107,7 +119,8 @@ async function main() {
     `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
-    `Jev: ${jev.paused ? "szünetel" : "ok"}`,
+    `Jev: ${jev.paused ? "szünetel" : "ok"}, rezsim: ${regime.regime}`,
+    `döntések (24h): ${(db.prepare("SELECT SUM(arm='live' AND enter=1) l, SUM(arm='live_rule' AND enter=1) lr, SUM(arm='random_control' AND enter=1) rc, COUNT(DISTINCT token_id) n FROM decisions WHERE decided_at > ?").get(Date.now() - 86_400_000) as { l: number; lr: number; rc: number; n: number }).n} token címkézve`,
   ].join("\n");
 
   log.info("Indulás", { mode: cfg.mode, wallet: account.address, openPositions: open.length });
@@ -134,6 +147,7 @@ async function main() {
     tg.stopPolling();
     watchers.forEach((w) => w.stop());
     scheduler.stop();
+    clearInterval(regimeTimer);
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);

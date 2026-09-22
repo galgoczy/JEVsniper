@@ -168,3 +168,23 @@ mellett ez ~2,5 hívás/mp. Ha a publikus RPC 429-et ad, a `watcher` és a gyűj
 `npm run day1 -- pick` → jelöltek; `npm run day1 -- <lánc> <cím>` → száraz (árajánlat, gas-becslés, nincs küldés);
 `--confirm` → éles: vétel 1 USD, szándékosan sikertelen eladás (10× minOut), eladás 50%, maradék eladása, nonce-ellenőrzés,
 gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegramról.
+
+---
+
+# 6. lépés – döntési motor (kiegészítés)
+
+- **Jev minden pillanatképre** (30/60/180 mp), a kiesett tokenekre is (csak napló): a tulajdonos döntése szerint a több
+  Jev-használat rendben, ha mérhető. Az állapot tömör JSON (technikai mezők nélkül, kerekítve), ~2–3k karakter; a korábbi
+  ablak címkéi `earlier_labels` néven bekerülnek a későbbi ablak állapotába.
+- **Élő szabály** (6.5) csak a 60 mp-es ablakban, a kockázati korlátok (4.) után. Méretmodulátor 1,5× a spec szerint.
+- **Árnyékkarok** minden ablakban: `jev_direct_0.3/0.4/0.5`, `live_rule` (az élő szabály árnyékban, korlátok nélkül),
+  `rule_score` (Jev nélküli pontszám, ≥60), `random_control` (a cím keccak-hash-éből determinisztikus 20%). `learned` a
+  13. lépésben. Belépéskor minden árnyékkarhoz 7 árnyék-pozíció nyílik (élő terv, B, C, moon10, moon30, trail40, trail60) –
+  ezek árkövetése és lezárása a 7. lépés.
+- **Rezsim** óránként: ETH ár most/24h/7d (saját óránkénti ár-napló a `meta` táblában; a 7 napos csak egy hét után él),
+  launchpadok 24h graduációs aránya és indítás-száma, gas. Meme-szektor/Pump.fun/DEX-volumen: `unknown` (11. lépés).
+  Kemény felülírás: ETH 24h esés > `eth_24h_drop_pct_risk_off` → `risk_off`. Jev-hiba esetén marad az előző rezsim.
+- **Jev-hiba/rate limit** → a kliens szünetel, a kockázati ellenőrzés `jev_paused`-zal blokkolja az élő belépést; a
+  gyűjtés, szűrés és árnyékkarok (rule_score, random_control) tovább futnak.
+- **Nyitott kérdés**: az élő vétel most a spec küszöbeivel azonnal élesedik, amint a bot fut a 6. lépéssel. Ha előbb
+  1–2 nap árnyékfutást akarsz Jev-adattal, a `config.yaml` `mode: dry_run` erre való (minden fut, tx nem megy ki).
