@@ -39,6 +39,7 @@ compound:
 regime:
   recalc_minutes: 60
   eth_24h_drop_pct_risk_off: 8        # kemény felülírás: ETH 24h esés efölött → risk_off
+  jev_risk_off_min_p: 0.7             # a Jev risk_off válaszát csak e valószínűség felett fogadjuk el, alatta cold
   risk_off_close_phases: ["pre_tp1"]  # mely fázisú pozíciók záródjanak risk_off-nál
 
 watcher:

@@ -51,6 +51,7 @@ export class RegimeGate {
       try {
         const r = await this.jev.ask(inputs, regimeQuestions, { purpose: "regime" });
         regime = r.answers.regime.choice as Regime; callId = r.callId;
+        if (regime === "risk_off" && r.answers.regime.probabilities.risk_off < this.cfg.regime.jev_risk_off_min_p) { regime = "cold"; source = "jev_softened"; }
       } catch (e) { log.warn("rezsim: Jev hiba, marad az előző", { error: (e as Error).message.slice(0, 120) }); source = "jev_error"; }
     }
     if (regime !== this.current) log.info("Rezsimváltás", { from: this.current, to: regime, source });

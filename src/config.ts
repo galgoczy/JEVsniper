@@ -47,6 +47,7 @@ export const ConfigSchema = z.object({
   regime: z.object({
     recalc_minutes: z.number().int().positive(),
     eth_24h_drop_pct_risk_off: pct,
+    jev_risk_off_min_p: prob,
     risk_off_close_phases: z.array(z.enum(["pre_tp1", "post_tp1", "moon_bag"])),
   }),
   watcher: z.object({
