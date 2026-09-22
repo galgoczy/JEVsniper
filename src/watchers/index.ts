@@ -69,17 +69,24 @@ export class ChainWatcher {
 
   stop() { this.stopped = true; }
 
+  /** Egy getLogs hívás az összes forrásra (címlista + eseménylista), utána cím szerint szétosztva. */
   private async processRange(from: bigint, to: bigint) {
     this.stats.polls++;
-    for (const src of this.sources) {
-      const logs = await this.client.getLogs({ address: src.address, event: src.event, fromBlock: from, toBlock: to });
-      this.stats.logs += logs.length;
-      for (const l of logs) {
-        let t: NewToken | null = null;
-        try { t = src.decode(l); } catch (e) { log.debug("dekódolási hiba", { src: src.key, error: (e as Error).message }); }
-        if (!t) continue;
-        await this.upsertToken(t);
-      }
+    const byAddr = new Map(this.sources.map((s) => [s.address.toLowerCase(), s] as const));
+    const logs = await this.client.getLogs({
+      address: this.sources.map((s) => s.address),
+      events: this.sources.map((s) => s.event),
+      fromBlock: from, toBlock: to,
+    });
+    this.stats.logs += logs.length;
+    for (const l of logs) {
+      const src = byAddr.get(l.address.toLowerCase());
+      if (!src) continue;
+      if (l.topics[0] !== src.topic0) continue; // más forrás eseménye ugyanazon a címen – nem fordul elő, de biztos ami biztos
+      let t: NewToken | null = null;
+      try { t = src.decode(l); } catch (e) { log.debug("dekódolási hiba", { src: src.key, error: (e as Error).message }); }
+      if (!t) continue;
+      await this.upsertToken(t);
     }
   }
 

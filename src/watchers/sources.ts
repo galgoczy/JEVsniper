@@ -1,4 +1,4 @@
-import { type Address, type Log, decodeEventLog, isAddressEqual, type AbiEvent } from "viem";
+import { type Address, type Log, decodeEventLog, isAddressEqual, type AbiEvent, toEventSelector } from "viem";
 import type { ChainKey } from "../chains/index.js";
 import { ADDRESSES, ZERO } from "../chains/addresses.js";
 import { clankerV4TokenCreatedEvent } from "../abis/clankerV4.js";
@@ -27,6 +27,7 @@ export interface LogSource {
   chain: ChainKey;
   address: Address;
   event: AbiEvent;
+  topic0: `0x${string}`;
   decode: (log: Log) => NewToken | null;
 }
 
@@ -38,7 +39,7 @@ const isQuote = (chain: ChainKey, a: Address) => isAddressEqual(a, ZERO) || isAd
 /** Az adott láncon figyelt források (launchpad + Uniswap-indítások). */
 export function sourcesFor(chain: ChainKey, enabled: Record<string, boolean>): LogSource[] {
   const A = ADDRESSES[chain];
-  const out: LogSource[] = [];
+  const out: Omit<LogSource, "topic0">[] = [];
 
   if (A.clankerV4Factory && enabled.clanker !== false) {
     out.push({
@@ -111,5 +112,5 @@ export function sourcesFor(chain: ChainKey, enabled: Record<string, boolean>): L
     });
   }
 
-  return out;
+  return out.map((s) => ({ ...s, topic0: toEventSelector(s.event) }));
 }
