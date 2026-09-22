@@ -2,6 +2,7 @@
  * 3. lépés verify: egy tokenre lefut a paramétergyűjtő, kiírja az összes mezőt, és megszámolja az "unknown"-okat.
  * Futtatás: npm run verify:step3               → a DB legutóbbi tokenje
  *           npm run verify:step3 -- <lánc> <cím> → adott token (pl. robinhood 0x...)
+ *           npm run verify:step3 -- pons|clanker|uniswap → az adott launchpad legutóbbi tokenje, amin már volt swap
  */
 import { loadConfig } from "../src/config.js";
 import { loadEnv } from "../src/env.js";
@@ -16,7 +17,9 @@ const clients = { base: publicClient("base", env.BASE_RPC_URL), robinhood: publi
 const [chainArg, addrArg] = process.argv.slice(2);
 const row = (chainArg && addrArg
   ? db.prepare("SELECT * FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(chainArg, addrArg)
-  : db.prepare("SELECT * FROM tokens ORDER BY id DESC LIMIT 1").get()) as TokenRow | undefined;
+  : chainArg
+    ? db.prepare("SELECT * FROM tokens WHERE launchpad = ? AND discovered_at < ? ORDER BY id DESC LIMIT 1").get(chainArg, Date.now() - 180_000)
+    : db.prepare("SELECT * FROM tokens ORDER BY id DESC LIMIT 1").get()) as TokenRow | undefined;
 if (!row) { console.log("❌ nincs ilyen token a DB-ben (előbb fusson a bot, vagy adj meg láncot és címet)"); process.exit(1); }
 console.log(`Token: ${row.chain}/${row.launchpad} ${row.symbol ?? "?"} ${row.address} (felfedezve ${new Date(row.discovered_at).toISOString()})`);
 const collector = new Collector(db, clients, new EthPrice(clients.base));
