@@ -1,7 +1,7 @@
 # Jev Sniper Bot – minden paraméter és küszöb itt állítható.
 # A kockázati limitek (risk) CSAK itt állíthatók, kódban nincs felülírás.
 
-mode: live            # live | dry_run  (dry_run: minden fut, de nem küld tranzakciót)
+mode: dry_run         # live | dry_run  (dry_run: minden fut, Jev is, de tranzakció nem megy ki) – a 7. lépésig (kiszállás) maradjon dry_run!
 
 chains:
   base:
