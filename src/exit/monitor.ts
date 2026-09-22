@@ -36,7 +36,16 @@ export class PositionMonitor {
   private busy = false;
   constructor(private d: MonitorDeps) {}
 
-  start(tickMs = 15_000) { this.timer = setInterval(() => void this.tick(), tickMs); void this.tick(); }
+  start(tickMs = 15_000) {
+    // Induláskori takarítás: a költségmodell előtti (7. lépés előtti) árnyék-pozíciók token nélkül nyíltak → érvénytelen;
+    // a tokenjeik viszont bekerülnek a 24 órás kimenet-követésbe a belépési árral.
+    const now = nowMs();
+    this.d.db.prepare(`INSERT OR IGNORE INTO token_outcomes(token_id, ref_price, ref_at) SELECT token_id, entry_price_native, opened_at FROM positions
+      WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm NOT IN ('live','day1_test') AND entry_price_native > 0 AND opened_at > ?`).run(now - 86_400_000);
+    const inv = this.d.db.prepare("UPDATE positions SET phase = 'closed', closed_at = ?, close_reason = 'invalid_no_tokens', net_pnl_usd = 0 WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm NOT IN ('live','day1_test')").run(now);
+    if (inv.changes) log.info(`Érvénytelen (token nélküli) árnyék-pozíciók lezárva: ${inv.changes}`);
+    this.timer = setInterval(() => void this.tick(), tickMs); void this.tick();
+  }
   stop() { if (this.timer) clearInterval(this.timer); }
 
   private openRows(): PosRow[] {
