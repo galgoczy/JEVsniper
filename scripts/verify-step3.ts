@@ -31,6 +31,7 @@ console.log(JSON.stringify(snap, null, 1));
 const u = countUnknown(snap);
 console.log(`\n✅ ${u.total - u.unknown}/${u.total} mező kitöltve, ${u.unknown} unknown (${Date.now() - t0} ms): ${u.unknownKeys.join(", ")}`);
 for (const e of [...new Set(collector.errors)]) console.log(`ℹ️ RPC-hiba – ${e}`);
+console.log(`ℹ️ diagnosztika: holderek=${snap.holders.count}, egyedi vevők=${snap.buyers.unique_buyers}, vételek=${snap.dynamics.buys}, eladások=${snap.dynamics.sells}, top1=${snap.holders.top1_pct_ex_creator}%, pool=${row.pool_address ?? "-"}`);
 if (snap.meta_snapshot.eth_usd === "unknown") console.log("ℹ️ ETH/USD (Chainlink, Base RPC) nem jött meg");
 collector.saveSnapshot(row, snap, cfg.db.max_snapshot_bytes);
 const saved = db.prepare("SELECT length(params_json) len FROM snapshots WHERE token_id = ? AND window_sec = ?").get(row.id, cfg.evaluation.live_window_sec) as { len: number };
