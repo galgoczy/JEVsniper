@@ -85,3 +85,16 @@ test("Jev-hiba → szünet, hívás naplózva", async () => {
   assert.equal((db.prepare("SELECT COUNT(*) n FROM jev_calls WHERE ok = 0").get() as { n: number }).n, 2);
   db.close();
 });
+
+test("rule_v2: jó pillanatkép belép, bot-arány / kevés holder / creator-előzmény kiejt", async () => {
+  const { ruleV2 } = await import("../src/decision/rules.js");
+  const base = { holders: { count: 25 }, buyers: { bot_ratio: 0.05 }, dynamics: { buyer_acceleration: 1.5, price_change_pct_since_launch: 40, peak_drawdown_pct: 5 },
+    creator: { prior_tokens: 0, sold_any: false }, contract: { bonding_curve_progress_pct: 40 } } as unknown as ParamSnapshot;
+  assert.equal(ruleV2(base, good).enter, true);
+  assert.equal(ruleV2(base, good, "strict").enter, false);
+  assert.equal(ruleV2({ ...base, dynamics: { ...base.dynamics, buyer_acceleration: 2.5 } } as ParamSnapshot, good, "strict").enter, true);
+  assert.equal(ruleV2({ ...base, buyers: { bot_ratio: 0.3 } } as ParamSnapshot, good).enter, false);
+  assert.equal(ruleV2({ ...base, holders: { count: 4 } } as ParamSnapshot, good).enter, false);
+  assert.equal(ruleV2({ ...base, creator: { prior_tokens: 2, sold_any: false } } as ParamSnapshot, good).enter, false);
+  assert.equal(ruleV2(base, { ...good, crowd_type: "bots" }).enter, false);
+});

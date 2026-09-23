@@ -81,3 +81,29 @@ export function randomControlArm(tokenAddress: string, share: number): RuleResul
   const u = Number(BigInt(h.slice(0, 10)) % 10000n) / 10000; // első 4 bájt → egyenletes [0,1)
   return { enter: u < share, reasons: [`u=${u.toFixed(3)}`], sizeMultiplier: 1 };
 }
+
+/**
+ * rule_v2 – adatvezérelt jelölt szabály (2026-09-23 paraméter-informativitás alapján, 60 mp pillanatkép):
+ * holderek ≥10, bot-arány <0,1, vevő-gyorsulás ≥1,2, ár a launch fölött, csúcstól <25%, creator: nincs korábbi
+ * tokenje és nem adott el; Jev: nem bot_farm, nem bots. "strict": +gyorsulás ≥2 vagy curve-haladás ≥60%.
+ */
+export function ruleV2(s: ParamSnapshot, l: Labels | null, variant: "loose" | "strict" = "loose"): RuleResult {
+  const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const r: string[] = [];
+  const holders = n(s.holders.count) ?? 0;
+  if (holders < 10) r.push(`holders=${holders}`);
+  const bot = n(s.buyers.bot_ratio); if (bot !== null && bot >= 0.1) r.push(`bot_ratio=${bot.toFixed(2)}`);
+  const acc = n(s.dynamics.buyer_acceleration) ?? 1; if (acc < 1.2) r.push(`accel=${acc.toFixed(2)}`);
+  const chg = n(s.dynamics.price_change_pct_since_launch); if (chg !== null && chg <= 0) r.push(`price_chg=${chg.toFixed(0)}`);
+  const dd = n(s.dynamics.peak_drawdown_pct); if (dd !== null && dd >= 25) r.push(`drawdown=${dd.toFixed(0)}`);
+  const prior = n(s.creator.prior_tokens) ?? 0; if (prior >= 1) r.push(`creator_prior=${prior}`);
+  if (s.creator.sold_any === true) r.push("creator_sold");
+  if (l && ["bot_farm", "airdrop_farm"].includes(l.wallet_pattern)) r.push(`wallet=${l.wallet_pattern}`);
+  if (l && l.crowd_type === "bots") r.push("crowd=bots");
+  if (l && ["dead", "stalling"].includes(l.trade_pattern)) r.push(`trade=${l.trade_pattern}`);
+  if (variant === "strict") {
+    const prog = n(s.contract.bonding_curve_progress_pct);
+    if (!(acc >= 2 || (prog !== null && prog >= 60))) r.push("strict:accel<2&curve<60");
+  }
+  return { enter: r.length === 0, reasons: r, sizeMultiplier: 1 };
+}

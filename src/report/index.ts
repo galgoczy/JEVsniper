@@ -159,7 +159,7 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
 
   const telegram = [`📊 Napi riport (${cfg.mode})`, `Tölcsér: ${newTok.reduce((s, r) => s + Number(r.n), 0)} új → ${passed} átment → élő szabály ${liveRuleWouldEnter} → élő belépés ${liveEntries}`,
     `Élő: ${live.length} lezárt, nettó ${f(liveNet, 2)} USD, nyitott ${openLive.n}`,
-    `Árnyék: random_control ${f(rcMean, 3)} (n=${rcLive.length}); ` + ["live_rule", "jev_direct_0.4", "rule_score"].map((a) => { const g = groups.get(`${a}|${cfg.evaluation.live_window_sec}|live`); return `${a} ${g ? f(g.reduce((s, p) => s + p.net_pnl_usd, 0) / g.length, 3) + ` (n=${g.length})` : "-"}`; }).join(", "),
+    `Árnyék: random_control ${f(rcMean, 3)} (n=${rcLive.length}); ` + ["live_rule", "rule_v2", "rule_v2_strict", "rule_score"].map((a) => { const g = groups.get(`${a}|${cfg.evaluation.live_window_sec}|live`); return `${a} ${g ? f(g.reduce((s, p) => s + p.net_pnl_usd, 0) / g.length, 3) + ` (n=${g.length})` : "-"}`; }).join(", "),
     `Kimenetek: 2x ${oc.tp1 ?? 0} / −40% ${oc.stop ?? 0} a ${oc.n}-ból; Jev ${jevErr.n} hívás, ${f(jevStats.reduce((s, r) => s + Number(r.c ?? 0), 0), 4)} USD`,
     cs ? `Compound: méret ${f(cs.position_usd, 2)} USD, kassza ${f(cs.growth_pool_usd, 2)}, tartalék ${f(cs.reserve_usd, 2)}` : ""].filter(Boolean).join("\n");
   return { markdown: L.join("\n"), telegram };

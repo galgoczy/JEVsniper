@@ -8,7 +8,7 @@ import type { ChainKey } from "../chains/index.js";
 import { JevClient, JevPausedError } from "../jev/client.js";
 import { entryQuestions } from "../jev/questions.js";
 import { jevStateFromSnapshot } from "./state.js";
-import { labelsFrom, liveEntryRule, jevDirectArm, ruleScoreArm, randomControlArm, type Labels, type RuleResult } from "./rules.js";
+import { labelsFrom, liveEntryRule, jevDirectArm, ruleScoreArm, randomControlArm, ruleV2, type Labels, type RuleResult } from "./rules.js";
 import { riskBlock, currentPositionUsd } from "./risk.js";
 import type { RegimeGate } from "./regime.js";
 import type { Executor } from "../exec/executor.js";
@@ -61,6 +61,8 @@ export class DecisionEngine {
       arms.push({ arm: "live_rule", res: liveEntryRule(labels, snap, regime, cfg.entry) });
     }
     arms.push({ arm: "rule_score", res: ruleScoreArm(snap) });
+    arms.push({ arm: "rule_v2", res: ruleV2(snap, labels, "loose") });
+    arms.push({ arm: "rule_v2_strict", res: ruleV2(snap, labels, "strict") });
     arms.push({ arm: "random_control", res: randomControlArm(t.address, cfg.entry.random_control_share) });
 
     const supported = t.mechanics === "bonding_curve" || ((t.mechanics === "v4" || t.mechanics === "v4_hook") && !!t.pool_key_json);
