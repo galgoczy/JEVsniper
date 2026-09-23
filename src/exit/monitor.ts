@@ -40,7 +40,7 @@ export class PositionMonitor {
     // Induláskori takarítás: a költségmodell előtti (7. lépés előtti) árnyék-pozíciók token nélkül nyíltak → érvénytelen;
     // a tokenjeik viszont bekerülnek a 24 órás kimenet-követésbe a belépési árral.
     const now = nowMs();
-    this.d.db.prepare(`INSERT OR IGNORE INTO token_outcomes(token_id, ref_price, ref_at) SELECT token_id, entry_price_native, opened_at FROM positions
+    this.d.db.prepare(`INSERT OR IGNORE INTO token_outcomes(token_id, window_sec, ref_price, ref_at) SELECT token_id, window_sec, entry_price_native, opened_at FROM positions
       WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm NOT IN ('live','day1_test') AND entry_price_native > 0 AND opened_at > ?`).run(now - 86_400_000);
     const inv = this.d.db.prepare("UPDATE positions SET phase = 'closed', closed_at = ?, close_reason = 'invalid_no_tokens', net_pnl_usd = 0 WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm NOT IN ('live','day1_test')").run(now);
     const absurd = this.d.db.prepare("UPDATE positions SET phase = 'closed', closed_at = COALESCE(closed_at, ?), close_reason = 'invalid_price', net_pnl_usd = 0, gross_pnl_usd = 0 WHERE arm NOT IN ('live','day1_test') AND size_native > 0 AND (native_received / size_native > 500 OR (net_pnl_usd IS NOT NULL AND ABS(net_pnl_usd) > 1000))").run(now);
@@ -66,7 +66,7 @@ export class PositionMonitor {
     };
     for (const r of rows) if (r.chain === chain) add(r);
     // 24 órás kimenet-követés: tokenek, ahol valamelyik kar belépett és még nincs lezárva
-    const oc = this.d.db.prepare(`SELECT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json, t.decimals FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
+    const oc = this.d.db.prepare(`SELECT DISTINCT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json, t.decimals FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
     for (const r of oc) add(r);
     return [...seen.values()];
   }
@@ -92,8 +92,8 @@ export class PositionMonitor {
   }
 
   private updateOutcomes(chain: ChainKey) {
-    const rows = this.d.db.prepare("SELECT o.*, t.chain FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?").all(chain) as Array<{ token_id: number; ref_price: number; ref_at: number; max_multiple: number; min_multiple: number; first_hit: string | null }>;
-    const upd = this.d.db.prepare("UPDATE token_outcomes SET max_multiple = ?, min_multiple = ?, first_hit = COALESCE(first_hit, ?), hit_at = COALESCE(hit_at, ?), done_at = ? WHERE token_id = ?");
+    const rows = this.d.db.prepare("SELECT o.*, t.chain FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?").all(chain) as Array<{ token_id: number; window_sec: number; ref_price: number; ref_at: number; max_multiple: number; min_multiple: number; first_hit: string | null }>;
+    const upd = this.d.db.prepare("UPDATE token_outcomes SET max_multiple = ?, min_multiple = ?, first_hit = COALESCE(first_hit, ?), hit_at = COALESCE(hit_at, ?), done_at = ? WHERE token_id = ? AND window_sec = ?");
     const now = nowMs();
     for (const o of rows) {
       const ps = this.d.feeds[chain].get(o.token_id);
@@ -103,7 +103,7 @@ export class PositionMonitor {
       let hit: string | null = null;
       if (!o.first_hit && m !== null) { if (m >= this.d.cfg.exit_plan.tp1_multiple) hit = "tp1_first"; else if (m <= 1 - this.d.cfg.emergency.price_drop_pct / 100) hit = "stop_first"; }
       const done = now - o.ref_at >= 86_400_000 ? now : null;
-      upd.run(mx, mn, hit, hit ? now : null, done, o.token_id);
+      upd.run(mx, mn, hit, hit ? now : null, done, o.token_id, o.window_sec);
     }
   }
 

@@ -72,7 +72,7 @@ export class DecisionEngine {
       ins.run(t.id, a.arm, w, regime, nowMs(), a.res.enter ? 1 : 0, a.res.reasons.join(","), a.res.enter ? posUsd * a.res.sizeMultiplier : null, callId);
       if (a.res.enter && price !== null && supported) {
         this.openShadow(t, a.arm, w, price, Math.min(cfg.risk.max_position_usd, posUsd * a.res.sizeMultiplier), snap);
-        db.prepare("INSERT OR IGNORE INTO token_outcomes(token_id, ref_price, ref_at) VALUES (?,?,?)").run(t.id, price, nowMs());
+        db.prepare("INSERT OR IGNORE INTO token_outcomes(token_id, window_sec, ref_price, ref_at) VALUES (?,?,?,?)").run(t.id, w, price, nowMs());
       }
     }
 

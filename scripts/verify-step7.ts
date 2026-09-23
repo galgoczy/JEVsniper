@@ -57,7 +57,7 @@ db.close();
 const real = openDb(cfg.db.path);
 const open = real.prepare("SELECT arm, COUNT(*) n FROM positions WHERE closed_at IS NULL AND arm != 'day1_test' AND tokens_bought > 0 GROUP BY arm ORDER BY n DESC").all() as { arm: string; n: number }[];
 const closed = real.prepare("SELECT arm, exit_plan, COUNT(*) n, ROUND(AVG(net_pnl_usd),4) avg_net, SUM(net_pnl_usd>0) wins FROM positions WHERE closed_at IS NOT NULL AND arm != 'day1_test' AND close_reason NOT LIKE 'invalid%' GROUP BY arm, exit_plan ORDER BY arm, exit_plan").all() as Record<string, unknown>[];
-const oc = real.prepare("SELECT COUNT(*) n, SUM(first_hit='tp1_first') tp1, SUM(first_hit='stop_first') stop, SUM(done_at IS NOT NULL) done FROM token_outcomes").get() as Record<string, number>;
+const oc = real.prepare("SELECT COUNT(*) n, SUM(first_hit='tp1_first') tp1, SUM(first_hit='stop_first') stop, SUM(done_at IS NOT NULL) done FROM token_outcomes WHERE window_sec = 60").get() as Record<string, number>;
 console.log(`\nValódi DB: nyitott árnyék-pozíciók karonként (7 terv/belépés): ${open.map((o) => `${o.arm}=${o.n}`).join(", ") || "nincs"}`);
 console.log(`lezártak karonként/tervenként (db, átlag nettó USD, nyerők):`); for (const c of closed) console.log("  ", JSON.stringify(c)); if (!closed.length) console.log("   nincs");
 const diag = real.prepare(`SELECT t.symbol, t.launchpad, t.graduated_at IS NOT NULL g, p.window_sec w, p.entry_price_native e, p.native_received / p.size_native x, p.close_reason r, (p.closed_at - p.opened_at)/1000 held_s

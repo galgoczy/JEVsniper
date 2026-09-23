@@ -188,14 +188,16 @@ CREATE TABLE IF NOT EXISTS wallet_lists (
 
 -- Címkézett tokenek 24 órás sorsa (tanuláshoz, kalibrációhoz): elérte-e előbb a 2x-et, mint a -40%-ot
 CREATE TABLE IF NOT EXISTS token_outcomes (
-  token_id INTEGER PRIMARY KEY REFERENCES tokens(id),
+  token_id INTEGER NOT NULL REFERENCES tokens(id),
+  window_sec INTEGER NOT NULL,        -- melyik ablak árától mérünk (30/60/180)
   ref_price REAL NOT NULL,
   ref_at INTEGER NOT NULL,
   max_multiple REAL NOT NULL DEFAULT 1,
   min_multiple REAL NOT NULL DEFAULT 1,
   first_hit TEXT,                     -- tp1_first | stop_first | NULL
   hit_at INTEGER,
-  done_at INTEGER                     -- 24h után lezárva (neither_24h, ha first_hit NULL)
+  done_at INTEGER,                    -- 24h után lezárva (neither_24h, ha first_hit NULL)
+  PRIMARY KEY (token_id, window_sec)
 );
 
 CREATE TABLE IF NOT EXISTS events (

@@ -87,14 +87,15 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
     `Rezsim szerinti bontás: ${Object.entries(shadow.reduce((m, p) => { const r = p.regime ?? "?"; m[r] = m[r] ?? { n: 0, s: 0 }; m[r].n++; m[r].s += p.net_pnl_usd; return m; }, {} as Record<string, { n: number; s: number }>)).map(([r, v]) => `${r}: n=${v.n}, átlag ${f(v.s / v.n, 3)}`).join("; ") || "-"}`, "");
 
   // --- kalibráció: Jev P(tp1_first) sávok vs. kimenet (60 mp ablak). Amíg nincs 24h lezárás, az eddig elért csúcs számít (≥2x).
+  // Ugyanannak az ablaknak az árától mérve (o.window_sec = j.window_sec), a cél: 2x ELŐBB, mint −40% (first_hit)
   const cal = db.prepare(`SELECT j.answers_json a, o.first_hit h, o.max_multiple mx, o.done_at d, s.params_json p FROM jev_calls j
-    JOIN token_outcomes o ON o.token_id = j.token_id LEFT JOIN snapshots s ON s.token_id = j.token_id AND s.window_sec = j.window_sec
+    JOIN token_outcomes o ON o.token_id = j.token_id AND o.window_sec = j.window_sec LEFT JOIN snapshots s ON s.token_id = j.token_id AND s.window_sec = j.window_sec
     WHERE j.purpose='entry' AND j.ok=1 AND j.window_sec=?`).all(cfg.evaluation.live_window_sec) as Array<{ a: string; h: string | null; mx: number; d: number | null; p: string | null }>;
-  const hit2x = (r: { h: string | null; mx: number }) => r.h === "tp1_first" || r.mx >= cfg.exit_plan.tp1_multiple;
+  const hit2x = (r: { h: string | null; mx: number }) => r.h === "tp1_first";
   const doneN = cal.filter((r) => r.d !== null).length;
   const bins = [0, 0.2, 0.35, 0.5, 0.7, 1.01];
   const calRows = bins.slice(0, -1).map((lo, i) => { const hi = bins[i + 1]!; const xs = cal.filter((r) => { const p = JSON.parse(r.a).outcome?.probabilities?.tp1_first ?? 0; return p >= lo && p < hi; }); return { lo, hi, n: xs.length, tp1: xs.filter(hit2x).length, stop: xs.filter((r) => r.h === "stop_first").length }; });
-  L.push(`## Kalibráció (P(2x előbb) sávok; n=${cal.length} címkézett+követett token, ebből 24h lezárt: ${doneN})`, "| sáv | n | eddig ≥2x | előbb −40% |", "|---|---|---|---|", ...calRows.map((r) => `| ${r.lo}–${r.hi} | ${r.n} | ${pct(r.tp1, r.n)} | ${pct(r.stop, r.n)} |`), "");
+  L.push(`## Kalibráció (P(2x előbb) sávok; n=${cal.length} címkézett+követett token a 60 mp ártól, ebből 24h lezárt: ${doneN})`, "| sáv | n | előbb 2x | előbb −40% |", "|---|---|---|---|", ...calRows.map((r) => `| ${r.lo}–${r.hi} | ${r.n} | ${pct(r.tp1, r.n)} | ${pct(r.stop, r.n)} |`), "");
 
   // --- címke-informativitás: melyik címkeérték mellett mekkora a 2x arány
   const labelKeys = ["contract_risk", "creator_profile", "wallet_pattern", "crowd_type", "dev_behavior", "trade_pattern", "copycat", "entry_timing"];
@@ -111,7 +112,7 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
     for (const r of cal) { const sc = JSON.parse(r.a)[key]?.score; if (typeof sc !== "number") continue; const v = sc < 3 ? "0-29" : sc < 6 ? "30-59" : "60-100"; const e = by.get(v) ?? { n: 0, tp1: 0 }; e.n++; if (hit2x(r)) e.tp1++; by.set(v, e); }
     if (by.size) info.push(`- ${key}: ${[...by.entries()].sort().map(([v, e]) => `${v}=${pct(e.tp1, e.n)} (${e.n})`).join(", ")}`);
   }
-  L.push(`## Címke-informativitás (eddig ≥2x arány címkeértékenként; összes: ${pct(cal.filter(hit2x).length, cal.length)})`, ...(info.length ? info : ["- még nincs adat"]), "");
+  L.push(`## Címke-informativitás („előbb 2x, mint −40%” arány címkeértékenként; összes: ${pct(cal.filter(hit2x).length, cal.length)})`, ...(info.length ? info : ["- még nincs adat"]), "");
 
   // --- paraméter-informativitás: nyers on-chain paraméterek sávjai vs. 2x arány
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -144,10 +145,10 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
     }
     if (by.some((b) => b.n)) pinfo.push(`- ${name}: ${by.filter((b) => b.n).map((b) => `${fmtEdge(b.lo)}–${fmtEdge(b.hi)}=${pct(b.tp1, b.n)} (${b.n})`).join(", ")}${unknown ? `, unknown (${unknown})` : ""}`);
   }
-  L.push("## Paraméter-informativitás (eddig ≥2x arány sávonként, 60 mp pillanatkép)", ...(pinfo.length ? pinfo : ["- még nincs adat"]), "");
+  L.push("## Paraméter-informativitás („előbb 2x, mint −40%” arány sávonként, 60 mp pillanatkép és 60 mp ár)", ...(pinfo.length ? pinfo : ["- még nincs adat"]), "");
 
   // --- egyéb: kimenet-követés, listák, rezsim-idővonal, vesztes sorozat, Jev-hibaarány
-  const oc = db.prepare("SELECT COUNT(*) n, SUM(first_hit='tp1_first') tp1, SUM(first_hit='stop_first') stop, SUM(done_at IS NOT NULL) done, SUM(max_multiple>=2) m2, SUM(max_multiple>=5) m5, SUM(max_multiple>=10) m10 FROM token_outcomes WHERE ref_at > ?").get(sinceMs) as Row;
+  const oc = db.prepare("SELECT COUNT(*) n, SUM(first_hit='tp1_first') tp1, SUM(first_hit='stop_first') stop, SUM(done_at IS NOT NULL) done, SUM(max_multiple>=2) m2, SUM(max_multiple>=5) m5, SUM(max_multiple>=10) m10 FROM token_outcomes WHERE ref_at > ? AND window_sec = ?").get(sinceMs, cfg.evaluation.live_window_sec) as Row;
   const lists = db.prepare("SELECT list, COUNT(*) n, SUM(occurrences>=5) scored FROM wallet_lists GROUP BY list").all() as Row[];
   const regimes = db.prepare("SELECT regime, source, at FROM regime_log WHERE at > ? ORDER BY at").all(sinceMs) as Row[];
   const streak = (() => { let cur = 0, worst = 0; for (const p of db.prepare("SELECT net_pnl_usd n FROM positions WHERE arm='live' AND closed_at IS NOT NULL ORDER BY closed_at").all() as { n: number }[]) { cur = p.n < 0 ? cur + 1 : 0; worst = Math.max(worst, cur); } return worst; })();

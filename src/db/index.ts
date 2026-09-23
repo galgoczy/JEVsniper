@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 /** Meglévő DB-hez hozzáadott oszlopok (a CREATE TABLE IF NOT EXISTS ezeket nem pótolja). */
 const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
@@ -23,6 +23,13 @@ const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
 ];
 
 function migrate(db: DB) {
+  // token_outcomes v2: ablakonként külön sor (a régi, egyablakos adat torzított volt → eldobjuk)
+  const ocCols = (db.prepare("PRAGMA table_info(token_outcomes)").all() as { name: string }[]).map((c) => c.name);
+  if (ocCols.length && !ocCols.includes("window_sec")) {
+    db.exec("DROP TABLE token_outcomes");
+    db.exec(`CREATE TABLE token_outcomes (token_id INTEGER NOT NULL REFERENCES tokens(id), window_sec INTEGER NOT NULL, ref_price REAL NOT NULL, ref_at INTEGER NOT NULL,
+      max_multiple REAL NOT NULL DEFAULT 1, min_multiple REAL NOT NULL DEFAULT 1, first_hit TEXT, hit_at INTEGER, done_at INTEGER, PRIMARY KEY (token_id, window_sec))`);
+  }
   for (const [table, column, ddl] of ADDED_COLUMNS) {
     const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
     if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
