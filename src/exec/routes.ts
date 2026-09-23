@@ -1,4 +1,4 @@
-import { type Address, type Hex, type PublicClient, encodeAbiParameters, encodeFunctionData, parseAbiParameters, isAddressEqual, getAddress } from "viem";
+import { type Address, type Hex, type PublicClient, encodeAbiParameters, encodeFunctionData, parseAbiParameters, isAddressEqual, getAddress, keccak256 } from "viem";
 import type { ChainKey } from "../chains/index.js";
 import { ADDRESSES, ZERO } from "../chains/addresses.js";
 import { ponsCurveAbi, ponsFactoryAbi } from "../abis/pons.js";
@@ -6,6 +6,11 @@ import { universalRouterAbi, v4QuoterAbi, permit2Abi, erc20WriteAbi, UR_COMMAND_
   V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, V4_ACTION_TAKE_ALL } from "../abis/uniswapV4.js";
 
 export interface PoolKey { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }
+
+/** Uniswap v4 poolId = keccak256(abi.encode(PoolKey)) (v4-core PoolIdLibrary). */
+export function computePoolId(k: PoolKey): `0x${string}` {
+  return keccak256(encodeAbiParameters(parseAbiParameters("address, address, uint24, int24, address"), [k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks]));
+}
 export interface TxRequest { to: Address; data: Hex; value: bigint; label: string }
 export interface Quote {
   amountOut: bigint; feeWei: bigint; taxWei: bigint; note?: string;

@@ -7,7 +7,7 @@ import { erc20Abi } from "../abis/uniswap.js";
 import { ponsCurveAbi } from "../abis/pons.js";
 import { uniswapV2PairAbi, uniswapV3PoolAbi, uniswapV4SwapAbi, transferEventAbi, ownableAbi, chainlinkAggregatorAbi } from "../abis/pools.js";
 import { holderStats, swapStats, priceFromSqrtX96, findDangerousSelectors, type SwapRec, type TransferRec } from "./stats.js";
-import { UniswapV4Route, type PoolKey } from "../exec/routes.js";
+import { UniswapV4Route, computePoolId, type PoolKey } from "../exec/routes.js";
 import type { ParamSnapshot, U } from "./types.js";
 import { log } from "../logger.js";
 
@@ -102,7 +102,9 @@ export class Collector {
     const headBlock = await c.getBlock({ blockNumber: head }).catch(() => null);
     const fromBlock = BigInt(t.discovered_block ?? Number(head));
     const pool = t.pool_address && /^0x[0-9a-fA-F]{40}$/.test(t.pool_address) ? getAddress(t.pool_address) : null; // v4-nél poolId, nem cím
-    const poolId = t.pool_address && t.pool_address.length === 66 ? (t.pool_address as `0x${string}`) : null;
+    let poolId = t.pool_address && t.pool_address.length === 66 ? (t.pool_address as `0x${string}`) : null;
+    // Graduált PONS: a curve tartalékai már nem az árat adják → a v4 pool (PoolKey az Initialize eseményből)
+    if (t.mechanics === "bonding_curve" && t.graduated_at && t.pool_key_json) { poolId = computePoolId(JSON.parse(t.pool_key_json) as PoolKey); t = { ...t, mechanics: "v4_hook" }; }
     const pair = (t.pair_token ?? ZERO) as Address;
 
     // --- szerződés

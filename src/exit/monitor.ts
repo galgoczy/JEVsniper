@@ -57,13 +57,13 @@ export class PositionMonitor {
 
   private trackedFor(chain: ChainKey, rows: PosRow[]): Tracked[] {
     const seen = new Map<number, Tracked>();
-    const add = (r: { token_id: number; address: string; mechanics: string; pool_address: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null }) => {
+    const add = (r: { token_id: number; address: string; mechanics: string; pool_address: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; pool_key_json?: string | null }) => {
       if (seen.has(r.token_id)) return;
-      seen.set(r.token_id, { tokenId: r.token_id, token: getAddress(r.address), mechanics: r.mechanics, pool: r.pool_address, creator: r.creator ? getAddress(r.creator) : null, decimals: 18, pairToken: r.pair_token });
+      seen.set(r.token_id, { tokenId: r.token_id, token: getAddress(r.address), mechanics: r.mechanics, pool: r.pool_address, creator: r.creator ? getAddress(r.creator) : null, decimals: 18, pairToken: r.pair_token, poolKeyJson: r.pool_key_json ?? null, graduatedAt: r.graduated_at });
     };
     for (const r of rows) if (r.chain === chain) add(r);
     // 24 órás kimenet-követés: tokenek, ahol valamelyik kar belépett és még nincs lezárva
-    const oc = this.d.db.prepare(`SELECT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
+    const oc = this.d.db.prepare(`SELECT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
     for (const r of oc) add(r);
     return [...seen.values()];
   }

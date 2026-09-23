@@ -60,5 +60,9 @@ const closed = real.prepare("SELECT arm, exit_plan, COUNT(*) n, ROUND(AVG(net_pn
 const oc = real.prepare("SELECT COUNT(*) n, SUM(first_hit='tp1_first') tp1, SUM(first_hit='stop_first') stop, SUM(done_at IS NOT NULL) done FROM token_outcomes").get() as Record<string, number>;
 console.log(`\nValódi DB: nyitott árnyék-pozíciók karonként (7 terv/belépés): ${open.map((o) => `${o.arm}=${o.n}`).join(", ") || "nincs"}`);
 console.log(`lezártak karonként/tervenként (db, átlag nettó USD, nyerők):`); for (const c of closed) console.log("  ", JSON.stringify(c)); if (!closed.length) console.log("   nincs");
+const diag = real.prepare(`SELECT t.symbol, t.launchpad, t.graduated_at IS NOT NULL g, p.window_sec w, p.entry_price_native e, p.native_received / p.size_native x, p.close_reason r, (p.closed_at - p.opened_at)/1000 held_s
+  FROM positions p JOIN tokens t ON t.id = p.token_id WHERE p.arm = 'jev_direct_0.3' AND p.exit_plan = 'live' AND p.closed_at IS NOT NULL AND p.close_reason != 'invalid_no_tokens' ORDER BY p.closed_at DESC LIMIT 12`).all() as Record<string, unknown>[];
+console.log("diagnosztika (jev_direct_0.3 élő terv, utolsó 12 zárás): ablak | graduált | szorzó | ok | tartás mp");
+for (const d of diag) console.log(`   ${d.launchpad} ${String(d.symbol ?? "?").padEnd(10)} ${d.w}s  grad=${d.g}  x=${Number(d.x).toFixed(3)}  ${d.r}  ${Math.round(Number(d.held_s))}s`);
 console.log(`kimenet-követés: ${oc.n} token, 2x előbb: ${oc.tp1 ?? 0}, -40% előbb: ${oc.stop ?? 0}, lezárt 24h: ${oc.done ?? 0}`);
 real.close();

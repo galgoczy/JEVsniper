@@ -7,8 +7,9 @@ import { uniswapV4SwapAbi } from "../abis/pools.js";
 import { erc20WriteAbi } from "../abis/uniswapV4.js";
 import { priceFromSqrtX96 } from "../collector/stats.js";
 import { log } from "../logger.js";
+import { computePoolId, type PoolKey } from "../exec/routes.js";
 
-export interface Tracked { tokenId: number; token: Address; mechanics: string; pool: string | null; creator: Address | null; decimals: number; pairToken: string | null }
+export interface Tracked { tokenId: number; token: Address; mechanics: string; pool: string | null; creator: Address | null; decimals: number; pairToken: string | null; poolKeyJson?: string | null; graduatedAt?: number | null }
 export interface PriceState { price: number; at: number; block: bigint; liquidityNative: number | null; creatorBalance: number | null; swapsSinceLast: number; sellsSinceLast: number; graduated: boolean }
 
 /**
@@ -37,8 +38,9 @@ export class PriceFeed {
     };
     for (const t of tracked) { const cur = this.state.get(t.tokenId); if (cur) { cur.swapsSinceLast = 0; cur.sellsSinceLast = 0; } }
 
-    // --- PONS curve-ök: reserves multicall
-    const curves = tracked.filter((t) => t.mechanics === "bonding_curve" && t.pool && /^0x[0-9a-fA-F]{40}$/.test(t.pool));
+    const isGraduated = (t: Tracked) => t.mechanics === "bonding_curve" && (!!t.graduatedAt || this.state.get(t.tokenId)?.graduated === true);
+    // --- PONS curve-ök (csak amíg nem graduáltak): reserves multicall
+    const curves = tracked.filter((t) => t.mechanics === "bonding_curve" && !isGraduated(t) && t.pool && /^0x[0-9a-fA-F]{40}$/.test(t.pool));
     if (curves.length) {
       const contracts = curves.flatMap((t) => (["quoteReserve", "tokenReserve", "graduated"] as const).map((fn) => ({ address: getAddress(t.pool!), abi: ponsCurveAbi, functionName: fn })));
       const mc = (await this.client.multicall({ allowFailure: true, contracts: contracts as never }).catch((e) => { log.debug("pricefeed curve multicall hiba", { error: (e as Error).message.slice(0, 100) }); return null; })) as Array<{ status: string; result?: unknown }> | null;
@@ -46,7 +48,8 @@ export class PriceFeed {
         const q = mc[i * 3]?.status === "success" ? (mc[i * 3]!.result as bigint) : null;
         const tk = mc[i * 3 + 1]?.status === "success" ? (mc[i * 3 + 1]!.result as bigint) : null;
         const g = mc[i * 3 + 2]?.status === "success" ? (mc[i * 3 + 2]!.result as boolean) : false;
-        if (q !== null && tk !== null && tk > 0n) bump(t.tokenId, { price: Number(q) / Number(tk) * 10 ** (t.decimals - 18), liquidityNative: Number(q) / 1e18, at: now, block: head, graduated: g });
+        if (g) bump(t.tokenId, { graduated: true, liquidityNative: null }); // graduált: az ár a v4 poolból (lent), a curve-tartalék nem érvényes
+        else if (q !== null && tk !== null && tk > 0n) bump(t.tokenId, { price: Number(q) / Number(tk) * 10 ** (t.decimals - 18), liquidityNative: Number(q) / 1e18, at: now, block: head, graduated: false });
       });
       if (head >= from) {
         const ev = ponsCurveAbi.filter((x) => x.type === "event");
@@ -61,11 +64,15 @@ export class PriceFeed {
     }
 
     // --- v4 poolok: Swap események poolId szerint (200-as adagok)
-    const v4 = tracked.filter((t) => (t.mechanics === "v4" || t.mechanics === "v4_hook" || (t.mechanics === "bonding_curve" && this.state.get(t.tokenId)?.graduated)) && t.pool && t.pool.length === 66);
+    const v4 = tracked.map((t) => {
+      if ((t.mechanics === "v4" || t.mechanics === "v4_hook") && t.pool && t.pool.length === 66) return { t, id: t.pool as `0x${string}` };
+      if (isGraduated(t) && t.poolKeyJson) return { t, id: computePoolId(JSON.parse(t.poolKeyJson) as PoolKey) };
+      return null;
+    }).filter((x): x is { t: Tracked; id: `0x${string}` } => x !== null);
     if (v4.length && A.uniswapV4PoolManager && head >= from) {
-      const byId = new Map(v4.map((t) => [t.pool!.toLowerCase(), t]));
+      const byId = new Map(v4.map((x) => [x.id.toLowerCase(), x.t]));
       for (let i = 0; i < v4.length; i += 200) {
-        const ids = v4.slice(i, i + 200).map((t) => t.pool as `0x${string}`);
+        const ids = v4.slice(i, i + 200).map((x) => x.id);
         const logs = await this.client.getLogs({ address: A.uniswapV4PoolManager, event: uniswapV4SwapAbi[0], args: { id: ids }, fromBlock: from, toBlock: head }).catch((e) => { log.debug("pricefeed v4 getLogs hiba", { error: (e as Error).message.slice(0, 100) }); return []; });
         for (const l of logs) {
           const t = byId.get((l.args.id as string).toLowerCase()); if (!t) continue;
