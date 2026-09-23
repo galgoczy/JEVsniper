@@ -9,7 +9,7 @@ const { markdown } = buildReport(db, cfg, since);
 const ok = (m: string) => console.log("✅", m); const bad = (m: string) => { console.log("❌", m); process.exitCode = 1; };
 // kereszt-ellenőrzés
 const newN = (db.prepare("SELECT COUNT(*) n FROM tokens WHERE discovered_at > ?").get(since) as { n: number }).n;
-const rc = db.prepare("SELECT net_pnl_usd n FROM positions WHERE arm='random_control' AND exit_plan='live' AND window_sec=? AND closed_at > ? AND close_reason != 'invalid_no_tokens'").all(cfg.evaluation.live_window_sec, since) as { n: number }[];
+const rc = db.prepare("SELECT net_pnl_usd n FROM positions WHERE arm='random_control' AND exit_plan='live' AND window_sec=? AND closed_at > ? AND close_reason NOT LIKE 'invalid%'").all(cfg.evaluation.live_window_sec, since) as { n: number }[];
 const rcMean = rc.length ? rc.reduce((s, r) => s + r.n, 0) / rc.length : null;
 const line = markdown.split("\n").find((l) => l.startsWith("random_control (60 mp"))!;
 const shown = /átlag nettó: (\S+) USD, n=(\d+)/.exec(line);

@@ -18,7 +18,7 @@ export interface PosRow extends Omit<PosState, "entry_price" | "peak_price"> {
   native_received: number; gas_usd: number | null; fees_usd: number | null; jev_cost_usd: number | null; net_pnl_usd: number | null; next_check_at: number | null; closed_at: number | null; close_reason: string | null;
   creator_balance_at_entry: number | null; liquidity_at_entry: number | null;
   // token
-  address: string; symbol: string | null; launchpad: string; mechanics: string; pool_address: string | null; pool_key_json: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null;
+  address: string; symbol: string | null; launchpad: string; mechanics: string; pool_address: string | null; pool_key_json: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; decimals?: number | null;
 }
 
 export interface MonitorDeps {
@@ -43,6 +43,9 @@ export class PositionMonitor {
     this.d.db.prepare(`INSERT OR IGNORE INTO token_outcomes(token_id, ref_price, ref_at) SELECT token_id, entry_price_native, opened_at FROM positions
       WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm NOT IN ('live','day1_test') AND entry_price_native > 0 AND opened_at > ?`).run(now - 86_400_000);
     const inv = this.d.db.prepare("UPDATE positions SET phase = 'closed', closed_at = ?, close_reason = 'invalid_no_tokens', net_pnl_usd = 0 WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm NOT IN ('live','day1_test')").run(now);
+    const absurd = this.d.db.prepare("UPDATE positions SET phase = 'closed', closed_at = COALESCE(closed_at, ?), close_reason = 'invalid_price', net_pnl_usd = 0, gross_pnl_usd = 0 WHERE arm NOT IN ('live','day1_test') AND size_native > 0 AND (native_received / size_native > 500 OR (net_pnl_usd IS NOT NULL AND ABS(net_pnl_usd) > 1000))").run(now);
+    if (absurd.changes) log.info(`Árfeed-hibás árnyék-pozíciók érvénytelenítve: ${absurd.changes}`);
+    this.d.db.prepare("UPDATE token_outcomes SET max_multiple = 1, first_hit = NULL, hit_at = NULL WHERE max_multiple > 500").run();
     const invLive = this.d.db.prepare("UPDATE positions SET phase = 'closed', closed_at = ?, close_reason = 'buy_failed:dry_run', net_pnl_usd = 0 WHERE closed_at IS NULL AND tokens_bought <= 0 AND arm = 'live'").run(now);
     if (invLive.changes) log.info(`Vétel nélküli élő pozíció-sorok lezárva (dry_run maradék): ${invLive.changes}`);
     if (inv.changes) log.info(`Érvénytelen (token nélküli) árnyék-pozíciók lezárva: ${inv.changes}`);
@@ -51,19 +54,19 @@ export class PositionMonitor {
   stop() { if (this.timer) clearInterval(this.timer); }
 
   private openRows(): PosRow[] {
-    return this.d.db.prepare(`SELECT p.*, t.address, t.symbol, t.launchpad, t.mechanics, t.pool_address, t.pool_key_json, t.creator, t.pair_token, t.graduated_at
+    return this.d.db.prepare(`SELECT p.*, t.address, t.symbol, t.launchpad, t.mechanics, t.pool_address, t.pool_key_json, t.creator, t.pair_token, t.graduated_at, t.decimals
       FROM positions p JOIN tokens t ON t.id = p.token_id WHERE p.closed_at IS NULL AND p.phase NOT IN ('closed','unsellable') AND p.arm != 'day1_test'`).all() as PosRow[];
   }
 
   private trackedFor(chain: ChainKey, rows: PosRow[]): Tracked[] {
     const seen = new Map<number, Tracked>();
-    const add = (r: { token_id: number; address: string; mechanics: string; pool_address: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; pool_key_json?: string | null }) => {
+    const add = (r: { token_id: number; address: string; mechanics: string; pool_address: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; pool_key_json?: string | null; decimals?: number | null }) => {
       if (seen.has(r.token_id)) return;
-      seen.set(r.token_id, { tokenId: r.token_id, token: getAddress(r.address), mechanics: r.mechanics, pool: r.pool_address, creator: r.creator ? getAddress(r.creator) : null, decimals: 18, pairToken: r.pair_token, poolKeyJson: r.pool_key_json ?? null, graduatedAt: r.graduated_at });
+      seen.set(r.token_id, { tokenId: r.token_id, token: getAddress(r.address), mechanics: r.mechanics, pool: r.pool_address, creator: r.creator ? getAddress(r.creator) : null, decimals: r.decimals ?? 18, pairToken: r.pair_token, poolKeyJson: r.pool_key_json ?? null, graduatedAt: r.graduated_at });
     };
     for (const r of rows) if (r.chain === chain) add(r);
     // 24 órás kimenet-követés: tokenek, ahol valamelyik kar belépett és még nincs lezárva
-    const oc = this.d.db.prepare(`SELECT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
+    const oc = this.d.db.prepare(`SELECT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json, t.decimals FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
     for (const r of oc) add(r);
     return [...seen.values()];
   }
@@ -94,7 +97,8 @@ export class PositionMonitor {
     const now = nowMs();
     for (const o of rows) {
       const ps = this.d.feeds[chain].get(o.token_id);
-      const m = ps && ps.price > 0 ? ps.price / o.ref_price : null;
+      const m0 = ps && ps.price > 0 ? ps.price / o.ref_price : null;
+      const m = m0 !== null && Number.isFinite(m0) && m0 <= 500 && m0 >= 1e-6 ? m0 : null;
       const mx = m !== null ? Math.max(o.max_multiple, m) : o.max_multiple, mn = m !== null ? Math.min(o.min_multiple, m) : o.min_multiple;
       let hit: string | null = null;
       if (!o.first_hit && m !== null) { if (m >= this.d.cfg.exit_plan.tp1_multiple) hit = "tp1_first"; else if (m <= 1 - this.d.cfg.emergency.price_drop_pct / 100) hit = "stop_first"; }
@@ -111,6 +115,11 @@ export class PositionMonitor {
     const setNext = (phase: Phase) => db.prepare("UPDATE positions SET next_check_at = ? WHERE id = ?").run(now + checkIntervalSec({ exit_plan: r.exit_plan, phase, entry_price: r.entry_price_native, peak_price: r.peak_price_native ?? r.entry_price_native, tokens_bought: r.tokens_bought, tokens_remaining: r.tokens_remaining, opened_at: r.opened_at, stages_done: r.stages_done }, now, cfg.monitoring) * 1000, r.id);
     if (!ps || ps.price <= 0) { setNext(r.phase); return; }
     const price = ps.price;
+    const ratio = price / r.entry_price_native;
+    if (!Number.isFinite(ratio) || ratio > 500 || ratio < 1e-6) { // árfeed-hiba (pl. tizedesjegy-eltérés), nem piaci mozgás
+      log.warn("árfeed józansági hiba – kihagyva", { id: r.id, token: r.symbol, ratio });
+      setNext(r.phase); return;
+    }
     const peak = Math.max(r.peak_price_native ?? r.entry_price_native, price);
     if (peak !== r.peak_price_native) db.prepare("UPDATE positions SET peak_price_native = ? WHERE id = ?").run(peak, r.id);
     const state: PosState = { exit_plan: r.exit_plan, phase: r.phase, entry_price: r.entry_price_native, peak_price: peak, tokens_bought: r.tokens_bought, tokens_remaining: r.tokens_remaining, opened_at: r.opened_at, stages_done: r.stages_done };

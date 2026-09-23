@@ -57,7 +57,7 @@ export class CompoundManager {
     if (!this.cfg.compound.require_positive_vs_random_control) return true;
     const since = nowMs() - this.cfg.compound.random_control_lookback_days * 86_400_000;
     const live = this.db.prepare("SELECT AVG(net_pnl_usd) a, COUNT(*) n FROM positions WHERE arm='live' AND closed_at > ?").get(since) as { a: number | null; n: number };
-    const rc = this.db.prepare("SELECT AVG(net_pnl_usd) a, COUNT(*) n FROM positions WHERE arm='random_control' AND exit_plan='live' AND closed_at > ? AND close_reason != 'invalid_no_tokens'").get(since) as { a: number | null; n: number };
+    const rc = this.db.prepare("SELECT AVG(net_pnl_usd) a, COUNT(*) n FROM positions WHERE arm='random_control' AND exit_plan='live' AND closed_at > ? AND close_reason NOT LIKE 'invalid%'").get(since) as { a: number | null; n: number };
     if (!live.n || !rc.n || live.a === null || rc.a === null) return false;
     return live.a > rc.a;
   }

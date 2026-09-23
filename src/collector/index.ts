@@ -17,6 +17,7 @@ export interface TokenRow {
   discovered_at: number; discovered_block: number | null; graduated_at: number | null;
   graduation_threshold?: string | null;
   pool_key_json?: string | null;
+  decimals?: number | null;
 }
 
 const num = (v: bigint, dec = 18) => Number(formatUnits(v, dec));
@@ -125,6 +126,7 @@ export class Collector {
       this.db.prepare("UPDATE tokens SET name = COALESCE(name, ?), symbol = COALESCE(symbol, ?) WHERE id = ?").run(mcv(3), mcv(4), t.id);
     }
     const decimals = decimalsR ?? 18;
+    if (decimalsR !== null) this.db.prepare("UPDATE tokens SET decimals = ? WHERE id = ? AND decimals IS NULL").run(decimalsR, t.id);
     const totalSupply = supplyR ?? 0n;
     const bytecodeHash = code ? keccak256(code) : "0x";
     const dangerous = code ? findDangerousSelectors(code) : unk;

@@ -65,7 +65,7 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
   // --- árnyék karonként/ablakonként/tervenként
   const shadow = db.prepare(`SELECT arm, window_sec, exit_plan, regime, net_pnl_usd, native_received, size_native, close_reason, peak_price_native, entry_price_native FROM positions p
     LEFT JOIN (SELECT token_id tid, regime FROM decisions WHERE arm='live_rule' GROUP BY token_id) d ON d.tid = p.token_id
-    WHERE arm NOT IN ('live','day1_test') AND closed_at > ? AND close_reason != 'invalid_no_tokens'`).all(sinceMs) as Array<{ arm: string; window_sec: number; exit_plan: string; regime: string | null; net_pnl_usd: number; native_received: number; size_native: number; close_reason: string; peak_price_native: number; entry_price_native: number }>;
+    WHERE arm NOT IN ('live','day1_test') AND closed_at > ? AND close_reason NOT LIKE 'invalid%'`).all(sinceMs) as Array<{ arm: string; window_sec: number; exit_plan: string; regime: string | null; net_pnl_usd: number; native_received: number; size_native: number; close_reason: string; peak_price_native: number; entry_price_native: number }>;
   const groups = new Map<string, typeof shadow>();
   for (const p of shadow) { const k = `${p.arm}|${p.window_sec}|${p.exit_plan}`; (groups.get(k) ?? groups.set(k, []).get(k)!).push(p); }
   const rcLive = shadow.filter((p) => p.arm === "random_control" && p.exit_plan === "live" && p.window_sec === cfg.evaluation.live_window_sec);
