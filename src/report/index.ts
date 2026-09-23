@@ -5,6 +5,8 @@ import { nowMs } from "../db/index.js";
 import type { Config } from "../config.js";
 
 type Row = Record<string, unknown>;
+type ParamsLike = { holders?: Record<string, unknown>; creator?: Record<string, unknown>; buyers?: Record<string, unknown>; dynamics?: Record<string, unknown>; contract?: Record<string, unknown>; meta?: Record<string, unknown> };
+const fmtEdge = (v: number) => (Math.abs(v) >= 1e9 ? "∞" : v <= -1e9 ? "−∞" : String(v));
 const f = (v: unknown, d = 3) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(d) : "-");
 const pct = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(0)}%` : "-");
 
@@ -84,22 +86,65 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
   L.push("", `Csúcs-szorzók (élő terv): ≥2x ${reached(2)}, ≥5x ${reached(5)}, ≥10x ${reached(10)}, ≥20x ${reached(20)} a ${peaks.length}-ból; trailing-kilépések: ${trailing}`,
     `Rezsim szerinti bontás: ${Object.entries(shadow.reduce((m, p) => { const r = p.regime ?? "?"; m[r] = m[r] ?? { n: 0, s: 0 }; m[r].n++; m[r].s += p.net_pnl_usd; return m; }, {} as Record<string, { n: number; s: number }>)).map(([r, v]) => `${r}: n=${v.n}, átlag ${f(v.s / v.n, 3)}`).join("; ") || "-"}`, "");
 
-  // --- kalibráció: Jev P(tp1_first) sávok vs. valós kimenet (60 mp ablak, 24h lezárt kimenetek)
-  const cal = db.prepare(`SELECT j.answers_json a, o.first_hit h, o.max_multiple mx FROM jev_calls j JOIN token_outcomes o ON o.token_id = j.token_id
-    WHERE j.purpose='entry' AND j.ok=1 AND j.window_sec=? AND o.done_at IS NOT NULL`).all(cfg.evaluation.live_window_sec) as Array<{ a: string; h: string | null; mx: number }>;
+  // --- kalibráció: Jev P(tp1_first) sávok vs. kimenet (60 mp ablak). Amíg nincs 24h lezárás, az eddig elért csúcs számít (≥2x).
+  const cal = db.prepare(`SELECT j.answers_json a, o.first_hit h, o.max_multiple mx, o.done_at d, s.params_json p FROM jev_calls j
+    JOIN token_outcomes o ON o.token_id = j.token_id LEFT JOIN snapshots s ON s.token_id = j.token_id AND s.window_sec = j.window_sec
+    WHERE j.purpose='entry' AND j.ok=1 AND j.window_sec=?`).all(cfg.evaluation.live_window_sec) as Array<{ a: string; h: string | null; mx: number; d: number | null; p: string | null }>;
+  const hit2x = (r: { h: string | null; mx: number }) => r.h === "tp1_first" || r.mx >= cfg.exit_plan.tp1_multiple;
+  const doneN = cal.filter((r) => r.d !== null).length;
   const bins = [0, 0.2, 0.35, 0.5, 0.7, 1.01];
-  const calRows = bins.slice(0, -1).map((lo, i) => { const hi = bins[i + 1]!; const xs = cal.filter((r) => { const p = JSON.parse(r.a).outcome?.probabilities?.tp1_first ?? 0; return p >= lo && p < hi; }); return { lo, hi, n: xs.length, tp1: xs.filter((r) => r.h === "tp1_first").length }; });
-  L.push("## Kalibráció (P(2x előbb) sávok, 24h lezárt kimenetek)", "| sáv | n | valós 2x arány |", "|---|---|---|", ...calRows.map((r) => `| ${r.lo}–${r.hi} | ${r.n} | ${pct(r.tp1, r.n)} |`), "");
+  const calRows = bins.slice(0, -1).map((lo, i) => { const hi = bins[i + 1]!; const xs = cal.filter((r) => { const p = JSON.parse(r.a).outcome?.probabilities?.tp1_first ?? 0; return p >= lo && p < hi; }); return { lo, hi, n: xs.length, tp1: xs.filter(hit2x).length, stop: xs.filter((r) => r.h === "stop_first").length }; });
+  L.push(`## Kalibráció (P(2x előbb) sávok; n=${cal.length} címkézett+követett token, ebből 24h lezárt: ${doneN})`, "| sáv | n | eddig ≥2x | előbb −40% |", "|---|---|---|---|", ...calRows.map((r) => `| ${r.lo}–${r.hi} | ${r.n} | ${pct(r.tp1, r.n)} | ${pct(r.stop, r.n)} |`), "");
 
   // --- címke-informativitás: melyik címkeérték mellett mekkora a 2x arány
   const labelKeys = ["contract_risk", "creator_profile", "wallet_pattern", "crowd_type", "dev_behavior", "trade_pattern", "copycat", "entry_timing"];
   const info: string[] = [];
+  const overall = cal.length ? cal.filter(hit2x).length / cal.length : 0;
   for (const key of labelKeys) {
     const by = new Map<string, { n: number; tp1: number }>();
-    for (const r of cal) { const v = JSON.parse(r.a)[key]?.choice ?? "?"; const e = by.get(v) ?? { n: 0, tp1: 0 }; e.n++; if (r.h === "tp1_first") e.tp1++; by.set(v, e); }
+    for (const r of cal) { const v = JSON.parse(r.a)[key]?.choice ?? "?"; const e = by.get(v) ?? { n: 0, tp1: 0 }; e.n++; if (hit2x(r)) e.tp1++; by.set(v, e); }
     if (by.size) info.push(`- ${key}: ${[...by.entries()].sort((a, b) => b[1].n - a[1].n).map(([v, e]) => `${v}=${pct(e.tp1, e.n)} (${e.n})`).join(", ")}`);
   }
-  L.push("## Címke-informativitás (2x arány címkeértékenként)", ...(info.length ? info : ["- még nincs 24 órás lezárt kimenet"]), "");
+  // pontszám-címkék sávokban
+  for (const key of ["buyer_quality", "narrative_fit", "social_quality"]) {
+    const by = new Map<string, { n: number; tp1: number }>();
+    for (const r of cal) { const sc = JSON.parse(r.a)[key]?.score; if (typeof sc !== "number") continue; const v = sc < 3 ? "0-29" : sc < 6 ? "30-59" : "60-100"; const e = by.get(v) ?? { n: 0, tp1: 0 }; e.n++; if (hit2x(r)) e.tp1++; by.set(v, e); }
+    if (by.size) info.push(`- ${key}: ${[...by.entries()].sort().map(([v, e]) => `${v}=${pct(e.tp1, e.n)} (${e.n})`).join(", ")}`);
+  }
+  L.push(`## Címke-informativitás (eddig ≥2x arány címkeértékenként; összes: ${pct(cal.filter(hit2x).length, cal.length)})`, ...(info.length ? info : ["- még nincs adat"]), "");
+
+  // --- paraméter-informativitás: nyers on-chain paraméterek sávjai vs. 2x arány
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const paramDefs: Array<[string, (p: ParamsLike) => number | null, number[]]> = [
+    ["holders.count", (p) => num(p.holders?.count), [0, 10, 30, 60, 120, 1e9]],
+    ["holders.top10_pct_ex_creator", (p) => num(p.holders?.top10_pct_ex_creator), [0, 30, 50, 70, 101]],
+    ["holders.fresh_wallet_ratio_top20", (p) => num(p.holders?.fresh_wallet_ratio_top20), [0, 0.25, 0.5, 0.75, 1.01]],
+    ["creator.token_share_pct", (p) => num(p.creator?.token_share_pct), [0, 1, 5, 15, 101]],
+    ["creator.sold_pct_of_initial", (p) => num(p.creator?.sold_pct_of_initial), [0, 0.001, 25, 75, 101]],
+    ["creator.prior_tokens", (p) => num(p.creator?.prior_tokens), [0, 1, 3, 10, 1e9]],
+    ["buyers.unique_buyers", (p) => num(p.buyers?.unique_buyers), [0, 10, 30, 60, 1e9]],
+    ["buyers.bot_ratio", (p) => num(p.buyers?.bot_ratio), [0, 0.1, 0.3, 0.6, 1.01]],
+    ["buyers.largest_buy_pct_of_liquidity", (p) => num(p.buyers?.largest_buy_pct_of_liquidity), [0, 2, 5, 15, 1e9]],
+    ["dynamics.buy_sell_ratio", (p) => num(p.dynamics?.buy_sell_ratio), [0, 1, 2, 5, 1e9]],
+    ["dynamics.buyer_acceleration", (p) => num(p.dynamics?.buyer_acceleration), [0, 0.8, 1.2, 2, 1e9]],
+    ["dynamics.price_change_pct_since_launch", (p) => num(p.dynamics?.price_change_pct_since_launch), [-1e9, 0, 50, 150, 1e9]],
+    ["dynamics.peak_drawdown_pct", (p) => num(p.dynamics?.peak_drawdown_pct), [0, 10, 25, 50, 101]],
+    ["contract.liquidity_usd", (p) => num(p.contract?.liquidity_usd), [0, 1000, 3000, 10000, 1e12]],
+    ["contract.bonding_curve_progress_pct", (p) => num(p.contract?.bonding_curve_progress_pct), [0, 10, 30, 60, 101]],
+    ["meta.copycats_24h", (p) => num(p.meta?.copycats_24h), [0, 1, 3, 10, 1e9]],
+  ];
+  const pinfo: string[] = [];
+  for (const [name, get, edges] of paramDefs) {
+    const by = edges.slice(0, -1).map((lo, i) => ({ lo, hi: edges[i + 1]!, n: 0, tp1: 0 }));
+    let unknown = 0;
+    for (const r of cal) {
+      if (!r.p) continue; const v = get(JSON.parse(r.p) as ParamsLike);
+      if (v === null) { unknown++; continue; }
+      const b = by.find((x) => v >= x.lo && v < x.hi); if (!b) continue; b.n++; if (hit2x(r)) b.tp1++;
+    }
+    if (by.some((b) => b.n)) pinfo.push(`- ${name}: ${by.filter((b) => b.n).map((b) => `${fmtEdge(b.lo)}–${fmtEdge(b.hi)}=${pct(b.tp1, b.n)} (${b.n})`).join(", ")}${unknown ? `, unknown (${unknown})` : ""}`);
+  }
+  L.push("## Paraméter-informativitás (eddig ≥2x arány sávonként, 60 mp pillanatkép)", ...(pinfo.length ? pinfo : ["- még nincs adat"]), "");
 
   // --- egyéb: kimenet-követés, listák, rezsim-idővonal, vesztes sorozat, Jev-hibaarány
   const oc = db.prepare("SELECT COUNT(*) n, SUM(first_hit='tp1_first') tp1, SUM(first_hit='stop_first') stop, SUM(done_at IS NOT NULL) done, SUM(max_multiple>=2) m2, SUM(max_multiple>=5) m5, SUM(max_multiple>=10) m10 FROM token_outcomes WHERE ref_at > ?").get(sinceMs) as Row;
