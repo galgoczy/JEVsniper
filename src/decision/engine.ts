@@ -39,6 +39,8 @@ export class DecisionEngine {
     const { db, cfg } = this.d;
     const w = snap.meta_snapshot.window_sec;
     const regime = this.d.regime.regime;
+    // Kiesett tokenre csak az élő ablakban címkézünk (a szűrő téves kiejtéseinek méréséhez); a 30/180 mp-es ablak csak az átmenteké.
+    if (!filterPassed && w !== cfg.evaluation.live_window_sec) return;
     // 1) Jev címkézés
     let labels: Labels | null = null, callId: number | null = null;
     try {

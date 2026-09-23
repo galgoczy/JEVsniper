@@ -25,7 +25,7 @@ risk:
   # Az 1. napi mérés után állítandó (irány: pozícióméret 5%-a, min. 0,05 USD)
   max_gas_per_tx_usd: 0.05
   max_gas_per_sell_usd: 0.15
-  jev_daily_budget_usd: 1.0
+  jev_daily_budget_usd: 5.0     # ~3–4 USD/nap várható (2026-09-22 mérés: 1791 token/2 óra); elérésekor a hold-kérdések ritkulnak
   one_entry_per_token: true
   max_entries_per_creator_per_day: 1
 
