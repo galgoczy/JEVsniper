@@ -240,3 +240,9 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
   trailing-kilépések, rezsim szerinti bontás, kalibrációs tábla (P(2x előbb) sávok vs. 24h valós kimenet),
   címke-informativitás, kimenet-követés, listák, vesztes sorozat, Jev-hibaarány, rezsim-idővonal.
 - Verify (`npm run verify:step9`): a riport számai közvetlen SQL-lel keresztellenőrizve (random_control átlag, új tokenek).
+
+## 2026-09-24 – Base/Uniswap árnyékkarok, szűkített Jev-hatókör
+- Tiszta (ablakonkénti) kimenet-adat alapján a 60 mp-es „előbb 2x, mint −40%” találatok mind Base/Uniswap-on indított tokenekből jöttek (51/99), a Robinhood PONS-ból 0/486.
+- Új Jev nélküli árnyékkarok: `base_uni_all` (minden szűrőn átment Base/Uniswap token – a csoport alapvonala) és `base_uni_hold` (+10–29 holder és vevő-gyorsulás ≥2).
+- Feltételezés: árnyékpozíció csak kereskedhető (v4 PoolKey-es) tokenre nyílik, a v2/v3 poolos tokenekre nincs végrehajtási útvonal, így ezek nem kerülnek be.
+- Jev-címkézés csak `evaluation.jev_scope` = ["base/uniswap"] tokenekre; a PONS-tokeneknél a Jev-alapú karok (jev_direct, live_rule) így nem döntenek. Visszaállítás: üres lista.

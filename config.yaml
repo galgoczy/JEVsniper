@@ -58,6 +58,9 @@ watcher:
 evaluation:
   windows_sec: [30, 60, 180]
   live_window_sec: 60
+  # Jev-címkézés csak ezekre ("lánc/launchpad"); üres lista = minden token.
+  # 2026-09-24: a PONS-tokenekből egy 2x sem jött, a címkék ott csak költséget jelentettek.
+  jev_scope: ["base/uniswap"]
 
 jev:
   model: jev-latest

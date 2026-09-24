@@ -107,3 +107,25 @@ export function ruleV2(s: ParamSnapshot, l: Labels | null, variant: "loose" | "s
   }
   return { enter: r.length === 0, reasons: r, sizeMultiplier: 1 };
 }
+
+/**
+ * base_uni – Jev nélküli jelölt (2026-09-24 tiszta kimenet-adat): a 60 mp-es „előbb 2x” találatok mind
+ * Base/Uniswap-on indított tokenekből jöttek. "all": minden szűrőn átment Base/Uniswap token (a csoport saját alapvonala);
+ * "hold": ezek közül, ahol 10–29 holder van és a vevőszám gyorsul (≥2).
+ */
+export function baseUniArm(chain: string, launchpad: string | null, s: ParamSnapshot, variant: "all" | "hold"): RuleResult {
+  const r: string[] = [];
+  if (!(chain === "base" && launchpad === "uniswap")) r.push(`not_base_uni:${chain}/${launchpad}`);
+  if (variant === "hold") {
+    const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const holders = n(s.holders.count) ?? 0;
+    if (holders < 10 || holders >= 30) r.push(`holders=${holders}`);
+    const acc = n(s.dynamics.buyer_acceleration) ?? 1;
+    if (acc < 2) r.push(`accel=${acc.toFixed(2)}`);
+  }
+  return { enter: r.length === 0, reasons: r, sizeMultiplier: 1 };
+}
+
+/** Jev-címkézés hatóköre: üres lista = minden token; különben "lánc/launchpad" elemek. */
+export const inJevScope = (scope: string[], chain: string, launchpad: string | null): boolean =>
+  scope.length === 0 || scope.includes(`${chain}/${launchpad}`);

@@ -61,6 +61,7 @@ export const ConfigSchema = z.object({
   evaluation: z.object({
     windows_sec: z.array(z.number().int().positive()).min(1),
     live_window_sec: z.number().int().positive(),
+    jev_scope: z.array(z.string()).default([]),
   }),
   jev: z.object({
     model: z.string(),

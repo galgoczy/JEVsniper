@@ -8,7 +8,7 @@ import type { ChainKey } from "../chains/index.js";
 import { JevClient, JevPausedError } from "../jev/client.js";
 import { entryQuestions } from "../jev/questions.js";
 import { jevStateFromSnapshot } from "./state.js";
-import { labelsFrom, liveEntryRule, jevDirectArm, ruleScoreArm, randomControlArm, ruleV2, type Labels, type RuleResult } from "./rules.js";
+import { labelsFrom, liveEntryRule, jevDirectArm, ruleScoreArm, randomControlArm, ruleV2, baseUniArm, inJevScope, type Labels, type RuleResult } from "./rules.js";
 import { riskBlock, currentPositionUsd } from "./risk.js";
 import type { RegimeGate } from "./regime.js";
 import type { Executor } from "../exec/executor.js";
@@ -41,9 +41,9 @@ export class DecisionEngine {
     const regime = this.d.regime.regime;
     // Kiesett tokenre csak az élő ablakban címkézünk (a szűrő téves kiejtéseinek méréséhez); a 30/180 mp-es ablak csak az átmenteké.
     if (!filterPassed && w !== cfg.evaluation.live_window_sec) return;
-    // 1) Jev címkézés
+    // 1) Jev címkézés – csak a hatókörbe eső láncon/launchpadon (config evaluation.jev_scope)
     let labels: Labels | null = null, callId: number | null = null;
-    try {
+    if (inJevScope(cfg.evaluation.jev_scope, t.chain, t.launchpad)) try {
       const prior = db.prepare("SELECT answers_json FROM jev_calls WHERE token_id = ? AND purpose = 'entry' AND ok = 1 AND window_sec < ? ORDER BY window_sec DESC LIMIT 1").get(t.id, w) as { answers_json: string } | undefined;
       const state = jevStateFromSnapshot(snap, { regime, prior_labels: prior ? summarize(JSON.parse(prior.answers_json)) : undefined });
       const r = await this.d.jev.ask(state, entryQuestions, { purpose: "entry", tokenId: t.id, windowSec: w, blockNumber: snap.meta_snapshot.block,
@@ -63,6 +63,8 @@ export class DecisionEngine {
     arms.push({ arm: "rule_score", res: ruleScoreArm(snap) });
     arms.push({ arm: "rule_v2", res: ruleV2(snap, labels, "loose") });
     arms.push({ arm: "rule_v2_strict", res: ruleV2(snap, labels, "strict") });
+    arms.push({ arm: "base_uni_all", res: baseUniArm(t.chain, t.launchpad, snap, "all") });
+    arms.push({ arm: "base_uni_hold", res: baseUniArm(t.chain, t.launchpad, snap, "hold") });
     arms.push({ arm: "random_control", res: randomControlArm(t.address, cfg.entry.random_control_share) });
 
     const supported = t.mechanics === "bonding_curve" || ((t.mechanics === "v4" || t.mechanics === "v4_hook") && !!t.pool_key_json);

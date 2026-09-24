@@ -98,3 +98,19 @@ test("rule_v2: jó pillanatkép belép, bot-arány / kevés holder / creator-el�
   assert.equal(ruleV2({ ...base, creator: { prior_tokens: 2, sold_any: false } } as ParamSnapshot, good).enter, false);
   assert.equal(ruleV2(base, { ...good, crowd_type: "bots" }).enter, false);
 });
+
+test("base_uni karok és Jev-hatókör", async () => {
+  const { baseUniArm, inJevScope } = await import("../src/decision/rules.js");
+  const s = { holders: { count: 20 }, dynamics: { buyer_acceleration: 2.5 } } as unknown as ParamSnapshot;
+  assert.equal(baseUniArm("base", "uniswap", s, "all").enter, true);
+  assert.equal(baseUniArm("robinhood", "pons", s, "all").enter, false);
+  assert.equal(baseUniArm("base", "clanker", s, "all").enter, false);
+  assert.equal(baseUniArm("base", "uniswap", s, "hold").enter, true);
+  assert.equal(baseUniArm("base", "uniswap", { ...s, holders: { count: 5 } } as ParamSnapshot, "hold").enter, false);
+  assert.equal(baseUniArm("base", "uniswap", { ...s, holders: { count: 30 } } as ParamSnapshot, "hold").enter, false);
+  assert.equal(baseUniArm("base", "uniswap", { ...s, dynamics: { buyer_acceleration: 1.5 } } as ParamSnapshot, "hold").enter, false);
+  assert.equal(inJevScope(["base/uniswap"], "base", "uniswap"), true);
+  assert.equal(inJevScope(["base/uniswap"], "robinhood", "pons"), false);
+  assert.equal(inJevScope([], "robinhood", "pons"), true);
+  assert.deepEqual(cfg.evaluation.jev_scope, ["base/uniswap"]);
+});
