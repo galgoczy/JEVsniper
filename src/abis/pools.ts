@@ -25,3 +25,11 @@ export const chainlinkAggregatorAbi = parseAbi([
   "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
   "function decimals() view returns (uint8)",
 ]);
+// Uniswap v4 PoolManager ModifyLiquidity (forrás: @uniswap/v4-core 1.0.2 IPoolManager.sol)
+export const uniswapV4ModifyLiquidityAbi = parseAbi([
+  "event ModifyLiquidity(bytes32 indexed id, address indexed sender, int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt)",
+]);
+// ERC721 ownerOf – a v4 PositionManager NFT-je (salt = bytes32(tokenId), @uniswap/v4-periphery PositionManager.sol)
+export const erc721OwnerOfAbi = parseAbi([
+  "function ownerOf(uint256 tokenId) view returns (address)",
+]);

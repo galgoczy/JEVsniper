@@ -145,6 +145,18 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
     }
     if (by.some((b) => b.n)) pinfo.push(`- ${name}: ${by.filter((b) => b.n).map((b) => `${fmtEdge(b.lo)}–${fmtEdge(b.hi)}=${pct(b.tp1, b.n)} (${b.n})`).join(", ")}${unknown ? `, unknown (${unknown})` : ""}`);
   }
+  // kategóriás paraméterek (pl. ki birtokolja a likviditást)
+  const catDefs: Array<[string, (p: ParamsLike) => string | null]> = [
+    ["contract.lp_owner", (p) => (typeof p.contract?.lp_owner === "string" ? p.contract.lp_owner : null)],
+  ];
+  for (const [name, get] of catDefs) {
+    const by = new Map<string, { n: number; tp1: number }>();
+    for (const r of cal) {
+      if (!r.p) continue; const v = get(JSON.parse(r.p) as ParamsLike); if (v === null) continue;
+      const b = by.get(v) ?? { n: 0, tp1: 0 }; b.n++; if (hit2x(r)) b.tp1++; by.set(v, b);
+    }
+    if (by.size) pinfo.push(`- ${name}: ${[...by.entries()].sort((a, b) => b[1].n - a[1].n).map(([k, b]) => `${k}=${pct(b.tp1, b.n)} (${b.n})`).join(", ")}`);
+  }
   L.push("## Paraméter-informativitás („előbb 2x, mint −40%” arány sávonként, 60 mp pillanatkép és 60 mp ár)", ...(pinfo.length ? pinfo : ["- még nincs adat"]), "");
 
   // --- egyéb: kimenet-követés, listák, rezsim-idővonal, vesztes sorozat, Jev-hibaarány
@@ -160,7 +172,7 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
 
   const telegram = [`📊 Napi riport (${cfg.mode})`, `Tölcsér: ${newTok.reduce((s, r) => s + Number(r.n), 0)} új → ${passed} átment → élő szabály ${liveRuleWouldEnter} → élő belépés ${liveEntries}`,
     `Élő: ${live.length} lezárt, nettó ${f(liveNet, 2)} USD, nyitott ${openLive.n}`,
-    `Árnyék: random_control ${f(rcMean, 3)} (n=${rcLive.length}); ` + ["base_uni_all", "base_uni_hold", "live_rule", "rule_v2", "rule_score"].map((a) => { const g = groups.get(`${a}|${cfg.evaluation.live_window_sec}|live`); return `${a} ${g ? f(g.reduce((s, p) => s + p.net_pnl_usd, 0) / g.length, 3) + ` (n=${g.length})` : "-"}`; }).join(", "),
+    `Árnyék: random_control ${f(rcMean, 3)} (n=${rcLive.length}); ` + ["base_uni_all", "base_uni_hold", "base_uni_lp_burned", "base_uni_clean", "rule_v2", "rule_score"].map((a) => { const g = groups.get(`${a}|${cfg.evaluation.live_window_sec}|live`); return `${a} ${g ? f(g.reduce((s, p) => s + p.net_pnl_usd, 0) / g.length, 3) + ` (n=${g.length})` : "-"}`; }).join(", "),
     `Kimenetek: 2x ${oc.tp1 ?? 0} / −40% ${oc.stop ?? 0} a ${oc.n}-ból; Jev ${jevErr.n} hívás, ${f(jevStats.reduce((s, r) => s + Number(r.c ?? 0), 0), 4)} USD`,
     cs ? `Compound: méret ${f(cs.position_usd, 2)} USD, kassza ${f(cs.growth_pool_usd, 2)}, tartalék ${f(cs.reserve_usd, 2)}` : ""].filter(Boolean).join("\n");
   return { markdown: L.join("\n"), telegram };

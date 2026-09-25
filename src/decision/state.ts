@@ -9,7 +9,7 @@ export function jevStateFromSnapshot(s: ParamSnapshot, extra: { regime?: string;
   const pick = <T extends object>(o: T, keys: (keyof T)[]) => Object.fromEntries(keys.map((k) => [k, r(o[k])]));
   return {
     context: { chain: s.meta_snapshot.chain, launchpad: s.contract.launchpad, mechanics: s.contract.mechanics, seconds_since_launch: s.meta_snapshot.elapsed_sec, eth_usd: r(s.meta_snapshot.eth_usd, 0), market_regime: extra.regime ?? "unknown" },
-    contract: pick(s.contract, ["known_template", "dangerous_rights", "renounced", "sell_simulation", "buy_tax_pct", "sell_tax_pct", "liquidity_locked", "liquidity_usd", "market_cap_usd", "bonding_curve_progress_pct", "graduated"]),
+    contract: pick(s.contract, ["known_template", "dangerous_rights", "renounced", "sell_simulation", "buy_tax_pct", "sell_tax_pct", "liquidity_locked", "lp_owner", "liquidity_usd", "market_cap_usd", "bonding_curve_progress_pct", "graduated"]),
     creator: pick(s.creator, ["prior_tokens", "prior_tokens_24h", "prior_graduated", "wallet_tx_count", "wallet_balance_eth", "token_share_pct", "sold_any", "sold_pct_of_initial", "status"]),
     holders: pick(s.holders, ["count", "growth_per_min", "top1_pct_ex_creator", "top10_pct_ex_creator", "fresh_wallet_ratio_top20", "funding_clusters_top20", "airdrop_received_ratio", "transfers_from_creator"]),
     buyers: pick(s.buyers, ["smart_money_count", "known_scammer_count", "bot_ratio", "avg_buy_native", "median_buy_native", "largest_buy_pct_of_liquidity", "holders_ratio", "unique_buyers", "returning_buyers"]),

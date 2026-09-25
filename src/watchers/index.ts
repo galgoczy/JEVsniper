@@ -105,6 +105,11 @@ export class ChainWatcher {
       }
       return;
     }
+    if (!t.creator && t.launchpad === "uniswap" && t.txHash) {
+      // Közvetlen Uniswap-indításnál nincs launchpad-esemény a készítővel: a pool-létrehozó tx küldőjét tekintjük készítőnek.
+      const tx = await this.client.getTransaction({ hash: t.txHash }).catch((e) => { log.debug("tx-küldő lekérés hiba", { error: (e as Error).message.slice(0, 100) }); return null; });
+      if (tx) t.creator = tx.from;
+    }
     if (!t.name || !t.symbol) {
       const meta = await this.readErc20(t.address);
       t.name = t.name ?? meta.name; t.symbol = t.symbol ?? meta.symbol;

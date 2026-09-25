@@ -10,6 +10,7 @@ import { holderStats, swapStats, priceFromSqrtX96, findDangerousSelectors, type 
 import { UniswapV4Route, computePoolId, type PoolKey } from "../exec/routes.js";
 import type { ParamSnapshot, U } from "./types.js";
 import { log } from "../logger.js";
+import { lpOwner, type LpOwnerKind } from "./lp.js";
 
 export interface TokenRow {
   id: number; chain: ChainKey; address: Address; creator: Address | null; launchpad: string; mechanics: string;
@@ -177,6 +178,14 @@ export class Collector {
       .get(takenAt - 86_400_000, t.chain, t.creator, t.id) as { n: number; n24: number | null; g: number | null } : { n: 0, n24: 0, g: 0 };
     const creatorStatus = t.creator ? this.creatorStatus(t.chain, t.creator) : "unknown";
 
+    // --- likviditás-tulajdonos (Uniswap v4-en indított tokeneknél): ki tudja kihúzni a likviditást?
+    let lpKind: U<LpOwnerKind> = unk;
+    const pm = ADDRESSES[t.chain].uniswapV4PoolManager;
+    if (t.launchpad === "uniswap" && poolId && pm) {
+      const r = await lpOwner(c, pm, poolId, t.creator, (fetch) => getLogsChunked(fromBlock, head, fetch)).catch((e) => { this.err("LP-tulajdonos")(e); return null; });
+      if (r) lpKind = r.kind;
+    }
+
     // --- dinamika
     const launchTs = t.discovered_at;
     const liqNative = ps?.liquidityNative ?? null;
@@ -206,6 +215,7 @@ export class Collector {
         dangerous_rights: dangerous, renounced,
         sell_simulation: ps?.sellSimulation ?? unk, buy_tax_pct: ps?.buyTaxPct ?? unk, sell_tax_pct: ps?.sellTaxPct ?? unk,
         liquidity_locked: t.launchpad === "pons" || t.launchpad === "clanker" ? true : unk,
+        lp_owner: lpKind,
         liquidity_native: liqNative ?? unk, liquidity_usd: usd(liqNative ?? unk),
         market_cap_usd: mcapUsd, total_supply: totalSupply > 0n ? num(totalSupply, decimals) : unk, decimals,
         bonding_curve_progress_pct: ps?.curveProgressPct ?? (t.mechanics === "bonding_curve" ? unk : 100), graduated: ps?.graduated ?? (t.graduated_at ? true : t.mechanics !== "bonding_curve"),

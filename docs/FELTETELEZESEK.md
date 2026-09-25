@@ -246,3 +246,9 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Új Jev nélküli árnyékkarok: `base_uni_all` (minden szűrőn átment Base/Uniswap token – a csoport alapvonala) és `base_uni_hold` (+10–29 holder és vevő-gyorsulás ≥2).
 - Feltételezés: árnyékpozíció csak kereskedhető (v4 PoolKey-es) tokenre nyílik, a v2/v3 poolos tokenekre nincs végrehajtási útvonal, így ezek nem kerülnek be.
 - Jev-címkézés csak `evaluation.jev_scope` = ["base/uniswap"] tokenekre; a PONS-tokeneknél a Jev-alapú karok (jev_direct, live_rule) így nem döntenek. Visszaállítás: üres lista.
+
+## 2026-09-25 – Készítő és LP-tulajdonos a Base/Uniswap tokeneknél
+- Adat: a base_uni_all árnyékpozíciók 72/74-ét a −40%-os vészkilépés zárta, átlag −0,97 USD (egy lépésben ~nulla) → kihúzás vagy dömping.
+- Készítő: közvetlen Uniswap-indításnál a pool-létrehozó (Initialize) tranzakció küldője (tx.from). Clanker ugyanabban a tx-ben: a TokenCreated tokenAdmin felülírja. Csak az új tokenekre érvényes (a régieknél nincs tx hash).
+- LP-tulajdonos (v4): a PoolManager ModifyLiquidity eseményeiből (forrás: @uniswap/v4-core 1.0.2 IPoolManager.sol) a legnagyobb nettó pozíció; ha a küldő szerződés, `ownerOf(salt)` (PositionManager: salt = bytes32(tokenId), @uniswap/v4-periphery). Kategóriák: burned (0x0/0x…dEaD), creator, eoa, contract (zároló/hook – nem eldönthető), removed, none.
+- Nem kemény szűrő (még): csak paraméter (`contract.lp_owner`) és két új árnyékkar: `base_uni_lp_burned`, `base_uni_clean` (LP égetett vagy szerződésnél + készítőnek nincs korábbi tokenje). Ha mérhetően jobb, kemény szűrővé tehető.

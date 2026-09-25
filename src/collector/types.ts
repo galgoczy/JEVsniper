@@ -7,7 +7,7 @@ export interface ParamSnapshot {
     launchpad: string; mechanics: string; known_template: U<boolean>; bytecode_hash: string;
     dangerous_rights: U<string[]>; renounced: U<boolean>;
     sell_simulation: U<"ok" | "failed" | "not_supported">; buy_tax_pct: U<number>; sell_tax_pct: U<number>;
-    liquidity_locked: U<boolean>; liquidity_native: U<number>; liquidity_usd: U<number>;
+    liquidity_locked: U<boolean>; lp_owner: U<"burned" | "creator" | "eoa" | "contract" | "removed" | "none">; liquidity_native: U<number>; liquidity_usd: U<number>;
     market_cap_usd: U<number>; total_supply: U<number>; decimals: U<number>;
     bonding_curve_progress_pct: U<number>; graduated: U<boolean>;
   };

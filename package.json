@@ -17,7 +17,8 @@
     "verify:step7": "tsx scripts/verify-step7.ts",
     "verify:step8": "tsx scripts/verify-step8.ts",
     "verify:step9": "tsx scripts/verify-step9.ts",
-    "report": "tsx scripts/verify-step9.ts"
+    "report": "tsx scripts/verify-step9.ts",
+    "verify:lp": "tsx scripts/verify-lp.ts"
   },
   "repository": {
     "type": "git",

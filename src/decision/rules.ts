@@ -129,3 +129,22 @@ export function baseUniArm(chain: string, launchpad: string | null, s: ParamSnap
 /** Jev-címkézés hatóköre: üres lista = minden token; különben "lánc/launchpad" elemek. */
 export const inJevScope = (scope: string[], chain: string, launchpad: string | null): boolean =>
   scope.length === 0 || scope.includes(`${chain}/${launchpad}`);
+
+/**
+ * base_uni_lp – Jev nélküli jelöltek (2026-09-25): a Base/Uniswap pozíciók 72/74-e egyetlen lépésben ~nullára zuhant
+ * (likviditás-kihúzás vagy készítői dömping). "burned": csak ha a pool likviditása el van égetve.
+ * "clean": a likviditást nem tárca birtokolja (égetett vagy szerződés, pl. zároló), és a készítőnek nincs korábbi tokenje.
+ */
+export function baseUniLpArm(chain: string, launchpad: string | null, s: ParamSnapshot, variant: "burned" | "clean"): RuleResult {
+  const r: string[] = [];
+  if (!(chain === "base" && launchpad === "uniswap")) r.push(`not_base_uni:${chain}/${launchpad}`);
+  const lp = s.contract.lp_owner;
+  if (variant === "burned") {
+    if (lp !== "burned") r.push(`lp=${lp}`);
+  } else {
+    if (lp !== "burned" && lp !== "contract") r.push(`lp=${lp}`);
+    if (s.creator.address === "unknown") r.push("creator=unknown");
+    else if (s.creator.prior_tokens > 0) r.push(`creator_prior=${s.creator.prior_tokens}`);
+  }
+  return { enter: r.length === 0, reasons: r, sizeMultiplier: 1 };
+}

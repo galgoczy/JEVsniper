@@ -11,7 +11,7 @@ function good(): ParamSnapshot {
   return {
     meta_snapshot: { chain: "robinhood", token: "0x1", window_sec: 60, taken_at: 0, block: 1, elapsed_sec: 60, eth_usd: 4000 },
     contract: { launchpad: "pons", mechanics: "bonding_curve", known_template: true, bytecode_hash: "0xabc", dangerous_rights: [], renounced: true,
-      sell_simulation: "ok", buy_tax_pct: 1, sell_tax_pct: 1, liquidity_locked: true, liquidity_native: 2, liquidity_usd: 8000,
+      sell_simulation: "ok", buy_tax_pct: 1, sell_tax_pct: 1, liquidity_locked: true, lp_owner: "unknown", liquidity_native: 2, liquidity_usd: 8000,
       market_cap_usd: 20000, total_supply: 1e9, decimals: 18, bonding_curve_progress_pct: 20, graduated: false },
     creator: { address: "0xc", prior_tokens: 0, prior_tokens_24h: 0, prior_graduated: 0, wallet_tx_count: 50, wallet_balance_eth: 0.5,
       token_share_pct: 2, sold_any: false, sold_pct_of_initial: 0, status: "unknown" },
