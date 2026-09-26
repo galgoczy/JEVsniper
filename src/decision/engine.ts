@@ -102,7 +102,7 @@ export class DecisionEngine {
     const feePct = t.launchpad === "pons" && !t.graduated_at ? 2 : 1;
     const c = shadowCost(t.chain, "buy", sizeNative, { feePct, liquidityNative: num(snap.contract.liquidity_native) }, cfg.cost_model);
     const tokens = price > 0 ? c.netNative / price : 0;
-    const creatorBal = num(snap.creator.token_share_pct) !== null && num(snap.contract.total_supply) !== null ? (num(snap.creator.token_share_pct)! / 100) * num(snap.contract.total_supply)! : null;
+    const creatorBal = creatorBalanceAtEntry(snap);
     const ins = this.d.db.prepare(`INSERT OR IGNORE INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, peak_price_native, gas_usd, creator_balance_at_entry, liquidity_at_entry, next_check_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,'pre_tp1',?,?,?,?,?)`);
     for (const plan of SHADOW_EXIT_PLANS) ins.run(t.id, t.chain, arm, plan, w, nowMs(), price, sizeUsd, sizeNative, tokens, tokens, price, c.gasUsd, creatorBal, num(snap.contract.liquidity_native), nowMs());
@@ -132,7 +132,7 @@ export class DecisionEngine {
         .run(posId, t.chain, nowMs(), r.hash, r.nonce, r.blockNumber !== null ? Number(r.blockNumber) : null, r.gasUsd, Number(wei) / 1e18);
       const tokens = Number(r.tokensReceived) / 1e18;
       const entryPrice = Number(wei) / Number(r.tokensReceived);
-      const creatorBal = num(snap.creator.token_share_pct) !== null && num(snap.contract.total_supply) !== null ? (num(snap.creator.token_share_pct)! / 100) * num(snap.contract.total_supply)! : null;
+      const creatorBal = creatorBalanceAtEntry(snap);
       db.prepare("UPDATE positions SET tokens_bought = ?, tokens_remaining = ?, entry_price_native = ?, peak_price_native = ?, gas_usd = ?, creator_balance_at_entry = ?, liquidity_at_entry = ?, next_check_at = ? WHERE id = ?")
         .run(tokens, tokens, entryPrice, entryPrice, r.gasUsd ?? 0, creatorBal, num(snap.contract.liquidity_native), nowMs(), posId);
       db.prepare("INSERT INTO daily_state(day, entries) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET entries = entries + 1").run(todayUtc());
@@ -142,6 +142,16 @@ export class DecisionEngine {
       log.warn("élő belépés hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) });
     }
   }
+}
+
+/**
+ * A készítő token-egyenlege belépéskor – ugyanúgy balanceOf-ból, ahogy az árfeed később méri (összemérhető).
+ * Ha a készítőnél a kínálat 1%-ánál kevesebb van, null: a por eladása nem vészjelzés.
+ */
+export function creatorBalanceAtEntry(snap: ParamSnapshot): number | null {
+  const bal = num(snap.creator.token_balance), supply = num(snap.contract.total_supply);
+  if (bal === null || supply === null || supply <= 0) return null;
+  return bal / supply >= 0.01 ? bal : null;
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);

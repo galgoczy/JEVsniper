@@ -107,6 +107,18 @@ export function priceFromSqrtX96(sqrtPriceX96: bigint, tokenIsCurrency0: boolean
   return raw * 10 ** (tokenDecimals - quoteDecimals);
 }
 
+/**
+ * Uniswap v3/v4 virtuális ETH-tartalék az aktuális áron (L és sqrtPriceX96 a Swap eseményből), ETH-ban.
+ * currency0 = ETH esetén L / sqrtP, currency1 = ETH esetén L · sqrtP (nyers egységben, wei).
+ * Teljes tartományú pozíciónál ez a valódi tartalék; szűk tartománynál felülbecsülhet – közelítés.
+ */
+export function v4NativeReserve(liquidity: bigint, sqrtPriceX96: bigint, nativeIsCurrency0: boolean): number | null {
+  if (liquidity <= 0n || sqrtPriceX96 <= 0n) return null;
+  const sqrtP = Number(sqrtPriceX96) / 2 ** 96;
+  const raw = nativeIsCurrency0 ? Number(liquidity) / sqrtP : Number(liquidity) * sqrtP;
+  return Number.isFinite(raw) ? raw / 1e18 : null;
+}
+
 /** 4 bájtos szelektorok keresése a bytecode-ban (PUSH4 = 0x63 utáni 4 bájt). Közelítés. */
 export const DANGEROUS_SELECTORS: Record<string, string> = {
   "40c10f19": "mint(address,uint256)",

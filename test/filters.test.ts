@@ -14,7 +14,7 @@ function good(): ParamSnapshot {
       sell_simulation: "ok", buy_tax_pct: 1, sell_tax_pct: 1, liquidity_locked: true, lp_owner: "unknown", liquidity_native: 2, liquidity_usd: 8000,
       market_cap_usd: 20000, total_supply: 1e9, decimals: 18, bonding_curve_progress_pct: 20, graduated: false },
     creator: { address: "0xc", prior_tokens: 0, prior_tokens_24h: 0, prior_graduated: 0, wallet_tx_count: 50, wallet_balance_eth: 0.5,
-      token_share_pct: 2, sold_any: false, sold_pct_of_initial: 0, status: "unknown" },
+      token_share_pct: 2, token_balance: "unknown", sold_any: false, sold_pct_of_initial: 0, status: "unknown" },
     holders: { count: 40, growth_per_min: 40, top1_pct_ex_creator: 8, top10_pct_ex_creator: 35, fresh_wallet_ratio_top20: 0.2,
       funding_clusters_top20: 1, airdrop_received_ratio: 0.05, transfers_from_creator: 0 },
     buyers: { smart_money_count: 1, known_scammer_count: 0, bot_ratio: 0.1, avg_buy_native: 0.02, median_buy_native: 0.01,

@@ -6,7 +6,7 @@ import { ADDRESSES, ZERO } from "../chains/addresses.js";
 import { erc20Abi } from "../abis/uniswap.js";
 import { ponsCurveAbi } from "../abis/pons.js";
 import { uniswapV2PairAbi, uniswapV3PoolAbi, uniswapV4SwapAbi, transferEventAbi, ownableAbi, chainlinkAggregatorAbi } from "../abis/pools.js";
-import { holderStats, swapStats, priceFromSqrtX96, findDangerousSelectors, type SwapRec, type TransferRec } from "./stats.js";
+import { holderStats, swapStats, priceFromSqrtX96, v4NativeReserve, findDangerousSelectors, type SwapRec, type TransferRec } from "./stats.js";
 import { UniswapV4Route, computePoolId, type PoolKey } from "../exec/routes.js";
 import type { ParamSnapshot, U } from "./types.js";
 import { log } from "../logger.js";
@@ -60,7 +60,7 @@ export class EthPrice {
   }
 }
 
-interface LogCache { lastBlock: bigint; transfers: TransferRec[]; swaps: SwapRec[]; launchPrice: number | null; at: number }
+interface LogCache { lastBlock: bigint; transfers: TransferRec[]; swaps: SwapRec[]; launchPrice: number | null; at: number; v4Reserve?: number }
 
 export class Collector {
   /** Tokenenként az eddig lekért transzferek/swapok – a következő ablakban csak az új blokkokat kérjük. */
@@ -171,9 +171,10 @@ export class Collector {
     const lists = this.walletLists(t.chain, [...top20, ...(ps?.swaps.map((s) => s.buyer) ?? [])]);
 
     // --- creator
-    const [creatorTx, creatorBal] = t.creator
-      ? await Promise.all([c.getTransactionCount({ address: t.creator }).catch(this.err("creator tx-szám")), c.getBalance({ address: t.creator }).catch(this.err("creator egyenleg"))])
-      : [null, null];
+    const [creatorTx, creatorBal, creatorTok] = t.creator
+      ? await Promise.all([c.getTransactionCount({ address: t.creator }).catch(this.err("creator tx-szám")), c.getBalance({ address: t.creator }).catch(this.err("creator egyenleg")),
+          c.readContract({ address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [t.creator] }).catch(this.err("creator token-egyenleg")) as Promise<bigint | null>])
+      : [null, null, null];
     const creatorRows = t.creator ? this.db.prepare("SELECT COUNT(*) n, SUM(discovered_at > ?) n24, SUM(graduated_at IS NOT NULL) g FROM tokens WHERE chain = ? AND lower(creator) = lower(?) AND id != ?")
       .get(takenAt - 86_400_000, t.chain, t.creator, t.id) as { n: number; n24: number | null; g: number | null } : { n: 0, n24: 0, g: 0 };
     const creatorStatus = t.creator ? this.creatorStatus(t.chain, t.creator) : "unknown";
@@ -223,7 +224,7 @@ export class Collector {
       creator: {
         address: t.creator ?? unk, prior_tokens: creatorRows.n, prior_tokens_24h: creatorRows.n24 ?? 0, prior_graduated: creatorRows.g ?? 0,
         wallet_tx_count: creatorTx ?? unk, wallet_balance_eth: creatorBal !== null ? num(creatorBal) : unk,
-        token_share_pct: hs.creator_share_pct, sold_any: hs.creator_sold_any, sold_pct_of_initial: hs.creator_sold_pct, status: creatorStatus,
+        token_share_pct: hs.creator_share_pct, token_balance: creatorTok !== null && creatorTok !== undefined ? num(creatorTok, decimals) : unk, sold_any: hs.creator_sold_any, sold_pct_of_initial: hs.creator_sold_pct, status: creatorStatus,
       },
       holders: {
         count: hs.count, growth_per_min: hs.count / Math.max((takenAt - launchTs) / 60_000, 1 / 60),
@@ -389,7 +390,12 @@ export class Collector {
         const price = priceFromSqrtX96(l.args.sqrtPriceX96!, tokenIsC0, dec);
         out.swaps.push({ buyer: l.args.sender!, isBuy, native: Math.abs(num(quoteAmt)), tokens: Math.abs(num(tokenAmt, dec)), block: l.blockNumber!, ts: ts.get(l.blockNumber!) ?? 0, priceNative: price });
       }
+      // Likviditás ugyanazzal a módszerrel, mint az árfeed (utolsó Swap: L + sqrtP) – így a „likviditás −30%” vészjelzés összemérhető
+      const lastLog = logs.at(-1);
+      const vRes = (lastLog ? v4NativeReserve(lastLog.args.liquidity!, lastLog.args.sqrtPriceX96!, !tokenIsC0) : null) ?? cache.v4Reserve ?? null;
+      if (vRes !== null) cache.v4Reserve = vRes;
       if (out.swaps.length) { out.priceNative = out.swaps.at(-1)!.priceNative!; if (out.launchPriceNative === null) out.launchPriceNative = out.swaps[0]!.priceNative; cache.launchPrice = out.launchPriceNative; }
+      if (vRes !== null) out.liquidityNative = vRes;
       out.buyTaxPct = 0; out.sellTaxPct = 0; // v4 poolnál a hook-díj a Swap eventben (fee), adó nincs
       // Eladás-szimuláció a hivatalos v4 Quoterrel: kis próbavétel, majd a kapott mennyiség eladása (2 eth_call).
       if (t.pool_key_json) {
@@ -399,7 +405,7 @@ export class Collector {
           const b = await route.quoteBuy(probe);
           const sOut = (await route.quoteSell(b.amountOut)).amountOut;
           out.sellSimulation = sOut > 0n ? "ok" : "failed";
-          if (b.estLiquidityNative !== undefined) out.liquidityNative = b.estLiquidityNative;
+          if (b.estLiquidityNative !== undefined && vRes === null) out.liquidityNative = b.estLiquidityNative;
           const roundTrip = Number(sOut) / Number(probe); // 1 = veszteségmentes; a díjak + csúszás miatt < 1
           out.sellTaxPct = Math.max(0, Math.round((1 - roundTrip) * 10000) / 100 / 2); // oda-vissza veszteség fele ≈ effektív egyirányú költség
           if (out.priceNative === unk && b.amountOut > 0n) out.priceNative = Number(probe) / Number(b.amountOut) * 10 ** (dec - 18);

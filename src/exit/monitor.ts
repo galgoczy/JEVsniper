@@ -143,7 +143,7 @@ export class PositionMonitor {
       } catch (e) { log.debug("Jev hold hiba", { id: r.id, error: (e as Error).message.slice(0, 100) }); }
     }
     if (!action) { setNext(r.phase); return; }
-    if (r.arm === "live") await this.executeLive(r, action, price); else this.executeShadow(r, action, price, ps.liquidityNative);
+    if (r.arm === "live") await this.executeLive(r, action, price); else this.executeShadow(r, action, price, ps.liquidityNative ?? r.liquidity_at_entry);
   }
 
   private async executeLive(r: PosRow, a: { sellTokens: number; reason: string; phase: Phase; closeAll: boolean }, price: number) {

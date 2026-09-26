@@ -252,3 +252,10 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Készítő: közvetlen Uniswap-indításnál a pool-létrehozó (Initialize) tranzakció küldője (tx.from). Clanker ugyanabban a tx-ben: a TokenCreated tokenAdmin felülírja. Csak az új tokenekre érvényes (a régieknél nincs tx hash).
 - LP-tulajdonos (v4): a PoolManager ModifyLiquidity eseményeiből (forrás: @uniswap/v4-core 1.0.2 IPoolManager.sol) a legnagyobb nettó pozíció; ha a küldő szerződés, `ownerOf(salt)` (PositionManager: salt = bytes32(tokenId), @uniswap/v4-periphery). Kategóriák: burned (0x0/0x…dEaD), creator, eoa, contract (zároló/hook – nem eldönthető), removed, none.
 - Nem kemény szűrő (még): csak paraméter (`contract.lp_owner`) és két új árnyékkar: `base_uni_lp_burned`, `base_uni_clean` (LP égetett vagy szerződésnél + készítőnek nincs korábbi tokenje). Ha mérhetően jobb, kemény szűrővé tehető.
+
+## 2026-09-26 – Mérési hibák javítása (árnyék-eladás, készítő-eladás)
+- Hiba 1: v4 poolnál a likviditás gyakran ismeretlen volt (a Quoter-becslés nem mindig sikerül, az árfeed nem mérte). Ismeretlen likviditásnál az árnyék-eladás fix 2% csúszással számolt, így egy 139x-es csúcsnál (FEATHER) +129 USD-t könyvelt, amit a vékony pool valójában nem adott volna ki.
+  Javítás: virtuális ETH-tartalék az utolsó Swap eseményből (L és sqrtPriceX96): ETH currency0 → L/sqrtP, currency1 → L·sqrtP. Ugyanez a módszer a gyűjtőben és az árfeedben (összemérhető likviditás-esés). Eladásnál ismeretlen aktuális likviditás esetén a belépéskori likviditás a tartalék.
+  Feltételezés: teljes tartományú pozíciónál pontos, szűk tartománynál felülbecsülhet.
+- Hiba 2: a „készítő eladott” vészkilépés a belépéskori egyenleget a transzfer-történetből becsülte, később viszont balanceOf-ot olvasott → 145 pozíció azonnal (0 perc) „creator_sold_100%”-kal zárult. Javítás: belépéskor is balanceOf; ha a készítőnél a kínálat 1%-ánál kevesebb van, nincs készítő-eladás figyelés.
+- A javítás előtti pozíciók a riport 24 órás ablakából egy nap alatt kikopnak.

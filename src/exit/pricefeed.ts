@@ -5,7 +5,7 @@ import { ADDRESSES } from "../chains/addresses.js";
 import { ponsCurveAbi } from "../abis/pons.js";
 import { uniswapV4SwapAbi } from "../abis/pools.js";
 import { erc20WriteAbi } from "../abis/uniswapV4.js";
-import { priceFromSqrtX96 } from "../collector/stats.js";
+import { priceFromSqrtX96, v4NativeReserve } from "../collector/stats.js";
 import { log } from "../logger.js";
 import { computePoolId, type PoolKey } from "../exec/routes.js";
 
@@ -80,7 +80,8 @@ export class PriceFeed {
           const price = priceFromSqrtX96(l.args.sqrtPriceX96!, tokenIsC0, t.decimals);
           const tokenAmt = tokenIsC0 ? l.args.amount0! : l.args.amount1!;
           const cur = this.state.get(t.tokenId);
-          bump(t.tokenId, { price, at: now, block: l.blockNumber!, swapsSinceLast: (cur?.swapsSinceLast ?? 0) + 1, sellsSinceLast: (cur?.sellsSinceLast ?? 0) + (tokenAmt > 0n ? 1 : 0) });
+          const liq = v4NativeReserve(l.args.liquidity!, l.args.sqrtPriceX96!, !tokenIsC0);
+          bump(t.tokenId, { price, at: now, block: l.blockNumber!, ...(liq !== null ? { liquidityNative: liq } : {}), swapsSinceLast: (cur?.swapsSinceLast ?? 0) + 1, sellsSinceLast: (cur?.sellsSinceLast ?? 0) + (tokenAmt > 0n ? 1 : 0) });
         }
       }
     }

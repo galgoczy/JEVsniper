@@ -14,7 +14,7 @@ export interface ParamSnapshot {
   creator: {
     address: U<string>; prior_tokens: number; prior_tokens_24h: number; prior_graduated: number;
     wallet_tx_count: U<number>; wallet_balance_eth: U<number>;
-    token_share_pct: U<number>; sold_any: U<boolean>; sold_pct_of_initial: U<number>;
+    token_share_pct: U<number>; token_balance: U<number>; sold_any: U<boolean>; sold_pct_of_initial: U<number>;
     status: "known_good" | "known_scammer" | "unknown";
   };
   holders: {
