@@ -63,6 +63,8 @@ export class DecisionEngine {
     arms.push({ arm: "rule_score", res: ruleScoreArm(snap) });
     arms.push({ arm: "rule_v2", res: ruleV2(snap, labels, "loose") });
     arms.push({ arm: "rule_v2_strict", res: ruleV2(snap, labels, "strict") });
+    // Ugyanaz a szabály Jev-címkék nélkül: a rule_v2-vel összevetve megmutatja, hoz-e valamit a Jev
+    arms.push({ arm: "rule_v2_nojev", res: ruleV2(snap, null, "loose") });
     arms.push({ arm: "base_uni_all", res: baseUniArm(t.chain, t.launchpad, snap, "all") });
     arms.push({ arm: "base_uni_hold", res: baseUniArm(t.chain, t.launchpad, snap, "hold") });
     arms.push({ arm: "base_uni_lp_burned", res: baseUniLpArm(t.chain, t.launchpad, snap, "burned") });

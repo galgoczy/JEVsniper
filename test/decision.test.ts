@@ -114,3 +114,11 @@ test("base_uni karok és Jev-hatókör", async () => {
   assert.equal(inJevScope([], "robinhood", "pons"), true);
   assert.deepEqual(cfg.evaluation.jev_scope, ["base/uniswap"]);
 });
+
+test("rule_v2 címkék nélkül: csak a számok döntenek", async () => {
+  const { ruleV2 } = await import("../src/decision/rules.js");
+  const base = { holders: { count: 25 }, buyers: { bot_ratio: 0.05 }, dynamics: { buyer_acceleration: 1.5, price_change_pct_since_launch: 40, peak_drawdown_pct: 5 },
+    creator: { prior_tokens: 0, sold_any: false }, contract: { bonding_curve_progress_pct: 40 } } as unknown as ParamSnapshot;
+  assert.equal(ruleV2(base, { ...good, crowd_type: "bots" }).enter, false);
+  assert.equal(ruleV2(base, null).enter, true);
+});
