@@ -49,7 +49,9 @@ export class JevClient {
     });
   }
 
-  get paused(): boolean { return Date.now() < this.pausedUntil; }
+  /** Kikapcsolva (config jev.enabled: false) – ilyenkor szünetelőnek is számít, így semmi nem hívja. */
+  get disabled(): boolean { return this.cfg.jev.enabled === false; }
+  get paused(): boolean { return this.disabled || Date.now() < this.pausedUntil; }
   get pausedUntilMs(): number { return this.pausedUntil; }
 
   /** Napi Jev-költség (USD) a DB-ből. */

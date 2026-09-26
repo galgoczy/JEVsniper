@@ -35,7 +35,7 @@ for (const [key, url] of [["base", env.BASE_RPC_URL], ["robinhood", env.ROBINHOO
   } catch (e) { bad(`${key} RPC nem elérhető: ${(e as Error).message.slice(0, 100)}`); }
 }
 
-const jev = new JevClient(db, cfg, env.TYPESAFE_API_KEY);
+const jev = new JevClient(db, { ...cfg, jev: { ...cfg.jev, enabled: true } }, env.TYPESAFE_API_KEY);
 const sampleState = {
   token: { chain: "base", launchpad: "clanker", age_sec: 60, sell_simulation: "ok", sell_tax_pct: 0, liquidity_locked: true, initial_liquidity_usd: 2500 },
   creator: { prior_tokens: 3, prior_rugged: 3, prior_graduated: 0, wallet_age_days: 2, status: "unknown" },

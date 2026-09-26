@@ -137,7 +137,7 @@ async function main() {
     `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
-    `Jev: ${jev.paused ? "szünetel" : "ok"}, rezsim: ${regime.regime}`,
+    `Jev: ${jev.disabled ? "kikapcsolva" : jev.paused ? "szünetel" : "ok"}, rezsim: ${regime.regime}`,
     `döntések (24h): ${(db.prepare("SELECT SUM(arm='live' AND enter=1) l, SUM(arm='live_rule' AND enter=1) lr, SUM(arm='random_control' AND enter=1) rc, COUNT(DISTINCT token_id) n FROM decisions WHERE decided_at > ?").get(Date.now() - 86_400_000) as { l: number; lr: number; rc: number; n: number }).n} token címkézve`,
   ].join("\n");
 

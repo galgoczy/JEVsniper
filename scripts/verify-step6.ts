@@ -24,7 +24,7 @@ const cand = rows.map((r) => ({ ...r, snap: JSON.parse(r.params_json) as ParamSn
 if (!cand) { bad("nincs szűrőn átment pillanatkép vételekkel (fusson a bot)"); process.exit(1); }
 console.log(`Token: ${cand.chain}/${cand.launchpad} ${cand.symbol ?? "?"} ${cand.address}`);
 
-const jev = new JevClient(db, cfg, env.TYPESAFE_API_KEY);
+const jev = new JevClient(db, { ...cfg, jev: { ...cfg.jev, enabled: true } }, env.TYPESAFE_API_KEY);
 const state = jevStateFromSnapshot(cand.snap, { regime: "normal" });
 const stateChars = JSON.stringify(state).length;
 const t0 = Date.now();
@@ -40,7 +40,7 @@ const rg = await jev.ask({ eth_change_24h_pct: -1.2, launchpads_24h: [{ launchpa
 ok(`rezsim-kérdés: ${rg.answers.regime.choice} ${JSON.stringify(rg.answers.regime.probabilities)}`);
 
 // Jev-hiba → szünet: hibás kulccsal 401 → 3 hiba után paused
-const badCfg = { ...cfg, jev: { ...cfg.jev, max_retries: 0, pause_after_consecutive_errors: 2 } };
+const badCfg = { ...cfg, jev: { ...cfg.jev, enabled: true, max_retries: 0, pause_after_consecutive_errors: 2 } };
 const broken = new JevClient(db, badCfg, "ts_invalid_key_for_verify_0000000000");
 let paused = false;
 for (let i = 0; i < 3; i++) { try { await broken.ask("x", regimeQuestions, { purpose: "verify" }); } catch (e) { if (e instanceof JevPausedError) paused = true; } }

@@ -260,3 +260,9 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Hiba 2: a „készítő eladott” vészkilépés a belépéskori egyenleget a transzfer-történetből becsülte, később viszont balanceOf-ot olvasott → 145 pozíció azonnal (0 perc) „creator_sold_100%”-kal zárult. Javítás: belépéskor is balanceOf; ha a készítőnél a kínálat 1%-ánál kevesebb van, nincs készítő-eladás figyelés.
 - A javítás előtti pozíciók a riport 24 órás ablakából egy nap alatt kikopnak.
 - Jev-hasznosság mérése: új árnyékkar `rule_v2_nojev` = rule_v2 a Jev-címkék nélkül (csak on-chain számok). A rule_v2 és a rule_v2_nojev különbsége ugyanazokon a tokeneken a Jev hozzáadott értéke. Ha 1–2 nap után nincs érdemi különbség, a Jev kikapcsolható.
+
+## 2026-09-26 – Egynapos Jev nélküli próba
+- `jev.enabled: false`: a bot nem hívja a Jev-et (belépési címkék, rezsim, élő tartás). A Jev-alapú karok (jev_direct, live_rule) nem döntenek; a rule_v2 címkék nélkül fut (ugyanaz, mint rule_v2_nojev).
+- Rezsim Jev nélkül: marad „normal”, csak az ETH 24 órás esése kapcsol risk_off-ra.
+- A verify:step1 és verify:step6 kifejezetten a Jev-et teszteli, ezért ott a Jev bekapcsolva marad.
+- Visszaállítás: config.yaml → jev.enabled: true, majd újraindítás.

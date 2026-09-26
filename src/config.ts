@@ -64,6 +64,7 @@ export const ConfigSchema = z.object({
     jev_scope: z.array(z.string()).default([]),
   }),
   jev: z.object({
+    enabled: z.boolean().default(true),
     model: z.string(),
     timeout_ms: z.number().int().positive(),
     max_retries: z.number().int().min(0),

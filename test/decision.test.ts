@@ -78,7 +78,7 @@ test("kockázati korlátok: max_open_positions, egy tokenbe egyszer, betét-plaf
 test("Jev-hiba → szünet, hívás naplózva", async () => {
   const db = openDb(":memory:");
   const failing = (async () => new Response("{\"error\":\"boom\"}", { status: 500 })) as unknown as typeof fetch;
-  const jev = new JevClient(db, { ...cfg, jev: { ...cfg.jev, max_retries: 0, pause_after_consecutive_errors: 2 } }, "ts_test_key_0000000000", failing);
+  const jev = new JevClient(db, { ...cfg, jev: { ...cfg.jev, enabled: true, max_retries: 0, pause_after_consecutive_errors: 2 } }, "ts_test_key_0000000000", failing);
   let paused = 0;
   for (let i = 0; i < 3; i++) { try { await jev.ask("x", regimeQuestions, { purpose: "verify" }); } catch (e) { if (e instanceof JevPausedError) paused++; } }
   assert.equal(jev.paused, true); assert.equal(paused, 1);
@@ -121,4 +121,14 @@ test("rule_v2 címkék nélkül: csak a számok döntenek", async () => {
     creator: { prior_tokens: 0, sold_any: false }, contract: { bonding_curve_progress_pct: 40 } } as unknown as ParamSnapshot;
   assert.equal(ruleV2(base, { ...good, crowd_type: "bots" }).enter, false);
   assert.equal(ruleV2(base, null).enter, true);
+});
+
+test("Jev kikapcsolva: nem hív, szünetelőnek számít", async () => {
+  const db = openDb(":memory:");
+  let calls = 0;
+  const counting = (async () => { calls++; throw new Error("nem szabadna hívni"); }) as unknown as typeof fetch;
+  const jev = new JevClient(db, { ...cfg, jev: { ...cfg.jev, enabled: false } }, "ts_test_key_0000000000", counting);
+  assert.equal(jev.disabled, true); assert.equal(jev.paused, true);
+  await assert.rejects(jev.ask({ x: 1 }, regimeQuestions, { purpose: "regime" }), JevPausedError);
+  assert.equal(calls, 0);
 });

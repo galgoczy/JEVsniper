@@ -63,6 +63,9 @@ evaluation:
   jev_scope: ["base/uniswap"]
 
 jev:
+  # false = a bot egyáltalán nem hívja a Jev-et (címkézés, rezsim, tartás); csak on-chain szabályok döntenek.
+  # 2026-09-26: egynapos Jev nélküli próba.
+  enabled: false
   model: jev-latest
   timeout_ms: 8000
   max_retries: 2

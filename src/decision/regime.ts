@@ -47,6 +47,7 @@ export class RegimeGate {
     };
     let regime: Regime = this.current, source = "jev", callId: number | null = null;
     if (chg24 !== null && chg24 < -this.cfg.regime.eth_24h_drop_pct_risk_off) { regime = "risk_off"; source = "hard_override"; }
+    else if (this.jev.disabled) { source = "jev_disabled"; } // Jev nélkül: marad az előző (alapból normal), csak az ETH-esés kapcsol risk_off-ra
     else {
       try {
         const r = await this.jev.ask(inputs, regimeQuestions, { purpose: "regime" });
