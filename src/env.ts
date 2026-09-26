@@ -5,8 +5,9 @@ import { z } from "zod";
 // beolvassa és validálja őket; a Secrets objektumot nem szabad stringgé alakítani.
 const EnvSchema = z.object({
   TYPESAFE_API_KEY: z.string().min(10, "TYPESAFE_API_KEY hiányzik"),
-  BASE_RPC_URL: z.string().url(),
-  ROBINHOOD_RPC_URL: z.string().url(),
+  // egy vagy több URL vesszővel elválasztva (tartalék végpontok)
+  BASE_RPC_URL: z.string().regex(/^https?:\/\/\S+(\s*,\s*https?:\/\/\S+)*$/, "BASE_RPC_URL: egy vagy több https URL vesszővel"),
+  ROBINHOOD_RPC_URL: z.string().regex(/^https?:\/\/\S+(\s*,\s*https?:\/\/\S+)*$/, "ROBINHOOD_RPC_URL: egy vagy több https URL vesszővel"),
   BASE_PRIVATE_TX_RPC_URL: z.string().url().optional().or(z.literal("")),
   ROBINHOOD_PRIVATE_TX_RPC_URL: z.string().url().optional().or(z.literal("")),
   WALLET_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "WALLET_PRIVATE_KEY hiányzik vagy nem 0x + 64 hex"),
@@ -27,16 +28,20 @@ export function loadEnv(opts: { requireWallet?: boolean } = {}): Env {
     throw new Error(`Hiányzó/hibás .env beállítás: ${missing}`);
   }
   const env = parsed.data;
+  registerSecrets([env.TYPESAFE_API_KEY, env.TELEGRAM_BOT_TOKEN, env.WALLET_PRIVATE_KEY, env.WALLET_PRIVATE_KEY.replace(/^0x/, "")]);
   // Védelem véletlen kiírás ellen (JSON.stringify, console.log).
   Object.defineProperty(env, "toJSON", { value: () => "[env: rejtett]", enumerable: false });
   Object.defineProperty(env, Symbol.for("nodejs.util.inspect.custom"), { value: () => "[env: rejtett]", enumerable: false });
   return env;
 }
 
-/** A logokban a kulcs-szerű stringeket kitakarja. */
+const SECRETS: string[] = [];
+/** A betöltött titkok (kulcs, tokenek) pontos értékét a logger kitakarja; a tx-hash-ek (szintén 64 hex) látszanak. */
+export function registerSecrets(values: string[]) {
+  for (const v of values) if (v && v.length >= 8 && !SECRETS.includes(v)) SECRETS.push(v);
+}
 export function redact(text: string): string {
-  return text
-    .replace(/0x[0-9a-fA-F]{64}/g, "0x[REDACTED_KEY]")
-    .replace(/\b\d{6,}:[A-Za-z0-9_-]{30,}\b/g, "[REDACTED_TG_TOKEN]")
-    .replace(/\b(ts|sk|tsk)[-_][A-Za-z0-9_-]{16,}\b/g, "[REDACTED_API_KEY]");
+  let out = text;
+  for (const s of SECRETS) out = out.split(s).join("[REDACTED]");
+  return out.replace(/\b\d{6,}:[A-Za-z0-9_-]{30,}\b/g, "[REDACTED_TG_TOKEN]");
 }

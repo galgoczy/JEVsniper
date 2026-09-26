@@ -9,7 +9,16 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "tsx src/index.ts",
     "verify:step1": "tsx scripts/verify-step1.ts",
-    "verify:step2": "tsx scripts/verify-step2.ts"
+    "verify:step2": "tsx scripts/verify-step2.ts",
+    "verify:step3": "tsx scripts/verify-step3.ts",
+    "verify:step4": "tsx scripts/verify-step4.ts",
+    "day1": "tsx scripts/day1-test.ts",
+    "verify:step6": "tsx scripts/verify-step6.ts",
+    "verify:step7": "tsx scripts/verify-step7.ts",
+    "verify:step8": "tsx scripts/verify-step8.ts",
+    "verify:step9": "tsx scripts/verify-step9.ts",
+    "report": "tsx scripts/verify-step9.ts",
+    "verify:lp": "tsx scripts/verify-lp.ts"
   },
   "repository": {
     "type": "git",

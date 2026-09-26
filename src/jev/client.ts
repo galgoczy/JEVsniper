@@ -38,9 +38,10 @@ export class JevClient {
   private consecutiveErrors = 0;
   private pausedUntil = 0;
 
-  constructor(private db: DB, private cfg: Config, apiKey: string) {
+  constructor(private db: DB, private cfg: Config, apiKey: string, fetchImpl?: typeof fetch) {
     this.client = new TypeSafeClient({
       apiKey,
+      ...(fetchImpl ? { fetch: fetchImpl as never } : {}),
       defaultModel: cfg.jev.model,
       timeout: cfg.jev.timeout_ms,
       retry: { maxRetries: cfg.jev.max_retries },
@@ -48,7 +49,9 @@ export class JevClient {
     });
   }
 
-  get paused(): boolean { return Date.now() < this.pausedUntil; }
+  /** Kikapcsolva (config jev.enabled: false) – ilyenkor szünetelőnek is számít, így semmi nem hívja. */
+  get disabled(): boolean { return this.cfg.jev.enabled === false; }
+  get paused(): boolean { return this.disabled || Date.now() < this.pausedUntil; }
   get pausedUntilMs(): number { return this.pausedUntil; }
 
   /** Napi Jev-költség (USD) a DB-ből. */

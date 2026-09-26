@@ -6,7 +6,7 @@
 import { loadConfig } from "../src/config.js";
 import { loadEnv } from "../src/env.js";
 import { openDb } from "../src/db/index.js";
-import { publicClient, type ChainKey } from "../src/chains/index.js";
+import { publicClient, rpcUrls, type ChainKey } from "../src/chains/index.js";
 import { sourcesFor } from "../src/watchers/sources.js";
 
 const ok = (m: string) => console.log("✅", m);
@@ -14,6 +14,21 @@ const bad = (m: string) => { console.log("❌", m); process.exitCode = 1; };
 const cfg = loadConfig();
 const env = loadEnv({ requireWallet: false });
 const rpc: Record<ChainKey, string> = { base: env.BASE_RPC_URL, robinhood: env.ROBINHOOD_RPC_URL };
+
+console.log("== RPC végpontok egyenként");
+for (const chain of ["base", "robinhood"] as ChainKey[]) {
+  for (const url of rpcUrls(rpc[chain])) {
+    const t0 = Date.now();
+    try {
+      const c = publicClient(chain, url);
+      const id = await c.getChainId();
+      const bn = await c.getBlockNumber();
+      const ms = Date.now() - t0;
+      if (id !== cfg.chains[chain].chain_id) bad(`${chain} ${url}: chain id ${id} ≠ ${cfg.chains[chain].chain_id} – VEDD KI a .env-ből`);
+      else ok(`${chain} ${url}: chain ${id}, blokk ${bn}, ${ms} ms`);
+    } catch (e) { bad(`${chain} ${url}: nem elérhető (${(e as Error).message.split("\n")[0]!.slice(0, 80)}) – vedd ki a .env-ből`); }
+  }
+}
 
 for (const chain of ["base", "robinhood"] as ChainKey[]) {
   if (!cfg.chains[chain].enabled) continue;

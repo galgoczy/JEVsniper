@@ -21,6 +21,12 @@ CREATE TABLE IF NOT EXISTS tokens (
   discovered_block INTEGER,
   status TEXT NOT NULL DEFAULT 'new',  -- new | filtered | evaluated | entered | skipped
   filter_reason TEXT,
+  pair_token TEXT,
+  graduated_at INTEGER,
+  bytecode_hash TEXT,
+  graduation_threshold TEXT,           -- PONS: quote wei (stringként, bigint)
+  pool_key_json TEXT,                  -- Uniswap v4 PoolKey {currency0,currency1,fee,tickSpacing,hooks}
+  decimals INTEGER,                    -- ERC20 decimals (a gyűjtő tölti); az árfeed innen olvassa
   UNIQUE(chain, address)
 );
 
@@ -96,6 +102,11 @@ CREATE TABLE IF NOT EXISTS positions (
   closed_at INTEGER,
   close_reason TEXT,
   gross_pnl_usd REAL, fees_usd REAL, gas_usd REAL, jev_cost_usd REAL, net_pnl_usd REAL,
+  stages_done INTEGER NOT NULL DEFAULT 0,
+  native_received REAL NOT NULL DEFAULT 0,
+  next_check_at INTEGER,
+  creator_balance_at_entry REAL,
+  liquidity_at_entry REAL,
   UNIQUE(token_id, arm, exit_plan, window_sec)
 );
 
@@ -173,6 +184,20 @@ CREATE TABLE IF NOT EXISTS wallet_lists (
   occurrences INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY(chain, address, list)
+);
+
+-- Címkézett tokenek 24 órás sorsa (tanuláshoz, kalibrációhoz): elérte-e előbb a 2x-et, mint a -40%-ot
+CREATE TABLE IF NOT EXISTS token_outcomes (
+  token_id INTEGER NOT NULL REFERENCES tokens(id),
+  window_sec INTEGER NOT NULL,        -- melyik ablak árától mérünk (30/60/180)
+  ref_price REAL NOT NULL,
+  ref_at INTEGER NOT NULL,
+  max_multiple REAL NOT NULL DEFAULT 1,
+  min_multiple REAL NOT NULL DEFAULT 1,
+  first_hit TEXT,                     -- tp1_first | stop_first | NULL
+  hit_at INTEGER,
+  done_at INTEGER,                    -- 24h után lezárva (neither_24h, ha first_hit NULL)
+  PRIMARY KEY (token_id, window_sec)
 );
 
 CREATE TABLE IF NOT EXISTS events (

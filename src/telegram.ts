@@ -5,7 +5,7 @@ import { log } from "./logger.js";
  * Küldés: sendMessage. Parancsok: getUpdates long polling (/status, /stop, /resume, /panic).
  * A token soha nem kerül logba (a logger kitakarja, itt pedig nem is írjuk ki).
  */
-export type TelegramCommand = "status" | "stop" | "resume" | "panic" | "help";
+export type TelegramCommand = "status" | "report" | "stop" | "resume" | "panic" | "help";
 
 export class Telegram {
   private base: string;
@@ -76,6 +76,6 @@ export class Telegram {
 }
 
 export function parseCommand(text: string): TelegramCommand | null {
-  const m = /^\/(status|stop|resume|panic|help)(@\w+)?\b/i.exec(text.trim());
+  const m = /^\/(status|report|stop|resume|panic|help)(@\w+)?\b/i.exec(text.trim());
   return m ? (m[1]!.toLowerCase() as TelegramCommand) : null;
 }

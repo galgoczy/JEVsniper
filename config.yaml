@@ -1,7 +1,7 @@
 # Jev Sniper Bot – minden paraméter és küszöb itt állítható.
 # A kockázati limitek (risk) CSAK itt állíthatók, kódban nincs felülírás.
 
-mode: live            # live | dry_run  (dry_run: minden fut, de nem küld tranzakciót)
+mode: dry_run         # live | dry_run  (dry_run: minden fut, Jev is, de tranzakció nem megy ki) – a 7. lépésig (kiszállás) maradjon dry_run!
 
 chains:
   base:
@@ -25,7 +25,7 @@ risk:
   # Az 1. napi mérés után állítandó (irány: pozícióméret 5%-a, min. 0,05 USD)
   max_gas_per_tx_usd: 0.05
   max_gas_per_sell_usd: 0.15
-  jev_daily_budget_usd: 1.0
+  jev_daily_budget_usd: 5.0     # ~3–4 USD/nap várható (2026-09-22 mérés: 1791 token/2 óra); elérésekor a hold-kérdések ritkulnak
   one_entry_per_token: true
   max_entries_per_creator_per_day: 1
 
@@ -39,6 +39,7 @@ compound:
 regime:
   recalc_minutes: 60
   eth_24h_drop_pct_risk_off: 8        # kemény felülírás: ETH 24h esés efölött → risk_off
+  jev_risk_off_min_p: 0.7             # a Jev risk_off válaszát csak e valószínűség felett fogadjuk el, alatta cold
   risk_off_close_phases: ["pre_tp1"]  # mely fázisú pozíciók záródjanak risk_off-nál
 
 watcher:
@@ -57,8 +58,14 @@ watcher:
 evaluation:
   windows_sec: [30, 60, 180]
   live_window_sec: 60
+  # Jev-címkézés csak ezekre ("lánc/launchpad"); üres lista = minden token.
+  # 2026-09-24: a PONS-tokenekből egy 2x sem jött, a címkék ott csak költséget jelentettek.
+  jev_scope: ["base/uniswap"]
 
 jev:
+  # false = a bot egyáltalán nem hívja a Jev-et (címkézés, rezsim, tartás); csak on-chain szabályok döntenek.
+  # 2026-09-26: egynapos Jev nélküli próba.
+  enabled: false
   model: jev-latest
   timeout_ms: 8000
   max_retries: 2
@@ -117,8 +124,15 @@ monitoring:
 execution:
   max_slippage_pct: 8
   panic_slippage_pct: 25
+  # ha a pozíció mérete ennél nagyobb árhatást okoz a poolban, nincs vétel (sekély pool = nem lehet kiszállni)
+  max_price_impact_pct: 10
   deadline_sec: 30
   retry_failed_tx_once: true
+
+# Árnyékkarok költségmodellje (8.) – az 1. napi mérésből; heti korrekció a riport alapján
+cost_model:
+  base:      { gas_buy_usd: 0.004, gas_sell_usd: 0.005, default_slippage_pct: 2, mev_allowance_pct: 0.3 }
+  robinhood: { gas_buy_usd: 0.025, gas_sell_usd: 0.030, default_slippage_pct: 2, mev_allowance_pct: 0.3 }
 
 telegram:
   enabled: true

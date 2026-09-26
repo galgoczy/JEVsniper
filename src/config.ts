@@ -12,6 +12,10 @@ const ChainCfg = z.object({
   native_symbol: z.string(),
 });
 
+const CostCfg = z.object({
+  gas_buy_usd: z.number().min(0), gas_sell_usd: z.number().min(0), default_slippage_pct: pct, mev_allowance_pct: pct,
+});
+
 const WatcherCfg = z.object({
   poll_interval_ms: z.number().int().min(500),
   max_block_range: z.number().int().min(1).max(2000),
@@ -47,6 +51,7 @@ export const ConfigSchema = z.object({
   regime: z.object({
     recalc_minutes: z.number().int().positive(),
     eth_24h_drop_pct_risk_off: pct,
+    jev_risk_off_min_p: prob,
     risk_off_close_phases: z.array(z.enum(["pre_tp1", "post_tp1", "moon_bag"])),
   }),
   watcher: z.object({
@@ -56,8 +61,10 @@ export const ConfigSchema = z.object({
   evaluation: z.object({
     windows_sec: z.array(z.number().int().positive()).min(1),
     live_window_sec: z.number().int().positive(),
+    jev_scope: z.array(z.string()).default([]),
   }),
   jev: z.object({
+    enabled: z.boolean().default(true),
     model: z.string(),
     timeout_ms: z.number().int().positive(),
     max_retries: z.number().int().min(0),
@@ -113,8 +120,13 @@ export const ConfigSchema = z.object({
   execution: z.object({
     max_slippage_pct: pct,
     panic_slippage_pct: pct,
+    max_price_impact_pct: pct,
     deadline_sec: z.number().int().positive(),
     retry_failed_tx_once: z.boolean(),
+  }),
+  cost_model: z.object({
+    base: CostCfg,
+    robinhood: CostCfg,
   }),
   telegram: z.object({ enabled: z.boolean(), poll_interval_ms: z.number().int().positive() }),
   report: z.object({ daily_time_utc: z.string(), output_dir: z.string() }),

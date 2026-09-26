@@ -1,4 +1,4 @@
-import { type Address, type Log, decodeEventLog, isAddressEqual, type AbiEvent } from "viem";
+import { type Address, type Log, decodeEventLog, isAddressEqual, type AbiEvent, toEventSelector } from "viem";
 import type { ChainKey } from "../chains/index.js";
 import { ADDRESSES, ZERO } from "../chains/addresses.js";
 import { clankerV4TokenCreatedEvent } from "../abis/clankerV4.js";
@@ -19,6 +19,8 @@ export interface NewToken {
   symbol: string | null;
   blockNumber: bigint;
   txHash: `0x${string}` | null;
+  graduationThreshold?: bigint;            // PONS: ennyi quote (wei) után graduál a curve
+  poolKey?: { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }; // v4
 }
 
 export interface LogSource {
@@ -26,6 +28,7 @@ export interface LogSource {
   chain: ChainKey;
   address: Address;
   event: AbiEvent;
+  topic0: `0x${string}`;
   decode: (log: Log) => NewToken | null;
 }
 
@@ -37,7 +40,7 @@ const isQuote = (chain: ChainKey, a: Address) => isAddressEqual(a, ZERO) || isAd
 /** Az adott láncon figyelt források (launchpad + Uniswap-indítások). */
 export function sourcesFor(chain: ChainKey, enabled: Record<string, boolean>): LogSource[] {
   const A = ADDRESSES[chain];
-  const out: LogSource[] = [];
+  const out: Omit<LogSource, "topic0">[] = [];
 
   if (A.clankerV4Factory && enabled.clanker !== false) {
     out.push({
@@ -61,7 +64,7 @@ export function sourcesFor(chain: ChainKey, enabled: Record<string, boolean>): L
         return {
           chain, address: args.token, creator: args.deployer, launchpad: "pons", mechanics: "bonding_curve",
           pool: args.curve, pairToken: args.pairToken, name: null, symbol: null,
-          blockNumber: log.blockNumber ?? 0n, txHash: log.transactionHash,
+          blockNumber: log.blockNumber ?? 0n, txHash: log.transactionHash, graduationThreshold: args.graduationThreshold,
         };
       },
     });
@@ -105,10 +108,11 @@ export function sourcesFor(chain: ChainKey, enabled: Record<string, boolean>): L
         if (!token) return null;
         const hooked = !isAddressEqual(args.hooks, ZERO);
         return { chain, address: token, creator: null, launchpad: "uniswap", mechanics: hooked ? "v4_hook" : "v4", pool: args.id,
-          pairToken: token === c0 ? c1 : c0, name: null, symbol: null, blockNumber: log.blockNumber ?? 0n, txHash: log.transactionHash };
+          pairToken: token === c0 ? c1 : c0, name: null, symbol: null, blockNumber: log.blockNumber ?? 0n, txHash: log.transactionHash,
+          poolKey: { currency0: c0, currency1: c1, fee: args.fee, tickSpacing: args.tickSpacing, hooks: args.hooks } };
       },
     });
   }
 
-  return out;
+  return out.map((s) => ({ ...s, topic0: toEventSelector(s.event) }));
 }
