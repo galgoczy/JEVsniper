@@ -1,16 +1,21 @@
 import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
+import { shadowCost } from "../exit/costmodel.js";
+import type { ChainKey } from "../chains/index.js";
 
 /**
- * Szabálykereső a már összegyűjtött adaton (pillanatkép + kimenet), időbeli szétválasztással:
- *  1) a tokeneket időrendbe teszi, az első 2/3 a TANÍTÓ, az utolsó 1/3 az ELLENŐRZŐ rész;
- *  2) sok egyszerű szabályt (hatókör × 1–2 feltétel) kiértékel a tanító részen;
- *  3) a legjobbakat az ellenőrző részen nézi meg, amit a keresés nem látott.
- * Csak durva szűrő: a kimenetnek csak az összefoglalóját ismerjük (előbb 2x / előbb −40% / egyik sem), a teljes
- * árfolyamot nem. A jelöltből új árnyékstratégia lesz, a végső döntést az adja friss adaton.
+ * Szabálykereső a már összegyűjtött adaton, időbeli szétválasztással:
+ *  1) tokenenként egy árnyékpozíció (adott ablak + kilépési terv) eredménye 1 USD-re vetítve – költségekkel, a pool
+ *     likviditásával számolt csúszással. Lezárt pozíciónál a tényleges nettó; nyitottnál az utolsó ellenőrzéskori
+ *     áron becsült érték (mintha most eladnánk). Így a még futó pozíciók sem esnek ki (nincs „csak a gyorsan
+ *     lezárultak” torzítás), és a vékony pool pillanatnyi kiugrása sem számít nyereségnek.
+ *  2) csak legalább `minAgeH` órája nyitott pozíciók (mindegyiknek volt ideje kibontakozni);
+ *  3) időrend: első 2/3 TANÍTÓ, utolsó 1/3 ELLENŐRZŐ; sok egyszerű szabály (hatókör × 1–2 feltétel) a tanítón,
+ *     a legjobbak az ellenőrzőn, amit a keresés nem látott.
+ * A jelöltből új árnyékstratégia lesz; a végső döntést az adja friss adaton.
  */
 
-export interface Sample { at: number; chain: string; launchpad: string; p: Record<string, Record<string, unknown>>; outcome: "win" | "loss" | "neither" }
+export interface Sample { at: number; chain: string; launchpad: string; p: Record<string, Record<string, unknown>>; value: number; open: boolean }
 export interface Cond { name: string; test: (s: Sample) => boolean }
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -38,80 +43,85 @@ export const CONDITIONS: Cond[] = [
   eq("contract.lp_owner", "burned"), eq("contract.lp_owner", "contract"), eq("contract.lp_owner", "creator"), eq("contract.lp_owner", "eoa"),
 ];
 
-/** Közelítő várható érték 1 USD-re: 2x előbb = +1, −40% előbb = −0,4, egyik sem = −0,1, mínusz az oda-vissza költség. */
-export const PAYOFF = { win: 1, loss: -0.4, neither: -0.1 };
-export function roundTripCost(chain: string, cfg: Config["cost_model"]): number {
-  const c = (cfg as Record<string, { gas_buy_usd: number; gas_sell_usd: number; default_slippage_pct: number; mev_allowance_pct: number }>)[chain];
-  if (!c) return 0.1;
-  return c.gas_buy_usd + c.gas_sell_usd + 2 * (c.default_slippage_pct + c.mev_allowance_pct + 1) / 100; // +1% pool-díj irányonként
+export interface Stat { n: number; mean: number; win: number; low: number; open: number }
+/** Átlagos érték 1 USD-re, nyerő arány, és az átlag óvatos (90%) alsó becslése. */
+export function stat(xs: Sample[]): Stat {
+  const n = xs.length;
+  if (!n) return { n: 0, mean: 0, win: 0, low: -Infinity, open: 0 };
+  const mean = xs.reduce((a, s) => a + s.value, 0) / n;
+  const sd = n > 1 ? Math.sqrt(xs.reduce((a, s) => a + (s.value - mean) ** 2, 0) / (n - 1)) : Infinity;
+  return { n, mean, win: xs.filter((s) => s.value > 0).length / n, low: mean - (1.645 * sd) / Math.sqrt(n), open: xs.filter((s) => s.open).length };
 }
 
-export interface Stat { n: number; win: number; loss: number; ev: number }
-export function stat(xs: Sample[], cost: (s: Sample) => number): Stat {
-  if (!xs.length) return { n: 0, win: 0, loss: 0, ev: 0 };
-  let w = 0, l = 0, ev = 0;
-  for (const s of xs) { if (s.outcome === "win") w++; else if (s.outcome === "loss") l++; ev += PAYOFF[s.outcome] - cost(s); }
-  return { n: xs.length, win: w / xs.length, loss: l / xs.length, ev: ev / xs.length };
-}
+export interface RuleResult { scope: string; conds: string[]; train: Stat; test: Stat; baseTest: Stat; holds: boolean }
 
-/** Wilson-féle alsó határ (90%) egy arányra – kis mintán óvatos rangsoroláshoz. */
-export function wilsonLow(p: number, n: number, z = 1.645): number {
-  if (!n) return 0;
-  const d = 1 + (z * z) / n, c = p + (z * z) / (2 * n), m = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
-  return (c - m) / d;
-}
-
-export interface RuleResult { scope: string; conds: string[]; train: Stat; test: Stat; baseTrain: Stat; baseTest: Stat; holds: boolean }
-
-export function explore(samples: Sample[], costModel: Config["cost_model"], opts: { minTrain?: number; minTest?: number; top?: number } = {}): { results: RuleResult[]; splitAt: number | null; scopes: Array<{ scope: string; train: Stat; test: Stat }>; tried: number } {
+export function explore(samples: Sample[], opts: { minTrain?: number; minTest?: number; top?: number } = {}): { results: RuleResult[]; splitAt: number | null; scopes: Array<{ scope: string; train: Stat; test: Stat }>; tried: number } {
   const minTrain = opts.minTrain ?? 30, minTest = opts.minTest ?? 15, top = opts.top ?? 20;
   const sorted = [...samples].sort((a, b) => a.at - b.at);
   const cut = Math.floor((sorted.length * 2) / 3);
   const train = sorted.slice(0, cut), test = sorted.slice(cut);
-  const cost = (s: Sample) => roundTripCost(s.chain, costModel);
   const scopeNames = ["mind", ...new Set(sorted.map((s) => `${s.chain}/${s.launchpad}`))];
   const inScope = (sc: string) => (s: Sample) => sc === "mind" || `${s.chain}/${s.launchpad}` === sc;
-  // feltételek előre kiértékelve (gyors)
   const trainHits = CONDITIONS.map((c) => train.map(c.test)), testHits = CONDITIONS.map((c) => test.map(c.test));
-  const scopes = scopeNames.map((sc) => ({ scope: sc, train: stat(train.filter(inScope(sc)), cost), test: stat(test.filter(inScope(sc)), cost) }));
-  const cand: Array<{ scope: string; ci: number[]; train: Stat; score: number }> = [];
+  const scopes = scopeNames.map((sc) => ({ scope: sc, train: stat(train.filter(inScope(sc))), test: stat(test.filter(inScope(sc))) }));
+  const combos: number[][] = [];
+  for (let i = 0; i < CONDITIONS.length; i++) { combos.push([i]); for (let j = i + 1; j < CONDITIONS.length; j++) combos.push([i, j]); }
+  const cand: Array<{ scope: string; ci: number[]; train: Stat }> = [];
   let tried = 0;
   for (const sc of scopeNames) {
     const scTrain = train.map(inScope(sc));
-    const combos: number[][] = [];
-    for (let i = 0; i < CONDITIONS.length; i++) { combos.push([i]); for (let j = i + 1; j < CONDITIONS.length; j++) combos.push([i, j]); }
     for (const ci of combos) {
       tried++;
       const xs = train.filter((_, k) => scTrain[k] && ci.every((c) => trainHits[c]![k]));
-      if (xs.length < minTrain) continue;
-      const st = stat(xs, cost);
-      cand.push({ scope: sc, ci, train: st, score: wilsonLow(st.win, st.n) - st.loss * 0.4 });
+      if (xs.length >= minTrain) cand.push({ scope: sc, ci, train: stat(xs) });
     }
   }
-  cand.sort((a, b) => b.score - a.score);
+  cand.sort((a, b) => b.train.low - a.train.low); // rangsor: az átlag óvatos alsó becslése a tanító részen
   const results: RuleResult[] = [];
+  const seen = new Set<string>();
   for (const c of cand) {
     if (results.length >= top) break;
     const scTest = test.map(inScope(c.scope));
     const xs = test.filter((_, k) => scTest[k] && c.ci.every((i) => testHits[i]![k]));
-    const st = stat(xs, cost), base = scopes.find((s) => s.scope === c.scope)!;
-    results.push({ scope: c.scope, conds: c.ci.map((i) => CONDITIONS[i]!.name), train: c.train, test: st, baseTrain: base.train, baseTest: base.test,
-      // Szigorú: a 2x-arány óvatos (Wilson 90%) alsó becslése is az alapvonal fölött legyen, és az érték is jobb legyen.
-      holds: st.n >= minTest && st.ev > base.test.ev && wilsonLow(st.win, st.n) > base.test.win });
+    const st = stat(xs), base = scopes.find((s) => s.scope === c.scope)!;
+    // ugyanazt a tokenhalmazt kiválasztó szabályokból csak az elsőt mutatjuk (ne legyen 10 sor ugyanarról)
+    const sig = `${c.scope}|${c.train.n}|${c.train.mean.toFixed(4)}|${st.n}|${st.mean.toFixed(4)}`;
+    if (seen.has(sig)) continue; seen.add(sig);
+    results.push({ scope: c.scope, conds: c.ci.map((i) => CONDITIONS[i]!.name), train: c.train, test: st, baseTest: base.test,
+      holds: st.n >= minTest && st.mean > base.test.mean && st.low > base.test.mean });
   }
   return { results, splitAt: test[0]?.at ?? null, scopes, tried };
 }
 
-/** Minták a DB-ből: az adott ablak pillanatképe + ugyanannak az ablaknak a kimenete; csak lezárt (van találat vagy letelt a 24 óra). */
-export function loadSamples(db: DB, windowSec: number, sinceMs: number): { samples: Sample[]; pending: number } {
-  const rows = db.prepare(`SELECT s.params_json p, o.first_hit h, o.done_at d, o.ref_at at, t.chain, t.launchpad FROM token_outcomes o
-    JOIN snapshots s ON s.token_id = o.token_id AND s.window_sec = o.window_sec JOIN tokens t ON t.id = o.token_id
-    WHERE o.window_sec = ? AND o.ref_at > ?`).all(windowSec, sinceMs) as Array<{ p: string; h: string | null; d: number | null; at: number; chain: string; launchpad: string }>;
-  const samples: Sample[] = []; let pending = 0;
+interface PosRow { at: number; closed_at: number | null; net_pnl_usd: number | null; size_usd: number; size_native: number; native_received: number; tokens_remaining: number;
+  last_price_native: number | null; gas_usd: number | null; liquidity_at_entry: number | null; chain: string; launchpad: string; p: string }
+
+/** Egy pozíció értéke 1 USD-re: lezártnál a nettó; nyitottnál becslés az utolsó áron (eladási költséggel, likviditással). */
+export function positionValue(r: PosRow, costModel: Config["cost_model"]): { value: number; open: boolean } | null {
+  if (!(r.size_usd > 0)) return null;
+  if (r.closed_at !== null && r.net_pnl_usd !== null) return { value: r.net_pnl_usd / r.size_usd, open: false };
+  if (r.last_price_native === null || !(r.size_native > 0)) return null;
+  const usdPerNative = r.size_usd / r.size_native;
+  const gross = r.tokens_remaining * r.last_price_native;
+  const sell = gross > 0 ? shadowCost(r.chain as ChainKey, "sell", gross, { feePct: 1, liquidityNative: r.liquidity_at_entry }, costModel) : { netNative: 0, gasUsd: 0 };
+  const usd = (r.native_received + Math.max(0, sell.netNative)) * usdPerNative - r.size_usd - (r.gas_usd ?? 0) - (gross > 0 ? sell.gasUsd : 0);
+  return { value: usd / r.size_usd, open: true };
+}
+
+/** Minták: tokenenként egy árnyékpozíció az adott ablakban és tervben, legalább minAgeMs óta nyitva. */
+export function loadSamples(db: DB, costModel: Config["cost_model"], o: { windowSec: number; plan: string; sinceMs: number; minAgeMs: number; now?: number }): { samples: Sample[]; young: number; unvalued: number } {
+  const now = o.now ?? Date.now();
+  const rows = db.prepare(`SELECT p.opened_at at, p.closed_at, p.net_pnl_usd, p.size_usd, p.size_native, p.native_received, p.tokens_remaining, p.last_price_native, p.gas_usd,
+      p.liquidity_at_entry, p.chain, t.launchpad, s.params_json p
+    FROM positions p JOIN tokens t ON t.id = p.token_id JOIN snapshots s ON s.token_id = p.token_id AND s.window_sec = p.window_sec
+    WHERE p.exit_plan = ? AND p.window_sec = ? AND p.opened_at > ? AND p.arm NOT IN ('live','day1_test') AND (p.close_reason IS NULL OR p.close_reason NOT LIKE 'invalid%')
+    GROUP BY p.token_id`).all(o.plan, o.windowSec, o.sinceMs) as PosRow[];
+  const samples: Sample[] = []; let young = 0, unvalued = 0;
   for (const r of rows) {
-    if (!r.h && !r.d) { pending++; continue; }
-    let p: Sample["p"]; try { p = JSON.parse(r.p); } catch { continue; }
-    samples.push({ at: r.at, chain: r.chain, launchpad: r.launchpad, p, outcome: r.h === "tp1_first" ? "win" : r.h === "stop_first" ? "loss" : "neither" });
+    if (now - r.at < o.minAgeMs) { young++; continue; }
+    const v = positionValue(r, costModel); if (!v) { unvalued++; continue; }
+    let p: Sample["p"]; try { p = JSON.parse(r.p); } catch { unvalued++; continue; }
+    samples.push({ at: r.at, chain: r.chain, launchpad: r.launchpad, p, value: v.value, open: v.open });
   }
-  return { samples, pending };
+  return { samples, young, unvalued };
 }

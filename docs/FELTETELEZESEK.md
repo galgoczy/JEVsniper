@@ -286,3 +286,10 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
   ✔ csak ha az ellenőrző részen a 2x-arány Wilson 90% alsó becslése is az alapvonal fölött van és az értéke is jobb (n ≥ 15).
   Mérés tiszta zajon (5 szimuláció, 900 token): 0–2 hamis ✔ a top 20-ból; beépített jellel a valódi szabályt megtalálja.
   Korlát: csak azok a tokenek, amelyekhez van kimenet-követés (valamelyik kar belépett: minden Base/Uniswap v4 + a véletlen 20%); a −40%-os veszteség valójában gyakran nagyobb (egylépéses zuhanás).
+
+## 2026-09-27 (este) – Szabálykereső javítása: torzítatlan cél
+- Hiba az első változatban: a cél a „2x előbb, mint −40%” volt, és csak a már lezárult tokeneket nézte. Egy nap után a lezárultak főleg a gyorsan 2x-et érők → 93%-os 2x-arány (a valóságban az árnyékpozíciók 20–30%-a nyer). Ráadásul a 2x egy pillanatnyi kiugrásnál is „teljesül”, amin vékony poolban nem lehet eladni.
+- Javítás: a cél tokenenként egy árnyékpozíció (adott ablak + terv) eredménye 1 USD-re – költségekkel és likviditás-alapú csúszással. Nyitott pozíciónál az utolsó ellenőrzéskori áron becsült érték (új oszlopok: positions.last_price_native, last_price_at; séma v6). Csak legalább 6 órája nyitott pozíciók.
+- Rangsor: az átlag óvatos (90%) alsó becslése a tanító részen; ✔ ha az ellenőrző részen az alsó becslés is az alapvonal átlaga fölött van (n ≥ 15). Az azonos tokenhalmazt kiválasztó szabályokból csak az első látszik.
+- Zajteszt (5 × 900 szimulált token, jel nélkül): összesen legfeljebb 5 hamis ✔ a 100-ból; beépített jelet megtalál.
+- Ismert korlát a riportban és a figyelőben: azok csak lezárt pozíciókat számolnak, ezért az első napokban a gyorsan zárulók (zuhanások, gyors nyerők) felülreprezentáltak; ez néhány nap alatt kiegyenlítődik.

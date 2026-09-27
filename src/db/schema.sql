@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS positions (
   next_check_at INTEGER,
   creator_balance_at_entry REAL,
   liquidity_at_entry REAL,
+  last_price_native REAL,             -- legutóbbi ellenőrzéskori ár (nyitott pozíció piaci értékeléséhez)
+  last_price_at INTEGER,
   UNIQUE(token_id, arm, exit_plan, window_sec)
 );
 

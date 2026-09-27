@@ -138,7 +138,7 @@ export class PositionMonitor {
       setNext(r.phase); return;
     }
     const peak = Math.max(r.peak_price_native ?? r.entry_price_native, price);
-    if (peak !== r.peak_price_native) db.prepare("UPDATE positions SET peak_price_native = ? WHERE id = ?").run(peak, r.id);
+    db.prepare("UPDATE positions SET peak_price_native = ?, last_price_native = ?, last_price_at = ? WHERE id = ?").run(peak, price, now, r.id);
     const state: PosState = { exit_plan: r.exit_plan, phase: r.phase, entry_price: r.entry_price_native, peak_price: peak, tokens_bought: r.tokens_bought, tokens_remaining: r.tokens_remaining, opened_at: r.opened_at, stages_done: r.stages_done };
 
     // vészfékek (Jev nélkül)
