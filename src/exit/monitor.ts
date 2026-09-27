@@ -104,7 +104,24 @@ export class PositionMonitor {
       if (!o.first_hit && m !== null) { if (m >= this.d.cfg.exit_plan.tp1_multiple) hit = "tp1_first"; else if (m <= 1 - this.d.cfg.emergency.price_drop_pct / 100) hit = "stop_first"; }
       const done = now - o.ref_at >= 86_400_000 ? now : null;
       upd.run(mx, mn, hit, hit ? now : null, done, o.token_id, o.window_sec);
+      // Nagy nyerő: egyszer szólunk, amikor az élő ablak árától számított csúcs átlépi a küszöböt
+      const bw = this.d.cfg.alerts.big_winner_multiple;
+      if (this.d.cfg.alerts.enabled && o.window_sec === this.d.cfg.evaluation.live_window_sec && o.max_multiple < bw && mx >= bw) void this.bigWinner(o.token_id, mx);
     }
+  }
+
+  private async bigWinner(tokenId: number, mult: number) {
+    const t = this.d.db.prepare("SELECT chain, launchpad, symbol, address FROM tokens WHERE id = ?").get(tokenId) as { chain: string; launchpad: string; symbol: string | null; address: string } | undefined;
+    const sn = this.d.db.prepare("SELECT params_json FROM snapshots WHERE token_id = ? AND window_sec = ?").get(tokenId, this.d.cfg.evaluation.live_window_sec) as { params_json: string } | undefined;
+    if (!t) return;
+    let feat = "";
+    try {
+      const p = sn ? JSON.parse(sn.params_json) : null;
+      if (p) feat = `\n60 mp-nél: holderek ${p.holders?.count}, likviditás ${typeof p.contract?.liquidity_usd === "number" ? Math.round(p.contract.liquidity_usd) + " USD" : "?"}, LP: ${p.contract?.lp_owner}, készítő korábbi tokenjei: ${p.creator?.prior_tokens}, vevő-gyorsulás ${typeof p.dynamics?.buyer_acceleration === "number" ? p.dynamics.buyer_acceleration.toFixed(1) : "?"}`;
+    } catch { /* hiányos pillanatkép */ }
+    const arms = (this.d.db.prepare("SELECT DISTINCT arm FROM positions WHERE token_id = ? AND arm != 'random_control'").all(tokenId) as { arm: string }[]).map((r) => r.arm);
+    await this.d.notify(`🚀 ${mult.toFixed(0)}x ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${t.address}${feat}
+árnyékstratégiák benne: ${arms.join(", ") || "egyik sem"}`);
   }
 
   async checkPosition(r: PosRow) {

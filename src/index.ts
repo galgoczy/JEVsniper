@@ -19,6 +19,7 @@ import { PriceFeed } from "./exit/pricefeed.js";
 import { PositionMonitor } from "./exit/monitor.js";
 import { CompoundManager } from "./compound/index.js";
 import { writeReport } from "./report/index.js";
+import { checkArms } from "./analysis/watch.js";
 import { getAddress } from "viem";
 
 /**
@@ -101,6 +102,15 @@ async function main() {
     if (d.getUTCHours() === rh && d.getUTCMinutes() === rm) { try { const r = writeReport(db, cfg); void tg.send(r.telegram + `\nfájl: ${r.file}`); } catch (e) { log.warn("riport hiba", { error: (e as Error).message }); } }
   }, 60_000);
   const regimeTimer = setInterval(() => void regime.refresh().catch(() => undefined), 60_000);
+  // Futás közbeni figyelő: állapotváltáskor Telegram-üzenet (legfeljebb 6 sor egyszerre)
+  const alertsSince = Date.parse(`${cfg.alerts.since}T00:00:00Z`);
+  const alertTimer = setInterval(() => {
+    if (!cfg.alerts.enabled) return;
+    try {
+      const msgs = checkArms(db, alertsSince);
+      if (msgs.length) void tg.send(["📈 Árnyékstratégia-figyelő", ...msgs.slice(0, 6), ...(msgs.length > 6 ? [`…és még ${msgs.length - 6} változás (npm run report -- --since ${cfg.alerts.since})`] : [])].join("\n"));
+    } catch (e) { log.warn("figyelő hiba", { error: (e as Error).message.slice(0, 160) }); }
+  }, cfg.alerts.interval_min * 60_000);
 
   // 4. lépés: kemény szűrők minden pillanatképre; 6. lépés: döntés (élő ablakban belépés, máshol árnyék)
   const scheduler = new CollectorScheduler(db, collector, cfg.evaluation.windows_sec, cfg.db.max_snapshot_bytes, async (t, snap) => {
@@ -170,6 +180,7 @@ async function main() {
     monitor.stop();
     clearInterval(compoundTimer);
     clearInterval(reportTimer);
+    clearInterval(alertTimer);
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);

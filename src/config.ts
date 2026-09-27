@@ -133,6 +133,13 @@ export const ConfigSchema = z.object({
   }),
   telegram: z.object({ enabled: z.boolean(), poll_interval_ms: z.number().int().positive() }),
   report: z.object({ daily_time_utc: z.string(), output_dir: z.string() }),
+  // Futás közbeni figyelő: állapotváltás-riasztások (csak jelez, a szabályokon nem változtat)
+  alerts: z.object({
+    enabled: z.boolean().default(true),
+    since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),     // ettől a naptól (UTC) számol
+    interval_min: z.number().int().positive().default(60),
+    big_winner_multiple: z.number().positive().default(10), // ennyiszeres csúcsnál külön értesítés (60 mp-es ár)
+  }).default({ enabled: true, since: "2026-09-27", interval_min: 60, big_winner_multiple: 10 }),
   db: z.object({ path: z.string(), max_snapshot_bytes: z.number().int().positive() }),
 }).superRefine((c, ctx) => {
   if (c.risk.max_position_usd < c.risk.base_position_usd) {

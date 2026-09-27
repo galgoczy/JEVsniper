@@ -275,3 +275,14 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Késői ablak: `evaluation.late_window_sec: 1800`, `late_scope: ["base/uniswap"]` – ezekről a tokenekről 30 perc után még egy pillanatkép; minden kar ott is dönt (így a random_control@1800 és base_uni_all@1800 a túlélők alapvonala).
   Új kar `late_survivor` (csak 1800 mp-nél): likviditás a poolban (nem removed/none), ár az induló fölött, csúcstól < 50% esés, készítő < 50%-ot adott el.
 - Költség: tokenenként egy plusz pillanatkép a Base/Uniswap tokenekre (~napi 1900), ingyenes RPC-n belül.
+
+## 2026-09-27 – Folyamatos kiértékelés: figyelő és szabálykereső
+- Alapelv: a bot futás közben NEM írja át a szabályait sorozatok alapján (zajkövetés, túlilleszkedés). Csak jelez; változtatás heti ciklusban, friss adaton igazolva.
+- Figyelő (`alerts`, óránként): minden (kar, ablak, terv) kombináció az `alerts.since` naptól; Telegram-üzenet csak állapotváltáskor:
+  ⏳ ígéretes (n ≥ 20 és 90% CI alsó határa > 0), ✅ élesítés-jelölt (n ≥ 100 és CI > 0), ↘️ kiesett (CI alsó határa −0,02 alá – hiszterézis a villogás ellen).
+  Állapotok az `arm_states` táblában. Nagy nyerő: ha egy token a 60 mp-es árától 10x fölé megy, egyszeri üzenet a fő jellemzőivel.
+- Szabálykereső (`npm run explore [-- --since ÉÉÉÉ-HH-NN] [-- --window 60|1800]`): hatókör × 1–2 feltétel (41 feltétel), időrendi 2/3 tanító, 1/3 ellenőrző rész.
+  Közelítő érték 1 USD-re: 2x előbb +1, −40% előbb −0,4, egyik sem −0,1, mínusz oda-vissza költség (gas + 2×(csúszás + MEV + 1% díj)).
+  ✔ csak ha az ellenőrző részen a 2x-arány Wilson 90% alsó becslése is az alapvonal fölött van és az értéke is jobb (n ≥ 15).
+  Mérés tiszta zajon (5 szimuláció, 900 token): 0–2 hamis ✔ a top 20-ból; beépített jellel a valódi szabályt megtalálja.
+  Korlát: csak azok a tokenek, amelyekhez van kimenet-követés (valamelyik kar belépett: minden Base/Uniswap v4 + a véletlen 20%); a −40%-os veszteség valójában gyakran nagyobb (egylépéses zuhanás).

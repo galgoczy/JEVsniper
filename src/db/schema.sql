@@ -211,3 +211,11 @@ CREATE INDEX IF NOT EXISTS idx_tokens_status ON tokens(status);
 CREATE INDEX IF NOT EXISTS idx_positions_open ON positions(phase) WHERE closed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_jev_calls_at ON jev_calls(called_at);
 CREATE INDEX IF NOT EXISTS idx_decisions_token ON decisions(token_id, arm);
+
+-- Árnyékkar-állapotok a futás közbeni figyelőhöz (Telegram-riasztás állapotváltáskor)
+CREATE TABLE IF NOT EXISTS arm_states (
+  key TEXT PRIMARY KEY,               -- arm|window_sec|exit_plan
+  state TEXT NOT NULL,                -- none | promising | candidate
+  n INTEGER, mean REAL, ci_lo REAL, ci_hi REAL,
+  updated_at INTEGER NOT NULL
+);

@@ -146,6 +146,14 @@ report:
   daily_time_utc: "06:00"
   output_dir: reports
 
+# Futás közbeni figyelő (Telegram): szól, ha egy árnyékstratégia ígéretes lesz (90% CI > 0, n ≥ 20),
+# élesítés-jelölt lesz (n ≥ 100), vagy kiesik; és ha egy token 10x fölé megy. A szabályokon nem változtat.
+alerts:
+  enabled: true
+  since: "2026-09-27"      # tiszta adat ettől (mérési javítások + Jev ki)
+  interval_min: 60
+  big_winner_multiple: 10
+
 db:
   path: data/jev-sniper.db
   max_snapshot_bytes: 16384
