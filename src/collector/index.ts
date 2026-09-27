@@ -477,17 +477,25 @@ export class Collector {
 export class CollectorScheduler {
   private timers = new Set<NodeJS.Timeout>();
   constructor(private db: DB, private collector: Collector, private windows: number[], private maxBytes: number,
-    private onSnapshot?: (t: TokenRow, snap: ParamSnapshot) => void | Promise<void>) {}
+    private onSnapshot?: (t: TokenRow, snap: ParamSnapshot) => void | Promise<void>,
+    private late: { sec: number; scope: string[] } = { sec: 0, scope: [] }) {}
+
+  /** Az adott tokenre ütemezett ablakok: az alapablakok + a késői ablak, ha a token a késői hatókörben van. */
+  windowsFor(t: Pick<TokenRow, "chain" | "launchpad">): number[] {
+    const inLate = this.late.sec > 0 && this.late.scope.includes(`${t.chain}/${t.launchpad}`);
+    return inLate && !this.windows.includes(this.late.sec) ? [...this.windows, this.late.sec] : this.windows;
+  }
 
   schedule(t: TokenRow) {
-    for (const w of this.windows) {
+    for (const w of this.windowsFor(t)) {
       const delay = Math.max(0, t.discovered_at + w * 1000 - Date.now());
       const h = setTimeout(async () => {
         this.timers.delete(h);
         try {
-          const snap = await this.collector.collect(t, w);
-          this.collector.saveSnapshot(t, snap, this.maxBytes);
-          await this.onSnapshot?.(t, snap);
+          const row = tokenRow(this.db, t.id) ?? t; // friss sor (pl. közben pótolt készítő, graduáció)
+          const snap = await this.collector.collect(row, w);
+          this.collector.saveSnapshot(row, snap, this.maxBytes);
+          await this.onSnapshot?.(row, snap);
         } catch (e) { log.warn("Paramétergyűjtés hiba", { token: t.address, window: w, error: (e as Error).message.slice(0, 200) }); }
       }, delay);
       this.timers.add(h);

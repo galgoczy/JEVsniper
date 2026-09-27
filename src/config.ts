@@ -62,6 +62,9 @@ export const ConfigSchema = z.object({
     windows_sec: z.array(z.number().int().positive()).min(1),
     live_window_sec: z.number().int().positive(),
     jev_scope: z.array(z.string()).default([]),
+    // Késői „túlélő” ablak: csak ezekre a "lánc/launchpad" tokenekre, ennyi mp-cel az indulás után (0 = kikapcsolva)
+    late_window_sec: z.number().int().min(0).default(0),
+    late_scope: z.array(z.string()).default([]),
   }),
   jev: z.object({
     enabled: z.boolean().default(true),

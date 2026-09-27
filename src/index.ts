@@ -106,7 +106,7 @@ async function main() {
   const scheduler = new CollectorScheduler(db, collector, cfg.evaluation.windows_sec, cfg.db.max_snapshot_bytes, async (t, snap) => {
     const f = applyHardFilters(db, cfg, t, snap);
     await engine.onSnapshot(t, snap, f.pass);
-  });
+  }, { sec: cfg.evaluation.late_window_sec, scope: cfg.evaluation.late_scope });
 
   // 2. lépés: tokenfigyelés láncenként
   const watchers: ChainWatcher[] = [];

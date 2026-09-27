@@ -266,3 +266,12 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Rezsim Jev nélkül: marad „normal”, csak az ETH 24 órás esése kapcsol risk_off-ra.
 - A verify:step1 és verify:step6 kifejezetten a Jev-et teszteli, ezért ott a Jev bekapcsolva marad.
 - Visszaállítás: config.yaml → jev.enabled: true, majd újraindítás.
+
+## 2026-09-27 – Többnapos riport, döntési tábla, késői belépés teszt
+- Riport: `npm run report -- --since ÉÉÉÉ-HH-NN` (UTC 00:00-tól) vagy `-- --days N`; külön fájlba íródik (`<dátum>_ota-<dátum>.md`), a napi riport változatlan.
+- Döntési tábla a riport elején: a legjobb 10 (kar, ablak, terv) kombináció legalább 20 lezárt pozícióval, a 90% bootstrap CI alsó határa szerint.
+  Előre rögzített szabály: élesítés-jelölt (✅) csak legalább 100 pozíciónál és teljesen nulla fölötti CI-nél. ⏳ = pozitív CI, de kevés adat.
+  Feltételezés: sok kombinációt nézünk egyszerre, ezért egy-egy ✅ lehet véletlen is (többszörös összehasonlítás) – élesítés előtt egy további, független időszakon is meg kell ismétlődnie.
+- Késői ablak: `evaluation.late_window_sec: 1800`, `late_scope: ["base/uniswap"]` – ezekről a tokenekről 30 perc után még egy pillanatkép; minden kar ott is dönt (így a random_control@1800 és base_uni_all@1800 a túlélők alapvonala).
+  Új kar `late_survivor` (csak 1800 mp-nél): likviditás a poolban (nem removed/none), ár az induló fölött, csúcstól < 50% esés, készítő < 50%-ot adott el.
+- Költség: tokenenként egy plusz pillanatkép a Base/Uniswap tokenekre (~napi 1900), ingyenes RPC-n belül.

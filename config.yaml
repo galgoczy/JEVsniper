@@ -61,6 +61,10 @@ evaluation:
   # Jev-címkézés csak ezekre ("lánc/launchpad"); üres lista = minden token.
   # 2026-09-24: a PONS-tokenekből egy 2x sem jött, a címkék ott csak költséget jelentettek.
   jev_scope: ["base/uniswap"]
+  # Késői belépés teszt (2026-09-27): a csalások jellemzően az első 15–20 percben zuhannak be.
+  # 30 perc után még egy pillanatkép a Base/Uniswap tokenekről; a late_survivor árnyékkar csak itt dönt.
+  late_window_sec: 1800
+  late_scope: ["base/uniswap"]
 
 jev:
   # false = a bot egyáltalán nem hívja a Jev-et (címkézés, rezsim, tartás); csak on-chain szabályok döntenek.

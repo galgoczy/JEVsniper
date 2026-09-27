@@ -148,3 +148,27 @@ export function baseUniLpArm(chain: string, launchpad: string | null, s: ParamSn
   }
   return { enter: r.length === 0, reasons: r, sizeMultiplier: 1 };
 }
+
+/**
+ * late_survivor – késői belépés (2026-09-27): a Base/Uniswap csalások jellemzően 15–20 percen belül zuhannak be.
+ * Csak a késői ablakban (pl. 30 perc) dönt: a token túlélte a veszélyzónát, ha
+ *  - a likviditás még a poolban van (nem „removed”/„none”),
+ *  - az ár az induló ár fölött van, és a csúcsától kevesebb mint 50%-ot esett,
+ *  - a készítő nem adta el a kezdeti tokenjei felét vagy többet.
+ * Alapvonal ugyanebben az ablakban: base_uni_all és random_control (ugyanazokon a túlélő tokeneken).
+ */
+export function lateSurvivorArm(chain: string, launchpad: string | null, s: ParamSnapshot, windowSec: number, lateWindowSec: number): RuleResult {
+  const r: string[] = [];
+  if (lateWindowSec <= 0 || windowSec !== lateWindowSec) r.push(`window=${windowSec}`);
+  if (!(chain === "base" && launchpad === "uniswap")) r.push(`not_base_uni:${chain}/${launchpad}`);
+  const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const lp = s.contract.lp_owner;
+  if (lp === "removed" || lp === "none") r.push(`lp=${lp}`);
+  const chg = n(s.dynamics.price_change_pct_since_launch);
+  if (chg === null || chg <= 0) r.push(`price_chg=${chg === null ? "unknown" : chg.toFixed(0)}`);
+  const dd = n(s.dynamics.peak_drawdown_pct);
+  if (dd === null || dd >= 50) r.push(`drawdown=${dd === null ? "unknown" : dd.toFixed(0)}`);
+  const sold = n(s.creator.sold_pct_of_initial);
+  if (sold !== null && sold >= 50) r.push(`creator_sold=${sold.toFixed(0)}`);
+  return { enter: r.length === 0, reasons: r, sizeMultiplier: 1 };
+}

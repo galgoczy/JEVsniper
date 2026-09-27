@@ -4,7 +4,13 @@ import { openDb } from "../src/db/index.js";
 import { buildReport, writeReport, bootstrapCI, median } from "../src/report/index.js";
 const cfg = loadConfig();
 const db = openDb(cfg.db.path);
-const since = Date.now() - 86_400_000;
+// Időszak: alapból az utolsó 24 óra; `npm run report -- --since 2026-09-26` egy adott naptól (UTC 00:00) összesít,
+// `npm run report -- --days 3` az utolsó 3 napot.
+const arg = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
+const sinceArg = arg("--since"), daysArg = arg("--days");
+let since = Date.now() - 86_400_000, custom = false;
+if (sinceArg) { const t = Date.parse(`${sinceArg}T00:00:00Z`); if (Number.isNaN(t)) { console.log(`❌ hibás dátum: ${sinceArg} (formátum: ÉÉÉÉ-HH-NN)`); process.exit(1); } since = t; custom = true; }
+else if (daysArg) { const d = Number(daysArg); if (!(d > 0)) { console.log(`❌ hibás napszám: ${daysArg}`); process.exit(1); } since = Date.now() - d * 86_400_000; custom = true; }
 const { markdown } = buildReport(db, cfg, since);
 const ok = (m: string) => console.log("✅", m); const bad = (m: string) => { console.log("❌", m); process.exitCode = 1; };
 // kereszt-ellenőrzés
@@ -19,7 +25,7 @@ const sum = [...tokLine.matchAll(/=(\d+)/g)].reduce((s, m) => s + Number(m[1]), 
 sum === newN ? ok(`új tokenek összege egyezik (${newN})`) : bad(`új tokenek: riport ${sum} vs SQL ${newN}`);
 const ci = bootstrapCI([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]); ci && ci[0] < 5.5 && ci[1] > 5.5 ? ok(`bootstrap CI értelmes: ${ci.map((x) => x.toFixed(2)).join("…")} (átlag 5,5)`) : bad("bootstrap CI");
 median([3, 1, 2]) === 2 ? ok("medián ok") : bad("medián");
-const r = writeReport(db, cfg);
+const r = writeReport(db, cfg, custom ? since : undefined);
 ok(`riport kiírva: ${r.file}`);
 console.log("\n--- Telegram-összefoglaló ---\n" + r.telegram + "\n\n--- Markdown (első 60 sor) ---");
 console.log(markdown.split("\n").slice(0, 60).join("\n"));

@@ -6,6 +6,8 @@ import type { Config } from "../config.js";
 
 type Row = Record<string, unknown>;
 type ParamsLike = { holders?: Record<string, unknown>; creator?: Record<string, unknown>; buyers?: Record<string, unknown>; dynamics?: Record<string, unknown>; contract?: Record<string, unknown>; meta?: Record<string, unknown> };
+/** Élesítés-jelöltséghez szükséges minimális lezárt pozíciószám (előre rögzített döntési szabály). */
+export const DECISION_MIN_N = 100;
 const fmtEdge = (v: number) => (Math.abs(v) >= 1e9 ? "∞" : v <= -1e9 ? "−∞" : String(v));
 const f = (v: unknown, d = 3) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(d) : "-");
 const pct = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(0)}%` : "-");
@@ -27,7 +29,7 @@ export const median = (xs: number[]) => { if (!xs.length) return null; const s =
  */
 export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000): { markdown: string; telegram: string } {
   const now = nowMs();
-  const L: string[] = [`# Jev Sniper napi riport – ${new Date(now).toISOString().slice(0, 16)} UTC`, `Időszak: utolsó ${Math.round((now - sinceMs) / 3_600_000)} óra. Mód: ${cfg.mode}.`, ""];
+  const L: string[] = [`# Jev Sniper napi riport – ${new Date(now).toISOString().slice(0, 16)} UTC`, `Időszak: ${new Date(sinceMs).toISOString().slice(0, 16)} UTC óta (${Math.round((now - sinceMs) / 3_600_000)} óra). Mód: ${cfg.mode}.`, ""];
 
   // --- tölcsér
   const newTok = db.prepare("SELECT chain, launchpad, COUNT(*) n FROM tokens WHERE discovered_at > ? GROUP BY chain, launchpad").all(sinceMs) as Row[];
@@ -41,6 +43,7 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
     `- Kiesett a kemény szűrőn: ${filtered.map((r) => `${r.reason}=${r.n}`).join(", ") || "0"}`,
     `- Jev-vel értékelt: ${evaluated}; szűrőn átment (döntés született): ${passed}`,
     `- Élő szabály belépne (60 mp): ${liveRuleWouldEnter}; élő belépés: ${liveEntries}${blocked.length ? `; blokkolva: ${blocked.map((r) => `${r.reason}=${r.n}`).join(", ")}` : ""}`, "");
+  const decisionAt = L.length; // ide kerül a döntési tábla (az árnyék-adatokból számolva, lent)
 
   // --- élő
   const live = db.prepare("SELECT * FROM positions WHERE arm='live' AND closed_at > ?").all(sinceMs) as Array<{ net_pnl_usd: number; gas_usd: number; jev_cost_usd: number; size_usd: number; close_reason: string; native_received: number; size_native: number }>;
@@ -79,6 +82,19 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
     const sorted = [...nets].sort((a, b) => b - a), noTop3 = sorted.slice(3).reduce((s, x) => s + x, 0);
     L.push(`| ${arm} | ${w} | ${plan} | ${ps.length} | ${pct(nets.filter((x) => x > 0).length, nets.length)} | ${f(median(mults), 2)} | ${f(mults.reduce((s, x) => s + x, 0) / mults.length, 2)} | ${f(nets.reduce((s, x) => s + x, 0), 2)} | ${f(mean, 3)} | ${ci ? `${f(ci[0], 2)}…${f(ci[1], 2)}` : "-"} | ${f(noTop3, 2)} | ${rcMean !== null ? f(mean - rcMean, 3) : "-"} |`);
   }
+  // Döntési tábla: a legjobb (kar, ablak, terv) kombinációk a 90% CI alsó határa szerint.
+  // Élesítés-jelölt (✅) csak ha n ≥ DECISION_MIN_N és az egész CI nulla fölött van.
+  const cand = [...groups.entries()].map(([k, ps]) => {
+    const nets = ps.map((p) => p.net_pnl_usd); const ci = bootstrapCI(nets);
+    return { k, n: nets.length, mean: nets.reduce((a, b) => a + b, 0) / nets.length, ci };
+  }).filter((c) => c.n >= 20 && c.ci && !c.k.startsWith("random_control|")).sort((a, b) => b.ci![0] - a.ci![0]).slice(0, 10);
+  const decision = ["## Döntési tábla (legjobb 10 kombináció, legalább 20 lezárt pozíció; rendezés: 90% CI alsó határa)",
+    `Élesítés-jelölt (✅): legalább ${DECISION_MIN_N} pozíció ÉS a 90% CI teljesen nulla fölött. Véletlen kontroll (60 mp, élő terv): ${f(rcMean, 3)} USD, n=${rcLive.length}`, "",
+    "| | kar | ablak | terv | n | átlag nettó | 90% CI |", "|---|---|---|---|---|---|---|",
+    ...cand.map((c) => { const [arm, w, plan] = c.k.split("|"); const good = c.n >= DECISION_MIN_N && c.ci![0] > 0;
+      return `| ${good ? "✅" : c.ci![0] > 0 ? "⏳" : ""} | ${arm} | ${w} | ${plan} | ${c.n} | ${f(c.mean, 3)} | ${f(c.ci![0], 2)}…${f(c.ci![1], 2)} |`; }),
+    ...(cand.length ? [] : ["| | még nincs elég adat | | | | | |"]), "⏳ = a CI nulla fölött, de még kevés a pozíció.", ""];
+  L.splice(decisionAt, 0, ...decision);
   // moon bag statisztika: hány pozíció ért 5x/10x/20x-et (csúcs alapján), trailing kilépések
   const peaks = shadow.filter((p) => p.exit_plan === "live").map((p) => p.peak_price_native / p.entry_price_native);
   const reached = (m: number) => peaks.filter((x) => x >= m).length;
@@ -172,16 +188,18 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
 
   const telegram = [`📊 Napi riport (${cfg.mode})`, `Tölcsér: ${newTok.reduce((s, r) => s + Number(r.n), 0)} új → ${passed} átment → élő szabály ${liveRuleWouldEnter} → élő belépés ${liveEntries}`,
     `Élő: ${live.length} lezárt, nettó ${f(liveNet, 2)} USD, nyitott ${openLive.n}`,
-    `Árnyék: random_control ${f(rcMean, 3)} (n=${rcLive.length}); ` + ["base_uni_all", "base_uni_hold", "base_uni_lp_burned", "base_uni_clean", "rule_v2", "rule_v2_nojev", "rule_score"].map((a) => { const g = groups.get(`${a}|${cfg.evaluation.live_window_sec}|live`); return `${a} ${g ? f(g.reduce((s, p) => s + p.net_pnl_usd, 0) / g.length, 3) + ` (n=${g.length})` : "-"}`; }).join(", "),
+    `Árnyék: random_control ${f(rcMean, 3)} (n=${rcLive.length}); ` + ([["base_uni_all", cfg.evaluation.live_window_sec], ["base_uni_clean", cfg.evaluation.live_window_sec], ["rule_v2", cfg.evaluation.live_window_sec], ["rule_score", cfg.evaluation.live_window_sec],
+      ...(cfg.evaluation.late_window_sec > 0 ? [["late_survivor", cfg.evaluation.late_window_sec], ["base_uni_all", cfg.evaluation.late_window_sec], ["random_control", cfg.evaluation.late_window_sec]] : [])] as Array<[string, number]>).map(([a, w]) => { const g = groups.get(`${a}|${w}|live`); return `${a}${w !== cfg.evaluation.live_window_sec ? `@${w}s` : ""} ${g ? f(g.reduce((s, p) => s + p.net_pnl_usd, 0) / g.length, 3) + ` (n=${g.length})` : "-"}`; }).join(", "),
     `Kimenetek: 2x ${oc.tp1 ?? 0} / −40% ${oc.stop ?? 0} a ${oc.n}-ból; Jev ${jevErr.n} hívás, ${f(jevStats.reduce((s, r) => s + Number(r.c ?? 0), 0), 4)} USD`,
     cs ? `Compound: méret ${f(cs.position_usd, 2)} USD, kassza ${f(cs.growth_pool_usd, 2)}, tartalék ${f(cs.reserve_usd, 2)}` : ""].filter(Boolean).join("\n");
   return { markdown: L.join("\n"), telegram };
 }
 
-export function writeReport(db: DB, cfg: Config): { file: string; telegram: string } {
-  const { markdown, telegram } = buildReport(db, cfg);
+export function writeReport(db: DB, cfg: Config, sinceMs?: number): { file: string; telegram: string } {
+  const { markdown, telegram } = buildReport(db, cfg, sinceMs);
   fs.mkdirSync(cfg.report.output_dir, { recursive: true });
-  const file = path.join(cfg.report.output_dir, `${new Date().toISOString().slice(0, 10)}.md`);
+  const suffix = sinceMs !== undefined ? `_ota-${new Date(sinceMs).toISOString().slice(0, 10)}` : "";
+  const file = path.join(cfg.report.output_dir, `${new Date().toISOString().slice(0, 10)}${suffix}.md`);
   fs.writeFileSync(file, markdown);
   return { file, telegram };
 }
