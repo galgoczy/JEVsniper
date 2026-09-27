@@ -143,6 +143,16 @@ export const ConfigSchema = z.object({
     min_buy_native: z.number().min(0).default(0.005),
     score_refresh_min: z.number().positive().default(10),
   }).default({ enabled: true, universe_hours: 6, poll_interval_ms: 20_000, min_closed_tokens: 5, min_win_rate: 0.5, min_buy_native: 0.005, score_refresh_min: 10 }),
+  // Listázás-figyelő (Coinbase: Base tokenek; Robinhood: Robinhood Chain tokenek) – árnyék-belépés + ár-mintavétel
+  listing: z.object({
+    enabled: z.boolean().default(true),
+    poll_interval_sec: z.number().int().positive().default(60),
+    coinbase: z.boolean().default(true),
+    robinhood: z.boolean().default(true),
+    robinhood_chain_match: z.string().default("robinhood"),
+    size_usd: z.number().positive().default(1),
+    track_days: z.number().positive().default(7),
+  }).default({ enabled: true, poll_interval_sec: 60, coinbase: true, robinhood: true, robinhood_chain_match: "robinhood", size_usd: 1, track_days: 7 }),
   // Futás közbeni figyelő: állapotváltás-riasztások (csak jelez, a szabályokon nem változtat)
   alerts: z.object({
     enabled: z.boolean().default(true),

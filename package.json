@@ -20,7 +20,8 @@
     "report": "tsx scripts/verify-step9.ts",
     "verify:lp": "tsx scripts/verify-lp.ts",
     "explore": "tsx scripts/explore.ts",
-    "allas": "tsx scripts/allas.ts"
+    "allas": "tsx scripts/allas.ts",
+    "verify:listing": "tsx scripts/verify-listing.ts"
   },
   "repository": {
     "type": "git",

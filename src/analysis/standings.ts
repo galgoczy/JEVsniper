@@ -1,12 +1,14 @@
 import type { DB } from "../db/index.js";
 import { armStats, nextState, type ArmStat } from "./watch.js";
+import type { Config } from "../config.js";
+import { listingSummary } from "../listing/watcher.js";
 
 /**
  * Egyszerűsített állás menet közben (Telegram /allas, npm run allas): stratégiánként egy sor.
  * Csak tájékoztató – a lezárt pozíciókból számol, és a „legjobb kombináció” kiválasztása önmagában
  * optimista; a döntés alapja továbbra is a riport döntési táblája.
  */
-export function standings(db: DB, sinceMs: number, liveWindow: number, now = Date.now()): string {
+export function standings(db: DB, sinceMs: number, liveWindow: number, now = Date.now(), cfg?: Config): string {
   const stats = armStats(db, sinceMs);
   const by = new Map<string, ArmStat[]>();
   for (const s of stats) { const arm = s.key.split("|")[0]!; (by.get(arm) ?? by.set(arm, []).get(arm)!).push(s); }
@@ -29,5 +31,6 @@ export function standings(db: DB, sinceMs: number, liveWindow: number, now = Dat
   return [`📋 Állás ${new Date(sinceMs).toISOString().slice(0, 10)} óta (${hours} óra), átlag USD / 1 USD pozíció, lezártak`,
     `Véletlen kontroll (${liveWindow}s, élő terv): ${rc ? `${f(rc.mean)} (n=${rc.n})` : "-"}`,
     ...rows.slice(0, 14).map((r) => r.line), ...(rows.length > 14 ? [`…és még ${rows.length - 14} stratégia`] : []),
+    ...(cfg ? (() => { const l = listingSummary(db, cfg, sinceMs); return l.events ? [`• Listázások: ${l.events} esemény; ${l.plans.map((p) => `${p.name} ${f(p.mean)} (lezárt ${p.closed})`).join(", ")}`] : ["• Listázások: még nem volt új esemény"]; })() : []),
     "⏳ = 90% CI > 0 (n ≥ 20), ✅ = élesítés-jelölt (n ≥ 100). A „legjobb” kombináció optimista – döntéshez: npm run report."].join("\n");
 }

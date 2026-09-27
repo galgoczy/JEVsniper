@@ -159,6 +159,19 @@ copy:
   min_buy_native: 0.005
   score_refresh_min: 10
 
+# Listázás-figyelő: percenként lekéri a Coinbase (hivatalos, nyilvános API) és a Robinhood (NEM hivatalos,
+# nyilvános végpont) kereskedhető listáját. Új Base-tokenes Coinbase-listázás / új Robinhood-appos token, amelynek
+# Robinhood Chain címe van → Telegram + árnyék-belépés az észleléskori áron, ár-mintavétel 7 napig, és 5 kiszállási
+# terv szimulációja (gyors 1,3x; lépcsős 1,5x/3x; nagy 2x/5x; tartás 1 óra / 24 óra). Valódi vétel nincs.
+listing:
+  enabled: true
+  poll_interval_sec: 60
+  coinbase: true
+  robinhood: true
+  robinhood_chain_match: "robinhood"   # DexScreener chainId-részlet a Robinhood Chainhez (nem ellenőrzött azonosító)
+  size_usd: 1
+  track_days: 7
+
 # Futás közbeni figyelő (Telegram): szól, ha egy árnyékstratégia ígéretes lesz (90% CI > 0, n ≥ 20),
 # élesítés-jelölt lesz (n ≥ 100), vagy kiesik; és ha egy token 10x fölé megy. A szabályokon nem változtat.
 alerts:

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { listingSummary } from "../listing/watcher.js";
 import path from "node:path";
 import type { DB } from "../db/index.js";
 import { nowMs } from "../db/index.js";
@@ -174,6 +175,12 @@ export function buildReport(db: DB, cfg: Config, sinceMs = nowMs() - 86_400_000)
     if (by.size) pinfo.push(`- ${name}: ${[...by.entries()].sort((a, b) => b[1].n - a[1].n).map(([k, b]) => `${k}=${pct(b.tp1, b.n)} (${b.n})`).join(", ")}`);
   }
   L.push("## Paraméter-informativitás („előbb 2x, mint −40%” arány sávonként, 60 mp pillanatkép és 60 mp ár)", ...(pinfo.length ? pinfo : ["- még nincs adat"]), "");
+
+  // --- listázások (Coinbase / Robinhood): esemény-szintű szimuláció a mintavételezett áron
+  const ls = listingSummary(db, cfg, sinceMs);
+  L.push("## Listázások (árnyék, 1 USD, költségekkel; nyitottnál az utolsó áron)",
+    ls.events ? `Események: ${ls.events}. Terv szerinti átlag: ${ls.plans.map((p) => `${p.name} ${f(p.mean, 3)} (lezárt ${p.closed}/${p.n})`).join(", ")}` : "- nem volt új listázás az időszakban",
+    ...ls.rows.slice(-15).map((r) => `- ${new Date(r.detected_at).toISOString().slice(5, 16)} ${r.source}/${r.kind} ${r.symbol}: ${Object.entries(r.values).map(([k, v]) => `${k} ${f(v, 2)}`).join(", ")}`), "");
 
   // --- egyéb: kimenet-követés, listák, rezsim-idővonal, vesztes sorozat, Jev-hibaarány
   const oc = db.prepare("SELECT COUNT(*) n, SUM(first_hit='tp1_first') tp1, SUM(first_hit='stop_first') stop, SUM(done_at IS NOT NULL) done, SUM(max_multiple>=2) m2, SUM(max_multiple>=5) m5, SUM(max_multiple>=10) m10 FROM token_outcomes WHERE ref_at > ? AND window_sec = ?").get(sinceMs, cfg.evaluation.live_window_sec) as Row;

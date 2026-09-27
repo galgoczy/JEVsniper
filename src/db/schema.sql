@@ -238,3 +238,32 @@ CREATE TABLE IF NOT EXISTS wallet_trades (
 );
 CREATE INDEX IF NOT EXISTS idx_wallet_trades_wallet ON wallet_trades(chain, wallet);
 CREATE INDEX IF NOT EXISTS idx_wallet_trades_token ON wallet_trades(token_id);
+
+-- Listázás-figyelő: már látott tételek (első futáskor alapállapot, esemény nélkül), események, ár-minták
+CREATE TABLE IF NOT EXISTS listing_seen (
+  source TEXT NOT NULL,               -- coinbase_currency | coinbase_product | robinhood_pair
+  key TEXT NOT NULL,
+  first_seen INTEGER NOT NULL,
+  PRIMARY KEY (source, key)
+);
+CREATE TABLE IF NOT EXISTS listing_events (
+  id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL,               -- coinbase | robinhood
+  kind TEXT NOT NULL,                 -- currency_added | trading_live | rh_tradable
+  symbol TEXT NOT NULL,
+  chain TEXT,                         -- base | robinhood (ha feloldható)
+  address TEXT,
+  detected_at INTEGER NOT NULL,
+  entry_price_usd REAL,
+  entry_liq_usd REAL,
+  dex_id TEXT,
+  note TEXT,
+  UNIQUE(source, kind, symbol)
+);
+CREATE TABLE IF NOT EXISTS listing_prices (
+  event_id INTEGER NOT NULL REFERENCES listing_events(id),
+  at INTEGER NOT NULL,
+  price_usd REAL NOT NULL,
+  liq_usd REAL,
+  PRIMARY KEY (event_id, at)
+);

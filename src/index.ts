@@ -22,6 +22,7 @@ import { writeReport } from "./report/index.js";
 import { checkArms } from "./analysis/watch.js";
 import { standings } from "./analysis/standings.js";
 import { CopyTracker } from "./copy/tracker.js";
+import { ListingWatcher } from "./listing/watcher.js";
 import { currentPositionUsd } from "./decision/risk.js";
 import { getAddress } from "viem";
 
@@ -102,6 +103,9 @@ async function main() {
   const copyTrackers = (["base", "robinhood"] as ChainKey[]).filter((k) => cfg.chains[k].enabled).map((k) => new CopyTracker({ db, cfg, chain: k, client: clients[k],
     ethUsd: () => ethPrice.get(), openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, currentPositionUsd(db, cfg), eth, liq) }));
   copyTrackers.forEach((c) => c.start());
+  // Listázás-figyelő (Coinbase / Robinhood)
+  const listing = new ListingWatcher({ db, cfg, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
+  listing.start();
   // 9. lépés: napi riport (config report.daily_time_utc) + /report parancs
   const [rh, rm] = cfg.report.daily_time_utc.split(":").map(Number) as [number, number];
   const reportTimer = setInterval(() => {
@@ -173,7 +177,7 @@ async function main() {
         return "🚨 PANIC eredmény:\n" + (await panicSellAll());
       }
       case "report": { try { const r = writeReport(db, cfg); return r.telegram + `\nfájl: ${r.file}`; } catch (e) { return `riport hiba: ${(e as Error).message.slice(0, 120)}`; } }
-      case "allas": { try { return standings(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg.evaluation.live_window_sec); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "allas": { try { return standings(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg.evaluation.live_window_sec, Date.now(), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
       case "help": return "/status /allas /report /stop /resume /panic";
     }
   });
@@ -190,6 +194,7 @@ async function main() {
     clearInterval(reportTimer);
     clearInterval(alertTimer);
     copyTrackers.forEach((c) => c.stop());
+    listing.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);
