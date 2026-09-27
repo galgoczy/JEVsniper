@@ -221,3 +221,20 @@ CREATE TABLE IF NOT EXISTS arm_states (
   n INTEGER, mean REAL, ci_lo REAL, ci_hi REAL,
   updated_at INTEGER NOT NULL
 );
+
+-- Copy trading: a követett tokenek összes vétele/eladása tárcánként (PONS curve-események, v4 Swap + Transfer párosítva)
+CREATE TABLE IF NOT EXISTS wallet_trades (
+  id INTEGER PRIMARY KEY,
+  chain TEXT NOT NULL,
+  token_id INTEGER NOT NULL REFERENCES tokens(id),
+  wallet TEXT NOT NULL,
+  is_buy INTEGER NOT NULL,
+  native REAL NOT NULL,               -- ETH (a tárca szemszögéből: vételnél kiadott, eladásnál kapott)
+  tokens REAL NOT NULL,
+  block INTEGER NOT NULL,
+  at INTEGER NOT NULL,                -- észlelés ideje (ms)
+  tx_hash TEXT NOT NULL,
+  UNIQUE(tx_hash, token_id, wallet, is_buy)
+);
+CREATE INDEX IF NOT EXISTS idx_wallet_trades_wallet ON wallet_trades(chain, wallet);
+CREATE INDEX IF NOT EXISTS idx_wallet_trades_token ON wallet_trades(token_id);

@@ -133,10 +133,21 @@ export const ConfigSchema = z.object({
   }),
   telegram: z.object({ enabled: z.boolean(), poll_interval_ms: z.number().int().positive() }),
   report: z.object({ daily_time_utc: z.string(), output_dir: z.string() }),
+  // Copy trading árnyékteszt (tárcakövetés a friss tokenek körében; csak árnyék-belépés)
+  copy: z.object({
+    enabled: z.boolean().default(true),
+    universe_hours: z.number().positive().default(6),
+    poll_interval_ms: z.number().int().positive().default(20_000),
+    min_closed_tokens: z.number().int().positive().default(5),
+    min_win_rate: z.number().min(0).max(1).default(0.5),
+    min_buy_native: z.number().min(0).default(0.005),
+    score_refresh_min: z.number().positive().default(10),
+  }).default({ enabled: true, universe_hours: 6, poll_interval_ms: 20_000, min_closed_tokens: 5, min_win_rate: 0.5, min_buy_native: 0.005, score_refresh_min: 10 }),
   // Futás közbeni figyelő: állapotváltás-riasztások (csak jelez, a szabályokon nem változtat)
   alerts: z.object({
     enabled: z.boolean().default(true),
     since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),     // ettől a naptól (UTC) számol
+    features_since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), // szabálykereső: ettől megbízhatók a pillanatkép-jellemzők
     interval_min: z.number().int().positive().default(60),
     big_winner_multiple: z.number().positive().default(10), // ennyiszeres csúcsnál külön értesítés (60 mp-es ár)
   }).default({ enabled: true, since: "2026-09-27", interval_min: 60, big_winner_multiple: 10 }),

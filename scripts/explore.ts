@@ -11,7 +11,7 @@ import { explore, loadSamples, CONDITIONS } from "../src/analysis/explore.js";
 const cfg = loadConfig();
 const db = openDb(cfg.db.path);
 const arg = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
-const sinceStr = arg("--since") ?? cfg.alerts.since;
+const sinceStr = arg("--since") ?? cfg.alerts.features_since ?? cfg.alerts.since;
 const since = Date.parse(`${sinceStr}T00:00:00Z`);
 if (Number.isNaN(since)) { console.log(`❌ hibás dátum: ${sinceStr} (formátum: ÉÉÉÉ-HH-NN)`); process.exit(1); }
 const windowSec = Number(arg("--window") ?? cfg.evaluation.live_window_sec);

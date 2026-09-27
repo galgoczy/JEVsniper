@@ -21,6 +21,8 @@ import { CompoundManager } from "./compound/index.js";
 import { writeReport } from "./report/index.js";
 import { checkArms } from "./analysis/watch.js";
 import { standings } from "./analysis/standings.js";
+import { CopyTracker } from "./copy/tracker.js";
+import { currentPositionUsd } from "./decision/risk.js";
 import { getAddress } from "viem";
 
 /**
@@ -96,6 +98,10 @@ async function main() {
   const monitor = new PositionMonitor({ db, cfg, jev, executors, feeds, ethUsd: () => ethPrice.get(), regime: () => regime.regime,
     notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)), onLiveClosed: (p) => compoundMgr.onLiveClosed(p.net_pnl_usd) });
   monitor.start(15_000);
+  // Copy trading árnyékteszt: tárcakövetés láncenként
+  const copyTrackers = (["base", "robinhood"] as ChainKey[]).filter((k) => cfg.chains[k].enabled).map((k) => new CopyTracker({ db, cfg, chain: k, client: clients[k],
+    ethUsd: () => ethPrice.get(), openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, currentPositionUsd(db, cfg), eth, liq) }));
+  copyTrackers.forEach((c) => c.start());
   // 9. lépés: napi riport (config report.daily_time_utc) + /report parancs
   const [rh, rm] = cfg.report.daily_time_utc.split(":").map(Number) as [number, number];
   const reportTimer = setInterval(() => {
@@ -183,6 +189,7 @@ async function main() {
     clearInterval(compoundTimer);
     clearInterval(reportTimer);
     clearInterval(alertTimer);
+    copyTrackers.forEach((c) => c.stop());
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);

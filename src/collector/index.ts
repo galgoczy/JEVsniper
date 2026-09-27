@@ -6,7 +6,7 @@ import { ADDRESSES, ZERO } from "../chains/addresses.js";
 import { erc20Abi } from "../abis/uniswap.js";
 import { ponsCurveAbi } from "../abis/pons.js";
 import { uniswapV2PairAbi, uniswapV3PoolAbi, uniswapV4SwapAbi, transferEventAbi, ownableAbi, chainlinkAggregatorAbi } from "../abis/pools.js";
-import { holderStats, swapStats, priceFromSqrtX96, v4NativeReserve, findDangerousSelectors, type SwapRec, type TransferRec } from "./stats.js";
+import { holderStats, swapStats, priceFromSqrtX96, v4NativeReserve, v4IsBuy, v4TraderFromTransfers, findDangerousSelectors, type SwapRec, type TransferRec } from "./stats.js";
 import { UniswapV4Route, computePoolId, type PoolKey } from "../exec/routes.js";
 import type { ParamSnapshot, U } from "./types.js";
 import { log } from "../logger.js";
@@ -311,7 +311,7 @@ export class Collector {
 
   private async transfers(c: PublicClient, token: Address, from: bigint, to: bigint, _dec: number): Promise<TransferRec[]> {
     const logs = await getLogsChunked(from, to, (f, t) => c.getLogs({ address: token, event: transferEventAbi[0], fromBlock: f, toBlock: t }));
-    return logs.map((l) => ({ from: l.args.from!, to: l.args.to!, value: l.args.value!, block: l.blockNumber! }));
+    return logs.map((l) => ({ from: l.args.from!, to: l.args.to!, value: l.args.value!, block: l.blockNumber!, tx: l.transactionHash ?? undefined }));
   }
 
   private async blockTs(c: PublicClient, blocks: Set<bigint>): Promise<Map<bigint, number>> {
@@ -383,12 +383,15 @@ export class Collector {
       const pm = A.uniswapV4PoolManager;
       const logs = to < from ? [] : await getLogsChunked(from, to, (f, t) => c.getLogs({ address: pm, event: uniswapV4SwapAbi[0], args: { id: poolId }, fromBlock: f, toBlock: t }));
       const ts = await this.blockTs(c, new Set(logs.map((l) => l.blockNumber!)));
+      const traders = v4TraderFromTransfers(cache.transfers, pm);
       for (const l of logs) {
         const a0 = l.args.amount0!, a1 = l.args.amount1!;
         const tokenAmt = tokenIsC0 ? a0 : a1, quoteAmt = tokenIsC0 ? a1 : a0;
-        const isBuy = tokenAmt < 0n; // a pool tokent ad ki (negatív a pool szemszögéből = kifelé)
+        const isBuy = v4IsBuy(tokenAmt); // a kereskedő szemszöge: pozitív token = kapta = vétel
         const price = priceFromSqrtX96(l.args.sqrtPriceX96!, tokenIsC0, dec);
-        out.swaps.push({ buyer: l.args.sender!, isBuy, native: Math.abs(num(quoteAmt)), tokens: Math.abs(num(tokenAmt, dec)), block: l.blockNumber!, ts: ts.get(l.blockNumber!) ?? 0, priceNative: price });
+        const tr = l.transactionHash ? traders.get(l.transactionHash) : undefined;
+        const trader = (isBuy ? tr?.buyer : tr?.seller) ?? l.args.sender!;
+        out.swaps.push({ buyer: trader, isBuy, native: Math.abs(num(quoteAmt)), tokens: Math.abs(num(tokenAmt, dec)), block: l.blockNumber!, ts: ts.get(l.blockNumber!) ?? 0, priceNative: price });
       }
       // Likviditás ugyanazzal a módszerrel, mint az árfeed (utolsó Swap: L + sqrtP) – így a „likviditás −30%” vészjelzés összemérhető
       const lastLog = logs.at(-1);

@@ -98,17 +98,27 @@ export class DecisionEngine {
   }
 
   private openShadow(t: TokenRow, arm: string, w: number, price: number, sizeUsd: number, snap: ParamSnapshot) {
-    // szimulált vétel a költségmodellel: díj + csúszás + MEV levonva a kapott tokenből; gas a pozícióra
+    this.openShadowAt(t, arm, w, price, sizeUsd, num(snap.meta_snapshot.eth_usd) ?? 0, num(snap.contract.liquidity_native), creatorBalanceAtEntry(snap));
+  }
+
+  /**
+   * Árnyékpozíció nyitása tetszőleges jelzésre (pillanatkép-ablak, copy trading, listázás): szimulált vétel a
+   * költségmodellel – díj + csúszás (likviditásból) + MEV levonva a kapott tokenből; gas a pozícióra; mind a 7 kilépési tervvel.
+   * windowSec: a pillanatkép-ablak, vagy 0 az eseményvezérelt karoknál. Visszaadja, hány új pozíció-sor jött létre.
+   */
+  openShadowAt(t: Pick<TokenRow, "id" | "chain" | "launchpad" | "graduated_at">, arm: string, windowSec: number, price: number, sizeUsd: number,
+    ethUsd: number, liquidityNative: number | null, creatorBal: number | null = null): number {
     const { cfg } = this.d;
-    const ethUsd = num(snap.meta_snapshot.eth_usd) ?? 0;
-    const sizeNative = ethUsd > 0 ? sizeUsd / ethUsd : 0;
+    if (!(price > 0) || !(ethUsd > 0)) return 0;
+    const sizeNative = sizeUsd / ethUsd;
     const feePct = t.launchpad === "pons" && !t.graduated_at ? 2 : 1;
-    const c = shadowCost(t.chain, "buy", sizeNative, { feePct, liquidityNative: num(snap.contract.liquidity_native) }, cfg.cost_model);
-    const tokens = price > 0 ? c.netNative / price : 0;
-    const creatorBal = creatorBalanceAtEntry(snap);
+    const c = shadowCost(t.chain, "buy", sizeNative, { feePct, liquidityNative }, cfg.cost_model);
+    const tokens = c.netNative / price;
     const ins = this.d.db.prepare(`INSERT OR IGNORE INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, peak_price_native, gas_usd, creator_balance_at_entry, liquidity_at_entry, next_check_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,'pre_tp1',?,?,?,?,?)`);
-    for (const plan of SHADOW_EXIT_PLANS) ins.run(t.id, t.chain, arm, plan, w, nowMs(), price, sizeUsd, sizeNative, tokens, tokens, price, c.gasUsd, creatorBal, num(snap.contract.liquidity_native), nowMs());
+    let n = 0;
+    for (const plan of SHADOW_EXIT_PLANS) n += ins.run(t.id, t.chain, arm, plan, windowSec, nowMs(), price, sizeUsd, sizeNative, tokens, tokens, price, c.gasUsd, creatorBal, liquidityNative, nowMs()).changes;
+    return n;
   }
 
   private async enterLive(t: TokenRow, snap: ParamSnapshot, labels: Labels, sizeUsd: number, w: number) {

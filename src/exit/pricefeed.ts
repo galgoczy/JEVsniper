@@ -81,7 +81,7 @@ export class PriceFeed {
           const tokenAmt = tokenIsC0 ? l.args.amount0! : l.args.amount1!;
           const cur = this.state.get(t.tokenId);
           const liq = v4NativeReserve(l.args.liquidity!, l.args.sqrtPriceX96!, !tokenIsC0);
-          bump(t.tokenId, { price, at: now, block: l.blockNumber!, ...(liq !== null ? { liquidityNative: liq } : {}), swapsSinceLast: (cur?.swapsSinceLast ?? 0) + 1, sellsSinceLast: (cur?.sellsSinceLast ?? 0) + (tokenAmt > 0n ? 1 : 0) });
+          bump(t.tokenId, { price, at: now, block: l.blockNumber!, ...(liq !== null ? { liquidityNative: liq } : {}), swapsSinceLast: (cur?.swapsSinceLast ?? 0) + 1, sellsSinceLast: (cur?.sellsSinceLast ?? 0) + (tokenAmt < 0n ? 1 : 0) }); // v4: negatív token = a kereskedő adta = eladás
         }
       }
     }

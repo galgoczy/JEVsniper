@@ -4,7 +4,7 @@
  */
 import type { U } from "./types.js";
 
-export interface TransferRec { from: string; to: string; value: bigint; block: bigint }
+export interface TransferRec { from: string; to: string; value: bigint; block: bigint; tx?: string }
 export interface SwapRec { buyer: string; isBuy: boolean; native: number; tokens: number; block: bigint; ts: number; priceNative: number | null }
 
 const lc = (a: string) => a.toLowerCase();
@@ -117,6 +117,28 @@ export function v4NativeReserve(liquidity: bigint, sqrtPriceX96: bigint, nativeI
   const sqrtP = Number(sqrtPriceX96) / 2 ** 96;
   const raw = nativeIsCurrency0 ? Number(liquidity) / sqrtP : Number(liquidity) * sqrtP;
   return Number.isFinite(raw) ? raw / 1e18 : null;
+}
+
+/**
+ * Uniswap v4 Swap esemény iránya: az amount0/amount1 a KERESKEDŐ szemszögéből értendő (v4-core: a swapDelta a
+ * hívónak könyvelt delta; negatív = a kereskedő fizette, pozitív = kapta). Token-vétel ⇔ a token-oldali mennyiség > 0.
+ */
+export const v4IsBuy = (tokenAmt: bigint): boolean => tokenAmt > 0n;
+
+/**
+ * v4-nél a Swap `sender`-e a router, nem a kereskedő. A valódi tárcát ugyanabban a tx-ben a token Transfer adja:
+ * vételnél PoolManager → tárca, eladásnál tárca → PoolManager.
+ */
+export function v4TraderFromTransfers(transfers: TransferRec[], poolManager: string): Map<string, { buyer?: string; seller?: string }> {
+  const pm = lc(poolManager), m = new Map<string, { buyer?: string; seller?: string }>();
+  for (const t of transfers) {
+    if (!t.tx) continue;
+    const e = m.get(t.tx) ?? {};
+    if (lc(t.from) === pm && lc(t.to) !== pm) e.buyer = t.to;
+    else if (lc(t.to) === pm && lc(t.from) !== pm) e.seller = t.from;
+    m.set(t.tx, e);
+  }
+  return m;
 }
 
 /** 4 bájtos szelektorok keresése a bytecode-ban (PUSH4 = 0x63 utáni 4 bájt). Közelítés. */

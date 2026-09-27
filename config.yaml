@@ -146,11 +146,25 @@ report:
   daily_time_utc: "06:00"
   output_dir: reports
 
+# Copy trading árnyékteszt: a friss tokenek (utolsó 6 óra, szűrőn átment) összes vételét/eladását tárcánként menti,
+# 10 percenként pontozza a tárcákat (legalább 5 lezárt kör; nyerő arány ≥ 50% és összesen nyereséges = „smart”,
+# összesen veszteséges = „unskilled” kontroll), és ha egy ilyen tárca legalább 0,005 ETH-ért vesz, árnyék-belépés:
+# copy_smart / copy_unskilled. Valódi vétel nincs.
+copy:
+  enabled: true
+  universe_hours: 6
+  poll_interval_ms: 20000
+  min_closed_tokens: 5
+  min_win_rate: 0.5
+  min_buy_native: 0.005
+  score_refresh_min: 10
+
 # Futás közbeni figyelő (Telegram): szól, ha egy árnyékstratégia ígéretes lesz (90% CI > 0, n ≥ 20),
 # élesítés-jelölt lesz (n ≥ 100), vagy kiesik; és ha egy token 10x fölé megy. A szabályokon nem változtat.
 alerts:
   enabled: true
   since: "2026-09-27"      # tiszta adat ettől (mérési javítások + Jev ki)
+  features_since: "2026-09-28"  # a v4 vevő/eladó-jellemzők javítása óta (szabálykereső alapértelmezése)
   interval_min: 60
   big_winner_multiple: 10
 
