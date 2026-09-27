@@ -20,6 +20,7 @@ import { PositionMonitor } from "./exit/monitor.js";
 import { CompoundManager } from "./compound/index.js";
 import { writeReport } from "./report/index.js";
 import { checkArms } from "./analysis/watch.js";
+import { standings } from "./analysis/standings.js";
 import { getAddress } from "viem";
 
 /**
@@ -166,7 +167,8 @@ async function main() {
         return "🚨 PANIC eredmény:\n" + (await panicSellAll());
       }
       case "report": { try { const r = writeReport(db, cfg); return r.telegram + `\nfájl: ${r.file}`; } catch (e) { return `riport hiba: ${(e as Error).message.slice(0, 120)}`; } }
-      case "help": return "/status /report /stop /resume /panic";
+      case "allas": { try { return standings(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg.evaluation.live_window_sec); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "help": return "/status /allas /report /stop /resume /panic";
     }
   });
 

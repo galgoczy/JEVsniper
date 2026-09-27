@@ -77,3 +77,24 @@ test("figyelő: csak változáskor szól, a random_control kimarad", () => {
   assert.equal(m1.length, 1); assert.match(m1[0]!, /Ígéretes: good_arm/);
   assert.equal(checkArms(db, now - 86_400_000).length, 0);           // nincs változás → nincs üzenet
 });
+
+test("állás: stratégiánként egy sor, véletlen kontroll külön, parancs felismerve", async () => {
+  const { standings } = await import("../src/analysis/standings.js");
+  const { parseCommand } = await import("../src/telegram.js");
+  const db = openDb(":memory:");
+  const now = Date.now();
+  const tok = db.prepare("INSERT INTO tokens(chain, address, discovered_at) VALUES ('base', ?, ?)");
+  const pos = db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining,
+    phase, closed_at, close_reason, net_pnl_usd) VALUES (?, 'base', ?, ?, 60, ?, 1, 1, 1, 1, 0, 'closed', ?, 'test', ?)`);
+  for (let i = 0; i < 25; i++) {
+    const a = Number(tok.run(`0xs${i}`, now).lastInsertRowid);
+    pos.run(a, "arm_a", "live", now - 5000, now - 1000, 0.3 + (i % 3) * 0.05);
+    pos.run(a, "arm_a", "B", now - 5000, now - 1000, 0.5);
+    pos.run(a, "random_control", "live", now - 5000, now - 1000, -0.2);
+  }
+  const txt = standings(db, now - 86_400_000, 60, now);
+  assert.match(txt, /Véletlen kontroll \(60s, élő terv\): -0\.20 \(n=25\)/);
+  assert.match(txt, /• arm_a: \+0\.35 \(n=25\) ⏳; legjobb 60s\/B: \+0\.50 \(n=25\)/);
+  assert.doesNotMatch(txt, /• random_control/);
+  assert.equal(parseCommand("/allas"), "allas");
+});
