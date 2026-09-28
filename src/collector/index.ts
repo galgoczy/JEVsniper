@@ -10,7 +10,7 @@ import { holderStats, swapStats, priceFromSqrtX96, v4NativeReserve, v4IsBuy, v4T
 import { UniswapV4Route, computePoolId, type PoolKey } from "../exec/routes.js";
 import type { ParamSnapshot, U } from "./types.js";
 import { log } from "../logger.js";
-import { lpOwner, type LpOwnerKind } from "./lp.js";
+import { lpOwner, fetchLiqEvents, positionsFromEvents, nativeInPositions, type LpOwnerKind } from "./lp.js";
 
 export interface TokenRow {
   id: number; chain: ChainKey; address: Address; creator: Address | null; launchpad: string; mechanics: string;
@@ -60,7 +60,7 @@ export class EthPrice {
   }
 }
 
-interface LogCache { lastBlock: bigint; transfers: TransferRec[]; swaps: SwapRec[]; launchPrice: number | null; at: number; v4Reserve?: number }
+interface LogCache { lastBlock: bigint; transfers: TransferRec[]; swaps: SwapRec[]; launchPrice: number | null; at: number; v4Reserve?: number; lastSqrt?: bigint }
 
 export class Collector {
   /** Tokenenként az eddig lekért transzferek/swapok – a következő ablakban csak az új blokkokat kérjük. */
@@ -180,16 +180,23 @@ export class Collector {
     const creatorStatus = t.creator ? this.creatorStatus(t.chain, t.creator) : "unknown";
 
     // --- likviditás-tulajdonos (Uniswap v4-en indított tokeneknél): ki tudja kihúzni a likviditást?
+    // és mennyi VALÓDI ETH van a pool pozícióiban (az egyoldalú indításnál a virtuális tartalék sokszoros túlbecslés)
     let lpKind: U<LpOwnerKind> = unk;
+    let realLiq: number | null = null;
     const pm = ADDRESSES[t.chain].uniswapV4PoolManager;
-    if (t.launchpad === "uniswap" && poolId && pm) {
-      const r = await lpOwner(c, pm, poolId, t.creator, (fetch) => getLogsChunked(fromBlock, head, fetch)).catch((e) => { this.err("LP-tulajdonos")(e); return null; });
-      if (r) lpKind = r.kind;
+    if ((t.mechanics === "v4" || t.mechanics === "v4_hook") && poolId && pm) {
+      const events = await fetchLiqEvents(c, pm, poolId, (fetch) => getLogsChunked(fromBlock, head, fetch)).catch((e) => { this.err("likviditás-események")(e); return null; });
+      if (events && t.launchpad === "uniswap") {
+        const r = await lpOwner(c, pm, poolId, t.creator, async () => events, events).catch((e) => { this.err("LP-tulajdonos")(e); return null; });
+        if (r) lpKind = r.kind;
+      }
+      const positions = events ? positionsFromEvents(events) : [];
+      if (positions.length && ps?.lastSqrtX96) realLiq = nativeInPositions(positions, ps.lastSqrtX96, !ps.tokenIsC0);
     }
 
     // --- dinamika
     const launchTs = t.discovered_at;
-    const liqNative = ps?.liquidityNative ?? null;
+    const liqNative = realLiq ?? ps?.liquidityNative ?? null;
     const dyn = swapStats(ps?.swaps ?? [], { launchTs, nowTs: takenAt, liquidityNative: liqNative, launchPriceNative: ps?.launchPriceNative ?? null });
     const priceNative: U<number> = ps?.priceNative ?? dyn.price_native;
     const buyers = new Set((ps?.swaps ?? []).filter((s) => s.isBuy).map((s) => s.buyer.toLowerCase()));
@@ -339,6 +346,7 @@ export class Collector {
       sellSimulation: unk as U<"ok" | "failed" | "not_supported">, buyTaxPct: unk as U<number>, sellTaxPct: unk as U<number>,
       curveProgressPct: unk as U<number>, graduated: undefined as boolean | undefined, estGraduationMin: unk as U<number>,
       poolAddressForTransfers: null as string | null,
+      lastSqrtX96: null as bigint | null, tokenIsC0: false,
     };
     const tokenIsC0 = BigInt(t.address) < BigInt(pair === ZERO ? ZERO : pair);
 
@@ -395,6 +403,8 @@ export class Collector {
       }
       // Likviditás ugyanazzal a módszerrel, mint az árfeed (utolsó Swap: L + sqrtP) – így a „likviditás −30%” vészjelzés összemérhető
       const lastLog = logs.at(-1);
+      if (lastLog) cache.lastSqrt = lastLog.args.sqrtPriceX96!;
+      out.lastSqrtX96 = cache.lastSqrt ?? null; out.tokenIsC0 = tokenIsC0;
       const vRes = (lastLog ? v4NativeReserve(lastLog.args.liquidity!, lastLog.args.sqrtPriceX96!, !tokenIsC0) : null) ?? cache.v4Reserve ?? null;
       if (vRes !== null) cache.v4Reserve = vRes;
       if (out.swaps.length) { out.priceNative = out.swaps.at(-1)!.priceNative!; if (out.launchPriceNative === null) out.launchPriceNative = out.swaps[0]!.priceNative; cache.launchPrice = out.launchPriceNative; }

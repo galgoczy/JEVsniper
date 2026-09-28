@@ -12,7 +12,7 @@ import { uniswapV4ModifyLiquidityAbi, erc721OwnerOfAbi } from "../abis/pools.js"
  */
 export type LpOwnerKind = "burned" | "creator" | "eoa" | "contract" | "removed" | "none";
 
-export interface LiqEvent { sender: Address; salt: `0x${string}`; delta: bigint }
+export interface LiqEvent { sender: Address; salt: `0x${string}`; delta: bigint; lower?: number; upper?: number }
 
 const BURN = ["0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000dEaD"] as const;
 export const isBurn = (a: string) => BURN.some((b) => isAddressEqual(a as Address, b));
@@ -39,14 +39,51 @@ export function classifyOwner(owner: Address, creator: Address | null, ownerHasC
   return ownerHasCode ? "contract" : "eoa";
 }
 
+/** A pool összes likviditás-eseménye (ModifyLiquidity) a megadott blokktartományon. */
+export async function fetchLiqEvents(c: PublicClient, poolManager: Address, poolId: `0x${string}`,
+  getLogs: (fetch: (f: bigint, t: bigint) => Promise<LiqEvent[]>) => Promise<LiqEvent[]>): Promise<LiqEvent[]> {
+  return getLogs(async (f, t) => {
+    const logs = await c.getLogs({ address: poolManager, event: uniswapV4ModifyLiquidityAbi[0], args: { id: poolId }, fromBlock: f, toBlock: t });
+    return logs.map((l) => ({ sender: l.args.sender!, salt: l.args.salt!, delta: l.args.liquidityDelta!, lower: l.args.tickLower!, upper: l.args.tickUpper! }));
+  });
+}
+
+export interface LiqPos { lower: number; upper: number; liquidity: bigint }
+/** Nettó pozíciók (küldő + salt + ársáv szerint összegezve), csak a pozitív maradékok. */
+export function positionsFromEvents(events: LiqEvent[]): LiqPos[] {
+  const m = new Map<string, LiqPos>();
+  for (const e of events) {
+    if (e.lower === undefined || e.upper === undefined) continue;
+    const k = `${e.sender.toLowerCase()}|${e.salt}|${e.lower}|${e.upper}`;
+    const cur = m.get(k) ?? { lower: e.lower, upper: e.upper, liquidity: 0n };
+    cur.liquidity += e.delta; m.set(k, cur);
+  }
+  return [...m.values()].filter((p) => p.liquidity > 0n);
+}
+
+/**
+ * VALÓDI ETH a pool pozícióiban az aktuális áron (Uniswap v3/v4 pozíció-képletek).
+ * Az egyoldalú (csak token) indításoknál a virtuális tartalék (L/√P) sokszorosan túlbecsülné az eladóknak elérhető ETH-t;
+ * itt csak az van benne, ami ténylegesen ETH-ként ül a sávokban. ETH = currency0: L·(√Pb − max(√Pa,√P)) / (max(√Pa,√P)·√Pb),
+ * ha √P < √Pb; ETH = currency1: L·(min(√P,√Pb) − √Pa), ha √P > √Pa. √P(tick) = 1,0001^(tick/2).
+ */
+export function nativeInPositions(pos: LiqPos[], sqrtPriceX96: bigint, nativeIsCurrency0: boolean): number {
+  const sp = Number(sqrtPriceX96) / 2 ** 96;
+  if (!(sp > 0)) return 0;
+  let raw = 0;
+  for (const p of pos) {
+    const sa = Math.pow(1.0001, p.lower / 2), sb = Math.pow(1.0001, p.upper / 2), L = Number(p.liquidity);
+    if (nativeIsCurrency0) { if (sp < sb) { const lo = Math.max(sa, sp); raw += (L * (sb - lo)) / (lo * sb); } }
+    else if (sp > sa) raw += L * (Math.min(sp, sb) - sa);
+  }
+  return Number.isFinite(raw) ? raw / 1e18 : 0;
+}
+
 export async function lpOwner(
   c: PublicClient, poolManager: Address, poolId: `0x${string}`, creator: Address | null,
-  getLogs: (fetch: (f: bigint, t: bigint) => Promise<LiqEvent[]>) => Promise<LiqEvent[]>,
+  getLogs: (fetch: (f: bigint, t: bigint) => Promise<LiqEvent[]>) => Promise<LiqEvent[]>, pre?: LiqEvent[],
 ): Promise<{ kind: LpOwnerKind; owner: Address | null }> {
-  const events = await getLogs(async (f, t) => {
-    const logs = await c.getLogs({ address: poolManager, event: uniswapV4ModifyLiquidityAbi[0], args: { id: poolId }, fromBlock: f, toBlock: t });
-    return logs.map((l) => ({ sender: l.args.sender!, salt: l.args.salt!, delta: l.args.liquidityDelta! }));
-  });
+  const events = pre ?? await fetchLiqEvents(c, poolManager, poolId, getLogs);
   const pos = largestPosition(events);
   if (!pos || !pos.everAdded) return { kind: "none", owner: null };
   if (pos.net <= 0n) return { kind: "removed", owner: null };

@@ -6,10 +6,12 @@ import { ponsCurveAbi } from "../abis/pons.js";
 import { uniswapV4SwapAbi } from "../abis/pools.js";
 import { erc20WriteAbi } from "../abis/uniswapV4.js";
 import { priceFromSqrtX96, v4NativeReserve } from "../collector/stats.js";
+import { uniswapV4ModifyLiquidityAbi } from "../abis/pools.js";
+import { nativeInPositions, type LiqPos } from "../collector/lp.js";
 import { log } from "../logger.js";
 import { computePoolId, type PoolKey } from "../exec/routes.js";
 
-export interface Tracked { tokenId: number; token: Address; mechanics: string; pool: string | null; creator: Address | null; decimals: number; pairToken: string | null; poolKeyJson?: string | null; graduatedAt?: number | null }
+export interface Tracked { tokenId: number; token: Address; mechanics: string; pool: string | null; creator: Address | null; decimals: number; pairToken: string | null; poolKeyJson?: string | null; graduatedAt?: number | null; discoveredBlock?: number | null }
 export interface PriceState { price: number; at: number; block: bigint; liquidityNative: number | null; creatorBalance: number | null; swapsSinceLast: number; sellsSinceLast: number; graduated: boolean }
 
 /**
@@ -21,10 +23,51 @@ export interface PriceState { price: number; at: number; block: bigint; liquidit
  */
 export class PriceFeed {
   private state = new Map<number, PriceState>();
+  /** v4 pozíciók tokenenként (valódi ETH-tartalékhoz); null = túl régi a visszatöltéshez → virtuális tartalék */
+  private liqPos = new Map<number, Map<string, LiqPos> | null>();
+  private lastSqrt = new Map<number, { sqrt: bigint; nativeIsC0: boolean }>();
   private lastBlock: bigint | null = null;
   constructor(private chain: ChainKey, private client: PublicClient, private db: DB) {}
 
   get(tokenId: number): PriceState | undefined { return this.state.get(tokenId); }
+
+  /**
+   * v4 pozíciók karbantartása: új tokennél visszatöltés a felfedezés blokkjától (legfeljebb 20 000 blokk), utána
+   * minden körben az új ModifyLiquidity események. Likviditás-kivételnél (swap nélkül is) frissül a valódi tartalék.
+   */
+  private async updatePositions(v4: Array<{ t: Tracked; id: `0x${string}` }>, byId: Map<string, Tracked>, from: bigint, head: bigint, pm: Address) {
+    const apply = (tokenId: number, e: { sender: string; salt: string; lower: number; upper: number; delta: bigint }) => {
+      const m = this.liqPos.get(tokenId); if (!m) return;
+      const k = `${e.sender.toLowerCase()}|${e.salt}|${e.lower}|${e.upper}`;
+      const cur = m.get(k) ?? { lower: e.lower, upper: e.upper, liquidity: 0n };
+      cur.liquidity += e.delta; if (cur.liquidity > 0n) m.set(k, cur); else m.delete(k);
+    };
+    const ev = uniswapV4ModifyLiquidityAbi[0];
+    const step = this.chain === "base" ? 2000n : 500n;
+    for (const { t, id } of v4) {
+      if (this.liqPos.has(t.tokenId)) continue;
+      const start = t.discoveredBlock ? BigInt(t.discoveredBlock) : null;
+      if (start === null || head - start > 20_000n) { this.liqPos.set(t.tokenId, null); continue; }
+      this.liqPos.set(t.tokenId, new Map());
+      try {
+        for (let f = start; f < from; f += step + 1n) {
+          const to = f + step >= from ? from - 1n : f + step;
+          const logs = await this.client.getLogs({ address: pm, event: ev, args: { id }, fromBlock: f, toBlock: to });
+          for (const l of logs) apply(t.tokenId, { sender: l.args.sender!, salt: l.args.salt!, lower: l.args.tickLower!, upper: l.args.tickUpper!, delta: l.args.liquidityDelta! });
+        }
+      } catch (e) { this.liqPos.set(t.tokenId, null); log.debug("pozíció-visszatöltés hiba", { error: (e as Error).message.slice(0, 100) }); }
+    }
+    const ids = v4.filter((x) => this.liqPos.get(x.t.tokenId)).map((x) => x.id);
+    for (let i = 0; i < ids.length; i += 200) {
+      const logs = await this.client.getLogs({ address: pm, event: ev, args: { id: ids.slice(i, i + 200) }, fromBlock: from, toBlock: head }).catch(() => []);
+      const touched = new Set<number>();
+      for (const l of logs) { const t = byId.get((l.args.id as string).toLowerCase()); if (!t) continue; apply(t.tokenId, { sender: l.args.sender!, salt: l.args.salt!, lower: l.args.tickLower!, upper: l.args.tickUpper!, delta: l.args.liquidityDelta! }); touched.add(t.tokenId); }
+      for (const id of touched) { // likviditás-mozgás swap nélkül (pl. kihúzás): valódi tartalék az utolsó ismert áron
+        const ls = this.lastSqrt.get(id), m = this.liqPos.get(id), cur = this.state.get(id);
+        if (ls && m && cur) this.state.set(id, { ...cur, liquidityNative: nativeInPositions([...m.values()], ls.sqrt, ls.nativeIsC0) });
+      }
+    }
+  }
 
   async refresh(tracked: Tracked[]): Promise<void> {
     if (!tracked.length) return;
@@ -71,6 +114,7 @@ export class PriceFeed {
     }).filter((x): x is { t: Tracked; id: `0x${string}` } => x !== null);
     if (v4.length && A.uniswapV4PoolManager && head >= from) {
       const byId = new Map(v4.map((x) => [x.id.toLowerCase(), x.t]));
+      await this.updatePositions(v4, byId, from, head, A.uniswapV4PoolManager);
       for (let i = 0; i < v4.length; i += 200) {
         const ids = v4.slice(i, i + 200).map((x) => x.id);
         const logs = await this.client.getLogs({ address: A.uniswapV4PoolManager, event: uniswapV4SwapAbi[0], args: { id: ids }, fromBlock: from, toBlock: head }).catch((e) => { log.debug("pricefeed v4 getLogs hiba", { error: (e as Error).message.slice(0, 100) }); return []; });
@@ -80,7 +124,9 @@ export class PriceFeed {
           const price = priceFromSqrtX96(l.args.sqrtPriceX96!, tokenIsC0, t.decimals);
           const tokenAmt = tokenIsC0 ? l.args.amount0! : l.args.amount1!;
           const cur = this.state.get(t.tokenId);
-          const liq = v4NativeReserve(l.args.liquidity!, l.args.sqrtPriceX96!, !tokenIsC0);
+          this.lastSqrt.set(t.tokenId, { sqrt: l.args.sqrtPriceX96!, nativeIsC0: !tokenIsC0 });
+          const pos = this.liqPos.get(t.tokenId);
+          const liq = pos ? nativeInPositions([...pos.values()], l.args.sqrtPriceX96!, !tokenIsC0) : v4NativeReserve(l.args.liquidity!, l.args.sqrtPriceX96!, !tokenIsC0);
           bump(t.tokenId, { price, at: now, block: l.blockNumber!, ...(liq !== null ? { liquidityNative: liq } : {}), swapsSinceLast: (cur?.swapsSinceLast ?? 0) + 1, sellsSinceLast: (cur?.sellsSinceLast ?? 0) + (tokenAmt < 0n ? 1 : 0) }); // v4: negatív token = a kereskedő adta = eladás
         }
       }

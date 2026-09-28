@@ -63,7 +63,8 @@ evaluation:
   jev_scope: ["base/uniswap"]
   # Késői belépés teszt (2026-09-27): a csalások jellemzően az első 15–20 percben zuhannak be.
   # 30 perc után még egy pillanatkép a Base/Uniswap tokenekről; a late_survivor árnyékkar csak itt dönt.
-  late_window_sec: 1800
+  # 2026-09-28: KIKAPCSOLVA – 30 percnél a túlélő tokenek 14/16-a később nullára zuhant (átlag −1,00 USD; véletlen −0,99).
+  late_window_sec: 0
   late_scope: ["base/uniswap"]
 
 jev:
@@ -176,8 +177,8 @@ listing:
 # élesítés-jelölt lesz (n ≥ 100), vagy kiesik; és ha egy token 10x fölé megy. A szabályokon nem változtat.
 alerts:
   enabled: true
-  since: "2026-09-27"      # tiszta adat ettől (mérési javítások + Jev ki)
-  features_since: "2026-09-28"  # a v4 vevő/eladó-jellemzők javítása óta (szabálykereső alapértelmezése)
+  since: "2026-09-29"      # tiszta adat ettől: v4 irány-javítás + valódi ETH-likviditás (a szűrő tokenköre is ettől új)
+  features_since: "2026-09-29"  # szabálykereső alapértelmezése (a pillanatkép-jellemzők ettől megbízhatók)
   interval_min: 60
   big_winner_multiple: 10
 

@@ -54,19 +54,19 @@ export class PositionMonitor {
   stop() { if (this.timer) clearInterval(this.timer); }
 
   private openRows(): PosRow[] {
-    return this.d.db.prepare(`SELECT p.*, t.address, t.symbol, t.launchpad, t.mechanics, t.pool_address, t.pool_key_json, t.creator, t.pair_token, t.graduated_at, t.decimals
+    return this.d.db.prepare(`SELECT p.*, t.address, t.symbol, t.launchpad, t.mechanics, t.pool_address, t.pool_key_json, t.creator, t.pair_token, t.graduated_at, t.decimals, t.discovered_block
       FROM positions p JOIN tokens t ON t.id = p.token_id WHERE p.closed_at IS NULL AND p.phase NOT IN ('closed','unsellable') AND p.arm != 'day1_test'`).all() as PosRow[];
   }
 
   private trackedFor(chain: ChainKey, rows: PosRow[]): Tracked[] {
     const seen = new Map<number, Tracked>();
-    const add = (r: { token_id: number; address: string; mechanics: string; pool_address: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; pool_key_json?: string | null; decimals?: number | null }) => {
+    const add = (r: { token_id: number; address: string; mechanics: string; pool_address: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; pool_key_json?: string | null; decimals?: number | null; discovered_block?: number | null }) => {
       if (seen.has(r.token_id)) return;
-      seen.set(r.token_id, { tokenId: r.token_id, token: getAddress(r.address), mechanics: r.mechanics, pool: r.pool_address, creator: r.creator ? getAddress(r.creator) : null, decimals: r.decimals ?? 18, pairToken: r.pair_token, poolKeyJson: r.pool_key_json ?? null, graduatedAt: r.graduated_at });
+      seen.set(r.token_id, { tokenId: r.token_id, token: getAddress(r.address), mechanics: r.mechanics, pool: r.pool_address, creator: r.creator ? getAddress(r.creator) : null, decimals: r.decimals ?? 18, pairToken: r.pair_token, poolKeyJson: r.pool_key_json ?? null, graduatedAt: r.graduated_at, discoveredBlock: r.discovered_block ?? null });
     };
     for (const r of rows) if (r.chain === chain) add(r);
     // 24 órás kimenet-követés: tokenek, ahol valamelyik kar belépett és még nincs lezárva
-    const oc = this.d.db.prepare(`SELECT DISTINCT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json, t.decimals FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
+    const oc = this.d.db.prepare(`SELECT DISTINCT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json, t.decimals, t.discovered_block FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
     for (const r of oc) add(r);
     return [...seen.values()];
   }
@@ -139,6 +139,8 @@ export class PositionMonitor {
     }
     const peak = Math.max(r.peak_price_native ?? r.entry_price_native, price);
     db.prepare("UPDATE positions SET peak_price_native = ?, last_price_native = ?, last_price_at = ? WHERE id = ?").run(peak, price, now, r.id);
+    // ha belépéskor nem volt ismert likviditás (pl. copy/listázás), az első árfeed-érték lesz a viszonyítási alap
+    if (r.liquidity_at_entry === null && ps.liquidityNative !== null) { db.prepare("UPDATE positions SET liquidity_at_entry = ? WHERE id = ?").run(ps.liquidityNative, r.id); r.liquidity_at_entry = ps.liquidityNative; }
     const state: PosState = { exit_plan: r.exit_plan, phase: r.phase, entry_price: r.entry_price_native, peak_price: peak, tokens_bought: r.tokens_bought, tokens_remaining: r.tokens_remaining, opened_at: r.opened_at, stages_done: r.stages_done };
 
     // vészfékek (Jev nélkül)

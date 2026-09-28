@@ -53,3 +53,21 @@ test("v4 virtuális ETH-tartalék és készítő-egyenleg belépéskor", async (
   assert.equal(creatorBalanceAtEntry(snap(5, 1000)), null);       // 0,5% → por, nem figyeljük
   assert.equal(creatorBalanceAtEntry(snap("unknown", 1000)), null);
 });
+
+test("valódi ETH a pozíciókban: egyoldalú (csak token) indításnál ~0, a virtuális tartalék ehhez képest óriási", async () => {
+  const { nativeInPositions } = await import("../src/collector/lp.js");
+  const { v4NativeReserve } = await import("../src/collector/stats.js");
+  const Q96 = 2n ** 96n, L = 10n ** 20n;
+  const sqrtAt = (tick: number) => BigInt(Math.round(Math.pow(1.0001, tick / 2) * 2 ** 96));
+  // ETH = currency0; a token-oldali sáv a jelenlegi ár ALATT van (csak currency1 = token) → 0 ETH
+  assert.equal(nativeInPositions([{ lower: -1000, upper: 0, liquidity: L }], sqrtAt(100), true), 0);
+  assert.ok(v4NativeReserve(L, sqrtAt(100), true)! > 50);                                         // a régi becslés ~99 ETH-t mutatna
+  // az ár a sávba lép (vásárlások): L·(√Pb − √P)/(√P·√Pb)
+  const sp = Math.pow(1.0001, -500 / 2), sb = 1;
+  const expect = (Number(L) * (sb - sp)) / (sp * sb) / 1e18;
+  assert.ok(Math.abs(nativeInPositions([{ lower: -1000, upper: 0, liquidity: L }], sqrtAt(-500), true) - expect) < expect * 1e-6);
+  // ETH = currency1, teljesen a sáv fölött: L·(√Pb − √Pa)
+  const got = nativeInPositions([{ lower: 0, upper: 1000, liquidity: L }], sqrtAt(2000), false);
+  assert.ok(Math.abs(got - (Number(L) * (Math.pow(1.0001, 500) - 1)) / 1e18) < 1e-6);
+  assert.equal(nativeInPositions([], Q96, true), 0);
+});

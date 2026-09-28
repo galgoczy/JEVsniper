@@ -63,6 +63,6 @@ test("ütemező: a késői ablak csak a hatókörbe eső tokeneknek", () => {
   assert.deepEqual(sch.windowsFor({ chain: "robinhood", launchpad: "pons" }), [30, 60, 180]);
   const off = new CollectorScheduler(db, {} as Collector, [30, 60, 180], 16384);
   assert.deepEqual(off.windowsFor({ chain: "base", launchpad: "uniswap" }), [30, 60, 180]);
-  assert.equal(cfg.evaluation.late_window_sec, 1800);
+  assert.equal(cfg.evaluation.late_window_sec, 0); // kikapcsolva (2026-09-28)
   assert.deepEqual(cfg.evaluation.late_scope, ["base/uniswap"]);
 });

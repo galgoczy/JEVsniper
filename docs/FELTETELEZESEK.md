@@ -310,3 +310,11 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Árnyék-belépés az észleléskori DexScreener-áron (1 USD), ár-mintavétel 7 napig (első 2 órában percenként, utána 10 percenként). 5 kiszállási terv szimulálva (gyors 1,3x/−15%/4 óra; lépcsős 1,5x 50% + 3x 30% + csúcstól −30%, stop −30%; nagy 2x/5x, csúcstól −40%, stop −40%; tartás 1 óra; tartás 24 óra). Költség: 1% díj irányonként, csúszás a likviditásból, MEV 0,3%, gas lánconként.
 - Valódi vétel nincs: a listázott tokenek jó része nem v4 poolban kereskedik (Aerodrome, v2/v3), arra még nincs végrehajtási útvonal. Ha a mérés indokolja, ez a következő lépés.
 - /allas (Telegram) és `npm run allas`: stratégiánként egy sor (élő terv a fő ablakban + a legjobb kombináció, ⏳/✅), véletlen kontroll, listázások összesítve. Tájékoztató; döntéshez a riport.
+
+## 2026-09-28 (délelőtt) – Valódi ETH-likviditás v4 poolokban; késői ablak kikapcsolva
+- Megfigyelés: a 30 perces (late) belépések 14/16-a −40%-os vészkilépéssel, átlag −1,00 USD-vel zárult; a véletlen kontroll ugyanott −0,99. A túlélő Base/Uniswap tokeneket később ledömpingelik → `late_window_sec: 0` (kikapcsolva).
+- HIBA (javítva): ezeknél a belépéskori likviditás 150–200 ETH volt. Ok: egyoldalú (csak token) indításnál a virtuális tartalék (L/√P) nem valódi ETH. Ez rontotta a likviditás-szűrőt (min. 500 USD) és a likviditás-esés vészféket.
+  Javítás: valódi ETH a pool pozícióiban az aktuális áron, a ModifyLiquidity eseményekből felépített pozíciókból (v3/v4 képletek; √P(tick) = 1,0001^(tick/2)). Gyűjtő: minden v4 tokenre. Árfeed: tokenenként visszatöltés a felfedezés blokkjától (legfeljebb 20 000 blokk, különben a régi virtuális becslés marad), utána körönként az új események; likviditás-kivételnél swap nélkül is frissül.
+  Copy-pozícióknál a v4 virtuális tartalék nem kerül a belépési likviditásba; ha belépéskor nincs likviditás, a monitor az első árfeed-értéket veszi alapnak.
+  Következmény: a vékony valódi likviditású tokenek mostantól kiesnek a likviditás-szűrőn → a stratégiák tokenköre megváltozik. Tiszta összehasonlítás: `alerts.since` és `features_since` = 2026-09-29.
+  Feltételezés: a felhalmozott, be nem gyűjtött díjak nincsenek benne (kicsi eltérés).

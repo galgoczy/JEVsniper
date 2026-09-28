@@ -6,7 +6,7 @@ import type { ChainKey } from "../chains/index.js";
 import { ADDRESSES } from "../chains/addresses.js";
 import { ponsCurveAbi } from "../abis/pons.js";
 import { uniswapV4SwapAbi, transferEventAbi } from "../abis/pools.js";
-import { priceFromSqrtX96, v4NativeReserve, v4IsBuy, v4TraderFromTransfers, type TransferRec } from "../collector/stats.js";
+import { priceFromSqrtX96, v4IsBuy, v4TraderFromTransfers, type TransferRec } from "../collector/stats.js";
 import { computePoolId, type PoolKey } from "../exec/routes.js";
 import { scoreWallets, type WalletScore } from "./scoring.js";
 import type { TokenRow } from "../collector/index.js";
@@ -125,7 +125,7 @@ export class CopyTracker {
         const wallet = isBuy ? tr?.buyer : tr?.seller;
         if (!wallet || !s.transactionHash) continue; // tárca nélkül nem követhető
         out.push({ tokenId: t.id, wallet, isBuy, native: Math.abs(Number(quoteAmt)) / 1e18, tokens: Math.abs(Number(tokenAmt)) / 10 ** dec, block: s.blockNumber!, tx: s.transactionHash,
-          price: priceFromSqrtX96(s.args.sqrtPriceX96!, tokenIsC0, dec), liq: v4NativeReserve(s.args.liquidity!, s.args.sqrtPriceX96!, !tokenIsC0) });
+          price: priceFromSqrtX96(s.args.sqrtPriceX96!, tokenIsC0, dec), liq: null }); // v4: a virtuális tartalék félrevezető – a monitor az első árfeed-értéket (valódi ETH) veszi alapnak
       }
     }
     return out;
