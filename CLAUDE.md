@@ -12,7 +12,7 @@ A felhasználó nem programozó: magyarul, egyszerűen fogalmazz, a parancsokat 
 
 ## A bot futtatása a Mac Minin
 - Indítás: `npm start` (a bot terminálban fut; leállítás Ctrl+C). Frissítés után újraindítás kell.
-- Ha a botot te indítod, háttérben futtasd, és a kimenetét fájlba irányítsd, pl. `nohup npm start > logs/bot.out 2>&1 &`; leállítás: a folyamat megkeresése (`pgrep -f "tsx src/index.ts"`) és `kill` (SIGINT/SIGTERM – a bot rendben leáll).
+- Ha a botot te indítod, háttérben futtasd, és a kimenetét fájlba irányítsd, pl. `mkdir -p logs && nohup npm start > logs/bot.out 2>&1 &`; leállítás: a folyamat megkeresése (`pgrep -f "tsx src/index.ts"`) és `kill` (SIGINT/SIGTERM – a bot rendben leáll).
 - Telegram: `/status`, `/allas` (egyszerűsített állás), `/report`, `/stop`, `/resume`, `/panic`, `/help`.
 
 ## Rendszeres kiértékelés (ezeket futtasd és értelmezd a felhasználónak)
