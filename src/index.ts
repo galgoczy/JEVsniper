@@ -23,6 +23,7 @@ import { checkArms } from "./analysis/watch.js";
 import { standings } from "./analysis/standings.js";
 import { CopyTracker } from "./copy/tracker.js";
 import { ListingWatcher } from "./listing/watcher.js";
+import { GraduationTracker } from "./graduation/index.js";
 import { currentPositionUsd } from "./decision/risk.js";
 import { getAddress } from "viem";
 
@@ -103,6 +104,9 @@ async function main() {
   const copyTrackers = (["base", "robinhood"] as ChainKey[]).filter((k) => cfg.chains[k].enabled).map((k) => new CopyTracker({ db, cfg, chain: k, client: clients[k],
     ethUsd: () => ethPrice.get(), openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, currentPositionUsd(db, cfg), eth, liq) }));
   copyTrackers.forEach((c) => c.start());
+  // V2: graduációs szakasz (PONS curve → v4)
+  const graduation = new GraduationTracker({ db, cfg, collect: (t, w) => collector.collect(t, w), saveSnapshot: (t, snap) => collector.saveSnapshot(t, snap, cfg.db.max_snapshot_bytes),
+    openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, currentPositionUsd(db, cfg), eth, liq), ethUsd: () => ethPrice.get() });
   // Listázás-figyelő (Coinbase / Robinhood)
   const listing = new ListingWatcher({ db, cfg, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
   listing.start();
@@ -139,6 +143,7 @@ async function main() {
       confirmations: cfg.watcher[key].confirmations,
       enabledSources: cfg.watcher[key].sources,
       onToken: (_t, id) => { const row = tokenRow(db, id); if (row) scheduler.schedule(row); },
+      onGraduation: (id, sqrt) => graduation.onGraduation(id, sqrt),
     });
     watchers.push(w);
     void w.start();
@@ -195,6 +200,7 @@ async function main() {
     clearInterval(alertTimer);
     copyTrackers.forEach((c) => c.stop());
     listing.stop();
+    graduation.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);

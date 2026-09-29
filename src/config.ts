@@ -153,6 +153,11 @@ export const ConfigSchema = z.object({
     size_usd: z.number().positive().default(1),
     track_days: z.number().positive().default(7),
   }).default({ enabled: true, poll_interval_sec: 60, coinbase: true, robinhood: true, robinhood_chain_match: "robinhood", size_usd: 1, track_days: 7 }),
+  // V2 – graduációs szakasz (PONS curve → v4): árnyék-belépés graduáláskor és +delay_min perccel később
+  graduation: z.object({
+    enabled: z.boolean().default(true),
+    delay_min: z.number().positive().default(15),
+  }).default({ enabled: true, delay_min: 15 }),
   // Futás közbeni figyelő: állapotváltás-riasztások (csak jelez, a szabályokon nem változtat)
   alerts: z.object({
     enabled: z.boolean().default(true),

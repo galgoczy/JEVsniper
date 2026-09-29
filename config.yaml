@@ -173,6 +173,13 @@ listing:
   size_usd: 1
   track_days: 7
 
+# V2 – graduációs szakasz: a PONS-tokenek a bonding curve után Uniswap v4 poolba kerülnek (napi több száz).
+# Árnyékkarok: grad_at (graduáláskor), grad_15_all (15 perc múlva, ha átmegy a kemény szűrőn),
+# grad_15_hold (15 perc múlva, ha az ár a graduációs ár fölött van, van valódi ETH és a készítő nem dömpingelt).
+graduation:
+  enabled: true
+  delay_min: 15
+
 # Futás közbeni figyelő (Telegram): szól, ha egy árnyékstratégia ígéretes lesz (90% CI > 0, n ≥ 20),
 # élesítés-jelölt lesz (n ≥ 100), vagy kiesik; és ha egy token 10x fölé megy. A szabályokon nem változtat.
 alerts:

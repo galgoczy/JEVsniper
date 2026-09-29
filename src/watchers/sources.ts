@@ -21,6 +21,7 @@ export interface NewToken {
   txHash: `0x${string}` | null;
   graduationThreshold?: bigint;            // PONS: ennyi quote (wei) után graduál a curve
   poolKey?: { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }; // v4
+  initSqrtPriceX96?: bigint;               // v4 Initialize: a pool induló ára (graduációnál a graduációs ár)
 }
 
 export interface LogSource {
@@ -109,7 +110,7 @@ export function sourcesFor(chain: ChainKey, enabled: Record<string, boolean>): L
         const hooked = !isAddressEqual(args.hooks, ZERO);
         return { chain, address: token, creator: null, launchpad: "uniswap", mechanics: hooked ? "v4_hook" : "v4", pool: args.id,
           pairToken: token === c0 ? c1 : c0, name: null, symbol: null, blockNumber: log.blockNumber ?? 0n, txHash: log.transactionHash,
-          poolKey: { currency0: c0, currency1: c1, fee: args.fee, tickSpacing: args.tickSpacing, hooks: args.hooks } };
+          poolKey: { currency0: c0, currency1: c1, fee: args.fee, tickSpacing: args.tickSpacing, hooks: args.hooks }, initSqrtPriceX96: args.sqrtPriceX96 };
       },
     });
   }

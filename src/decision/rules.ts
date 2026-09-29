@@ -172,3 +172,13 @@ export function lateSurvivorArm(chain: string, launchpad: string | null, s: Para
   if (sold !== null && sold >= 50) r.push(`creator_sold=${sold.toFixed(0)}`);
   return { enter: r.length === 0, reasons: r, sizeMultiplier: 1 };
 }
+
+/**
+ * Indítóplatform-alapvonalak (V2, 2026-09-29): zárolt likviditású platformok az indulásnál.
+ * clanker_all – minden szűrőn átment Base/Clanker token (a Clanker zárolja a likviditást);
+ * pons_all    – minden szűrőn átment Robinhood/PONS token (curve-fázis: a likviditás nem húzható ki).
+ */
+export function launchpadArm(chain: string, launchpad: string | null, want: `${string}/${string}`): RuleResult {
+  const ok = `${chain}/${launchpad}` === want;
+  return { enter: ok, reasons: ok ? [] : [`not_${want}`], sizeMultiplier: 1 };
+}

@@ -12,6 +12,8 @@ export interface WatcherOptions {
   confirmations: number;        // hány blokkot várunk (reorg ellen)
   enabledSources: Record<string, boolean>;
   onToken?: (t: NewToken, tokenId: number) => void | Promise<void>;
+  /** PONS-graduáció (a curve-ről v4 poolba lépés első észlelése): tokenId + a pool induló ára */
+  onGraduation?: (tokenId: number, initSqrtPriceX96: bigint | null) => void | Promise<void>;
 }
 
 /**
@@ -91,13 +93,14 @@ export class ChainWatcher {
   }
 
   private async upsertToken(t: NewToken) {
-    const existing = this.db.prepare("SELECT id, launchpad, discovered_block FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(t.chain, t.address) as { id: number; launchpad: string; discovered_block: number | null } | undefined;
+    const existing = this.db.prepare("SELECT id, launchpad, discovered_block, graduated_at FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(t.chain, t.address) as { id: number; launchpad: string; discovered_block: number | null; graduated_at: number | null } | undefined;
     if (existing) {
       if (t.launchpad === "uniswap" && existing.launchpad !== "uniswap") {
         // Launchpad-token v4 poolja: ugyanabban a blokkban (Clanker) → nem graduáció, csak a PoolKey; későbbi blokkban (PONS) → graduáció.
         const sameBlock = existing.discovered_block !== null && BigInt(existing.discovered_block) === t.blockNumber;
         this.db.prepare("UPDATE tokens SET graduated_at = CASE WHEN ? THEN graduated_at ELSE COALESCE(graduated_at, ?) END, pool_key_json = COALESCE(pool_key_json, ?) WHERE id = ?")
           .run(sameBlock ? 1 : 0, nowMs(), t.poolKey ? JSON.stringify(t.poolKey) : null, existing.id);
+        if (!sameBlock && existing.graduated_at === null && existing.launchpad === "pons") await this.opts.onGraduation?.(existing.id, t.initSqrtPriceX96 ?? null);
       } else if (t.launchpad !== "uniswap" && existing.launchpad === "uniswap") {
         // A v4 Initialize hamarabb jött, mint a launchpad TokenCreated eseménye (ugyanaz a tx): pótoljuk a launchpad-adatokat.
         this.db.prepare("UPDATE tokens SET launchpad = ?, creator = COALESCE(?, creator), mechanics = ?, name = COALESCE(name, ?), symbol = COALESCE(symbol, ?), graduated_at = NULL, graduation_threshold = COALESCE(?, graduation_threshold) WHERE id = ?")

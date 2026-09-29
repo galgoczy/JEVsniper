@@ -46,8 +46,12 @@ export class PriceFeed {
     const step = this.chain === "base" ? 2000n : 500n;
     for (const { t, id } of v4) {
       if (this.liqPos.has(t.tokenId)) continue;
-      const start = t.discoveredBlock ? BigInt(t.discoveredBlock) : null;
-      if (start === null || head - start > 20_000n) { this.liqPos.set(t.tokenId, null); continue; }
+      // Visszatöltés a felfedezés blokkjától; ha az túl régi (> 20 000 blokk), az utolsó 20 000 blokkból – ez akkor teljes,
+      // ha a pool is ezen belül jött létre (pl. friss graduáció). Ha így egyetlen likviditás-hozzáadás sem látszik, nincs mire
+      // építeni → virtuális becslés marad (null).
+      const disc = t.discoveredBlock ? BigInt(t.discoveredBlock) : null;
+      const start = disc !== null && head - disc <= 20_000n ? disc : head - 20_000n;
+      const partial = disc === null || head - disc > 20_000n;
       this.liqPos.set(t.tokenId, new Map());
       try {
         for (let f = start; f < from; f += step + 1n) {
@@ -55,6 +59,7 @@ export class PriceFeed {
           const logs = await this.client.getLogs({ address: pm, event: ev, args: { id }, fromBlock: f, toBlock: to });
           for (const l of logs) apply(t.tokenId, { sender: l.args.sender!, salt: l.args.salt!, lower: l.args.tickLower!, upper: l.args.tickUpper!, delta: l.args.liquidityDelta! });
         }
+        if (partial && !(this.liqPos.get(t.tokenId)?.size)) this.liqPos.set(t.tokenId, null);
       } catch (e) { this.liqPos.set(t.tokenId, null); log.debug("pozíció-visszatöltés hiba", { error: (e as Error).message.slice(0, 100) }); }
     }
     const ids = v4.filter((x) => this.liqPos.get(x.t.tokenId)).map((x) => x.id);

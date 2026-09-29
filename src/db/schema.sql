@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS positions (
   liquidity_at_entry REAL,
   last_price_native REAL,             -- legutóbbi ellenőrzéskori ár (nyitott pozíció piaci értékeléséhez)
   last_price_at INTEGER,
+  liq_rebased INTEGER NOT NULL DEFAULT 0, -- graduáció után a likviditás-alap a v4 poolra állítva
   UNIQUE(token_id, arm, exit_plan, window_sec)
 );
 

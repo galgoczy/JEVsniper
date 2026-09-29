@@ -16,7 +16,7 @@ export interface PosRow extends Omit<PosState, "entry_price" | "peak_price"> {
   entry_price_native: number; peak_price_native: number | null;
   id: number; token_id: number; chain: ChainKey; arm: string; window_sec: number; size_usd: number; size_native: number;
   native_received: number; gas_usd: number | null; fees_usd: number | null; jev_cost_usd: number | null; net_pnl_usd: number | null; next_check_at: number | null; closed_at: number | null; close_reason: string | null;
-  creator_balance_at_entry: number | null; liquidity_at_entry: number | null;
+  creator_balance_at_entry: number | null; liquidity_at_entry: number | null; liq_rebased?: number;
   // token
   address: string; symbol: string | null; launchpad: string; mechanics: string; pool_address: string | null; pool_key_json: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; decimals?: number | null;
 }
@@ -139,6 +139,12 @@ export class PositionMonitor {
     }
     const peak = Math.max(r.peak_price_native ?? r.entry_price_native, price);
     db.prepare("UPDATE positions SET peak_price_native = ?, last_price_native = ?, last_price_at = ? WHERE id = ?").run(peak, price, now, r.id);
+    // Graduáció a belépés után: a curve-tartalék átkerül a v4 poolba – a likviditás-alap egyszer átáll a v4 valódi ETH-jára,
+    // különben a két mérés különbsége hamis „likviditás-esés” vészjelzést adna.
+    if (r.graduated_at && r.graduated_at > r.opened_at && !r.liq_rebased && ps.liquidityNative !== null && ps.liquidityNative > 0) {
+      db.prepare("UPDATE positions SET liquidity_at_entry = ?, liq_rebased = 1 WHERE id = ?").run(ps.liquidityNative, r.id);
+      r.liquidity_at_entry = ps.liquidityNative; r.liq_rebased = 1;
+    }
     // ha belépéskor nem volt ismert likviditás (pl. copy/listázás), az első árfeed-érték lesz a viszonyítási alap
     if (r.liquidity_at_entry === null && ps.liquidityNative !== null) { db.prepare("UPDATE positions SET liquidity_at_entry = ? WHERE id = ?").run(ps.liquidityNative, r.id); r.liquidity_at_entry = ps.liquidityNative; }
     const state: PosState = { exit_plan: r.exit_plan, phase: r.phase, entry_price: r.entry_price_native, peak_price: peak, tokens_bought: r.tokens_bought, tokens_remaining: r.tokens_remaining, opened_at: r.opened_at, stages_done: r.stages_done };

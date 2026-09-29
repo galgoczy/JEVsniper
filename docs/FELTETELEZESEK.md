@@ -325,3 +325,15 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Javítás: eladáskor 0 (vagy negatív) ETH-likviditás = teljes veszteség (nettó 0); ismeretlen (null) marad 2%; vételnél 0 ETH nem végzetes (a token-oldal számít). Ugyanez a listázás-szimulációban.
 - A 09-28 délelőtti újraindítás és a 09-29-i javítás közötti lezárások szennyezettek → tiszta összehasonlítás: `alerts.since` / `features_since` = 2026-09-30.
 - A riport-verify „új tokenek” ellenőrzése futó bot mellett ±5 eltérést tűr (versenyhelyzet, nem hiba).
+
+## 2026-09-29 (este) – V2: graduációs szakasz, Clanker/PONS alapvonal
+- Adat (véletlen kontroll, 24 óra, javított mérés): base/uniswap 64/78, robinhood/uniswap 44/47 likviditás-kihúzással zárult; robinhood/pons (curve) 0/68, graduált PONS 2/10 kihúzás (valószínűleg a curve→v4 likviditás-váltás hamis jelzése). PONS-graduáció: 386 / 24 óra.
+- Új árnyékkarok (window 0, eseményvezérelt):
+  - grad_at: a graduáció első észlelésekor (PONS-token v4 Initialize-a egy későbbi blokkban), a pool induló árán (Initialize sqrtPriceX96). Csak natív (ETH/WETH) párnál.
+  - grad_15_all: +15 perc (config graduation.delay_min), friss pillanatkép (snapshots, 900-as címke), ha átmegy a kemény szűrőn.
+  - grad_15_hold: mint előző + ár ≥ graduációs ár, van valódi ETH a poolban, a készítő < 50%-ot adott el.
+  Feltételezés: a graduált PONS pool likviditása a PONS kezelésében van (a készítő nem húzhatja ki) – ezt a mérés ellenőrzi.
+- Graduáció utáni likviditás-alap: ha a pozíció a graduáció előtt nyílt, az első v4 valódi-ETH érték lesz az új alap (positions.liq_rebased, séma v7), így a curve→v4 váltás nem ad hamis „likviditás-esés” vészjelzést.
+- Árfeed-visszatöltés: ha a token felfedezése > 20 000 blokknál régebbi, az utolsó 20 000 blokkból tölt vissza (friss graduációnál ez teljes); ha így sem lát likviditás-hozzáadást, a virtuális becslés marad.
+- clanker_all (base/clanker) és pons_all (robinhood/pons) az indulási ablakokban: zárolt likviditású platformok alapvonala.
+- Időzítő-feltételezés: a +15 perces ellenőrzés újraindításkor elvész (a folyamatban lévő graduációknál kimarad).

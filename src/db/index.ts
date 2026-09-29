@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 /** Meglévő DB-hez hozzáadott oszlopok (a CREATE TABLE IF NOT EXISTS ezeket nem pótolja). */
 const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
@@ -22,6 +22,7 @@ const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ["tokens", "decimals", "INTEGER"],
   ["positions", "last_price_native", "REAL"],
   ["positions", "last_price_at", "INTEGER"],
+  ["positions", "liq_rebased", "INTEGER NOT NULL DEFAULT 0"],
 ];
 
 function migrate(db: DB) {
