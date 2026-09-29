@@ -17,7 +17,8 @@ export const LISTING_PLANS: Plan[] = [
 export interface SimCost { gasBuyUsd: number; gasSellUsd: number; feePct?: number; mevPct?: number }
 export interface SimResult { value: number; closed: boolean; reason: string }
 
-const impact = (usd: number, liq: number | null) => (liq && liq > 0 ? usd / (liq / 2 + usd) : 0.02);
+// null = ismeretlen → 2%; 0 likviditás eladáskor = semmit nem kapunk (kiürített pool)
+const impact = (usd: number, liq: number | null, sell = false) => (liq === null ? 0.02 : liq > 0 ? usd / (liq / 2 + usd) : sell ? 1 : 0.02);
 
 export function simulate(entryAt: number, entryPrice: number, entryLiq: number | null, series: Sample[], plan: Plan, cost: SimCost, sizeUsd = 1): SimResult {
   const fee = (cost.feePct ?? 1) / 100, mev = (cost.mevPct ?? 0.3) / 100;
@@ -26,9 +27,9 @@ export function simulate(entryAt: number, entryPrice: number, entryLiq: number |
   let cash = -sizeUsd - cost.gasBuyUsd, peak = entryPrice, stage = 0;
   const sell = (share: number, p: number, liq: number | null) => {
     const q = Math.min(tokens, bought * share); if (q <= 0) return;
-    const gross = q * p; cash += gross * (1 - fee - mev - impact(gross, liq)) - cost.gasSellUsd; tokens -= q;
+    const gross = q * p; cash += Math.max(0, gross * (1 - fee - mev - impact(gross, liq, true))) - cost.gasSellUsd; tokens -= q;
   };
-  const sellAll = (p: number, liq: number | null) => { if (tokens > 0) { const gross = tokens * p; cash += gross * (1 - fee - mev - impact(gross, liq)) - cost.gasSellUsd; tokens = 0; } };
+  const sellAll = (p: number, liq: number | null) => { if (tokens > 0) { const gross = tokens * p; cash += Math.max(0, gross * (1 - fee - mev - impact(gross, liq, true))) - cost.gasSellUsd; tokens = 0; } };
   for (const s of series) {
     if (s.at <= entryAt) continue;
     const m = s.price / entryPrice, age = s.at - entryAt;
@@ -43,6 +44,6 @@ export function simulate(entryAt: number, entryPrice: number, entryLiq: number |
   }
   // még nyitott: értékelés az utolsó áron (mintha most eladnánk)
   const last = series.filter((s) => s.at > entryAt).at(-1);
-  if (last && tokens > 0) { const gross = tokens * last.price; return { value: (cash + gross * (1 - fee - mev - impact(gross, last.liq)) - cost.gasSellUsd) / sizeUsd, closed: false, reason: "nyitott" }; }
+  if (last && tokens > 0) { const gross = tokens * last.price; return { value: (cash + Math.max(0, gross * (1 - fee - mev - impact(gross, last.liq, true))) - cost.gasSellUsd) / sizeUsd, closed: false, reason: "nyitott" }; }
   return { value: (cash + tokens * entryPrice) / sizeUsd, closed: false, reason: "nincs adat" };
 }

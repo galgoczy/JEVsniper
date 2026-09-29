@@ -74,3 +74,15 @@ test("árnyék-költségmodell: díj + csúszás a tartalékból + MEV + gas", (
   const d = shadowCost("base", "sell", 1, { feePct: 1, liquidityNative: null }, cfg.cost_model);
   assert.ok(Math.abs(d.slippageNative - 0.02) < 1e-12);
 });
+
+test("költségmodell: kiürített pool (0 ETH) eladáskor = semmit nem kapunk; ismeretlen = alapcsúszás", async () => {
+  const { shadowCost } = await import("../src/exit/costmodel.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cm = loadConfig("config.yaml").cost_model;
+  assert.equal(shadowCost("base", "sell", 0.001, { feePct: 1, liquidityNative: 0 }, cm).netNative, 0);
+  const unknown = shadowCost("base", "sell", 0.001, { feePct: 1, liquidityNative: null }, cm).netNative;
+  assert.ok(Math.abs(unknown - 0.001 * (1 - 0.01 - 0.02 - 0.003)) < 1e-12);
+  assert.ok(shadowCost("base", "buy", 0.001, { feePct: 1, liquidityNative: 0 }, cm).netNative > 0.0009);   // vétel: a token-oldal számít
+  const thin = shadowCost("base", "sell", 0.001, { feePct: 1, liquidityNative: 0.001 }, cm).netNative;     // a pozíció akkora, mint a pool
+  assert.ok(thin < 0.0005);
+});

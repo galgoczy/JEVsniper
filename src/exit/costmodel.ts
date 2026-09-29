@@ -12,10 +12,13 @@ export function shadowCost(chain: ChainKey, side: "buy" | "sell", grossNative: n
   const c = cfg[chain];
   const gasUsd = side === "buy" ? c.gas_buy_usd : c.gas_sell_usd;
   const feeNative = grossNative * (opts.feePct / 100);
-  const R = opts.liquidityNative && opts.liquidityNative > 0 ? opts.liquidityNative : null;
-  const impact = R ? grossNative / (R + grossNative) : c.default_slippage_pct / 100;
+  // null = ismeretlen likviditás → alapcsúszás. 0 (vagy negatív) ETH a poolban = eladáskor NINCS mit kapni (pl. kihúzott
+  // likviditás): az eladás mindent elveszít. Vételnél a token-oldal a mérvadó, ezért ott a 0 ETH nem végzetes → alapcsúszás.
+  const L = opts.liquidityNative;
+  const drained = L !== null && !(L > 0);
+  const impact = side === "sell" && drained ? 1 : L !== null && L > 0 ? grossNative / (L + grossNative) : c.default_slippage_pct / 100;
   const slippageNative = grossNative * impact;
   const mevNative = grossNative * (c.mev_allowance_pct / 100);
-  const netNative = side === "buy" ? grossNative - feeNative - slippageNative - mevNative : grossNative - feeNative - slippageNative - mevNative;
+  const netNative = Math.max(0, grossNative - feeNative - slippageNative - mevNative);
   return { gasUsd, feeNative, slippageNative, mevNative, netNative };
 }

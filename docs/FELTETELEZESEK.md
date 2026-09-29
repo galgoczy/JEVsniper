@@ -318,3 +318,10 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
   Copy-pozícióknál a v4 virtuális tartalék nem kerül a belépési likviditásba; ha belépéskor nincs likviditás, a monitor az első árfeed-értéket veszi alapnak.
   Következmény: a vékony valódi likviditású tokenek mostantól kiesnek a likviditás-szűrőn → a stratégiák tokenköre megváltozik. Tiszta összehasonlítás: `alerts.since` és `features_since` = 2026-09-29.
   Feltételezés: a felhalmozott, be nem gyűjtött díjak nincsenek benne (kicsi eltérés).
+
+## 2026-09-29 – HIBA: kiürített pool „nyereséges” eladásként
+- Tünet: egy nap alatt minden kar nyereségesre fordult (véletlen kontroll −0,17 → +0,27; base_uni_all 30 mp medián 1,78x), miközben a csak áralapú kimenet-követés (2x / −40% arány) nem változott.
+- Ok: a 09-28-i valódi-ETH javítás óta az árfeed látja a likviditás-kihúzást (ModifyLiquidity, swap nélkül): a valódi ETH 0-ra esik, az ár nem változik. A vészfék ekkor zárt, a költségmodell pedig a 0 likviditást „ismeretlennek” vette (2% alapcsúszás) → az eladás a kihúzás előtti áron könyvelődött. A valóságban üres poolból semmit nem kapunk.
+- Javítás: eladáskor 0 (vagy negatív) ETH-likviditás = teljes veszteség (nettó 0); ismeretlen (null) marad 2%; vételnél 0 ETH nem végzetes (a token-oldal számít). Ugyanez a listázás-szimulációban.
+- A 09-28 délelőtti újraindítás és a 09-29-i javítás közötti lezárások szennyezettek → tiszta összehasonlítás: `alerts.since` / `features_since` = 2026-09-30.
+- A riport-verify „új tokenek” ellenőrzése futó bot mellett ±5 eltérést tűr (versenyhelyzet, nem hiba).

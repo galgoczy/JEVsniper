@@ -177,8 +177,8 @@ listing:
 # élesítés-jelölt lesz (n ≥ 100), vagy kiesik; és ha egy token 10x fölé megy. A szabályokon nem változtat.
 alerts:
   enabled: true
-  since: "2026-09-29"      # tiszta adat ettől: v4 irány-javítás + valódi ETH-likviditás (a szűrő tokenköre is ettől új)
-  features_since: "2026-09-29"  # szabálykereső alapértelmezése (a pillanatkép-jellemzők ettől megbízhatók)
+  since: "2026-09-30"      # tiszta adat ettől: v4 irány + valódi ETH-likviditás + kiürített pool = teljes veszteség (09-29-i javítás)
+  features_since: "2026-09-30"  # szabálykereső alapértelmezése
   interval_min: 60
   big_winner_multiple: 10
 
