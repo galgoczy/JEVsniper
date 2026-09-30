@@ -337,3 +337,7 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Árfeed-visszatöltés: ha a token felfedezése > 20 000 blokknál régebbi, az utolsó 20 000 blokkból tölt vissza (friss graduációnál ez teljes); ha így sem lát likviditás-hozzáadást, a virtuális becslés marad.
 - clanker_all (base/clanker) és pons_all (robinhood/pons) az indulási ablakokban: zárolt likviditású platformok alapvonala.
 - Időzítő-feltételezés: a +15 perces ellenőrzés újraindításkor elvész (a folyamatban lévő graduációknál kimarad).
+
+## 2026-09-30 – Riport: csak az időszakban NYITOTT pozíciók; szabálykereső ✔ csak nyereségesnek
+- Hiba: a riport árnyék-táblája a lezárás ideje szerint szűrt, így a régen (akár a hibás mérésű napokon, vagy még a Jev-korszakban) nyitott, most időkorlát miatt lezáruló pozíciók is bekerültek (pl. jev_direct karok a döntési tábla élén, felfújt random_control n). Javítás: `opened_at > since` is kell (a figyelő és az állás-lekérés eddig is így számolt).
+- Szabálykereső: a ✔ eddig azt jelentette, hogy jobb az alapvonalnál – ez veszteséges szabályra is teljesült (pl. halott PONS-tokenek, amelyek „csak” a költséget veszítik). Mostantól ✔ = az ellenőrző részen nyereséges is (az átlag 90%-os alsó becslése > 0); ↑ = jobb az alapvonalnál, de veszteséges.

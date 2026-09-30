@@ -66,3 +66,14 @@ test("ütemező: a késői ablak csak a hatókörbe eső tokeneknek", () => {
   assert.equal(cfg.evaluation.late_window_sec, 0); // kikapcsolva (2026-09-28)
   assert.deepEqual(cfg.evaluation.late_scope, ["base/uniswap"]);
 });
+
+test("riport: az időszak előtt nyitott, de most lezáruló pozíció nem számít (régi, esetleg hibás mérés)", () => {
+  const db = openDb(":memory:");
+  const now = Date.now();
+  const tok = db.prepare("INSERT INTO tokens(chain, address, launchpad, mechanics, discovered_at) VALUES ('base', ?, 'uniswap', 'v4', ?)");
+  const pos = db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining,
+    phase, peak_price_native, closed_at, close_reason, net_pnl_usd, native_received) VALUES (?, 'base', 'stale_arm', 'live', 60, ?, 1, 1, 1, 1, 0, 'closed', 1, ?, 'time_limit_7d', 0.5, 1)`);
+  for (let i = 0; i < 30; i++) pos.run(Number(tok.run(`0xst${i}`, now).lastInsertRowid), now - 7 * 86_400_000, now - 3_600_000);
+  const md = buildReport(db, cfg).markdown;
+  assert.ok(!md.includes("| stale_arm |"), "a 7 napja nyitott pozíció nem kerülhet a 24 órás riportba");
+});

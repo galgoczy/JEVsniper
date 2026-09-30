@@ -36,9 +36,9 @@ if (samples.length < 90) {
     "## Alapvonalak (minden token az adott hatókörben)", "| hatókör | tanító n | nyerő | átlag érték | ellenőrző n | nyerő | átlag érték |", "|---|---|---|---|---|---|---|",
     ...r.scopes.map((s) => `| ${s.scope} | ${s.train.n} | ${pc(s.train.win)} | ${f3(s.train.mean)} | ${s.test.n} | ${pc(s.test.win)} | ${f3(s.test.mean)} |`), "",
     "## Legjobb szabályok (tanító rész alapján, az átlag óvatos alsó becslése szerint), ellenőrzés a későbbi adaton",
-    "✔ = az ellenőrző részen is egyértelműen jobb az alapvonalnál: az átlag óvatos (90%) alsó becslése is fölötte van (legalább 15 token).", "",
+    "✔ = az ellenőrző részen NYERESÉGES és egyértelműen jobb az alapvonalnál (az átlag óvatos 90%-os alsó becslése 0 és az alapvonal fölött, legalább 15 token).", "↑ = jobb az alapvonalnál, de még veszteséges (kevesebbet veszít – önmagában nem stratégia).", "",
     "| | hatókör | feltételek | tanító n | nyerő | átlag | ellenőrző n | nyerő | átlag | alsó becslés | alapvonal |", "|---|---|---|---|---|---|---|---|---|---|---|",
-    ...r.results.map((x) => `| ${x.holds ? "✔" : ""} | ${x.scope} | ${x.conds.join(" ÉS ")} | ${x.train.n} | ${pc(x.train.win)} | ${f3(x.train.mean)} | ${x.test.n} | ${x.test.n ? pc(x.test.win) : "-"} | ${x.test.n ? f3(x.test.mean) : "-"} | ${f3(x.test.low)} | ${f3(x.baseTest.mean)} |`), "",
+    ...r.results.map((x) => `| ${x.holds ? "✔" : x.better ? "↑" : ""} | ${x.scope} | ${x.conds.join(" ÉS ")} | ${x.train.n} | ${pc(x.train.win)} | ${f3(x.train.mean)} | ${x.test.n} | ${x.test.n ? pc(x.test.win) : "-"} | ${x.test.n ? f3(x.test.mean) : "-"} | ${f3(x.test.low)} | ${f3(x.baseTest.mean)} |`), "",
     "Figyelem: sok szabályt próbáltunk, ezért egy-egy ✔ szerencséből is kijöhet. Egy ✔ szabály csak jelölt:",
     "új árnyékstratégiaként kell friss adaton igazolnia magát, mielőtt élesítés szóba jöhet.");
 }

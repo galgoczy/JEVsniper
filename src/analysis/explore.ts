@@ -53,7 +53,7 @@ export function stat(xs: Sample[]): Stat {
   return { n, mean, win: xs.filter((s) => s.value > 0).length / n, low: mean - (1.645 * sd) / Math.sqrt(n), open: xs.filter((s) => s.open).length };
 }
 
-export interface RuleResult { scope: string; conds: string[]; train: Stat; test: Stat; baseTest: Stat; holds: boolean }
+export interface RuleResult { scope: string; conds: string[]; train: Stat; test: Stat; baseTest: Stat; holds: boolean; better: boolean }
 
 export function explore(samples: Sample[], opts: { minTrain?: number; minTest?: number; top?: number } = {}): { results: RuleResult[]; splitAt: number | null; scopes: Array<{ scope: string; train: Stat; test: Stat }>; tried: number } {
   const minTrain = opts.minTrain ?? 30, minTest = opts.minTest ?? 15, top = opts.top ?? 20;
@@ -88,7 +88,9 @@ export function explore(samples: Sample[], opts: { minTrain?: number; minTest?: 
     const sig = `${c.scope}|${c.train.n}|${c.train.mean.toFixed(4)}|${st.n}|${st.mean.toFixed(4)}`;
     if (seen.has(sig)) continue; seen.add(sig);
     results.push({ scope: c.scope, conds: c.ci.map((i) => CONDITIONS[i]!.name), train: c.train, test: st, baseTest: base.test,
-      holds: st.n >= minTest && st.mean > base.test.mean && st.low > base.test.mean });
+      // better: az ellenőrző részen egyértelműen jobb az alapvonalnál; holds: ráadásul nyereséges is (az alsó becslés > 0)
+      better: st.n >= minTest && st.mean > base.test.mean && st.low > base.test.mean,
+      holds: st.n >= minTest && st.mean > base.test.mean && st.low > base.test.mean && st.low > 0 });
   }
   return { results, splitAt: test[0]?.at ?? null, scopes, tried };
 }
