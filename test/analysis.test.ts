@@ -98,3 +98,17 @@ test("állás: stratégiánként egy sor, véletlen kontroll külön, parancs fe
   assert.doesNotMatch(txt, /• random_control/);
   assert.equal(parseCommand("/allas"), "allas");
 });
+
+test("állás: nyitott pozíciók az utolsó áron is látszanak (lassan záruló karok)", async () => {
+  const { standings } = await import("../src/analysis/standings.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml");
+  const db = openDb(":memory:");
+  const now = Date.now();
+  const tok = db.prepare("INSERT INTO tokens(chain, address, discovered_at) VALUES ('robinhood', ?, ?)");
+  const pos = db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining,
+    phase, last_price_native, gas_usd, liquidity_at_entry) VALUES (?, 'robinhood', 'grad_15_hold', 'live', 0, ?, 1, 1, 0.0004, 0.0004, 0.0004, 'pre_tp1', 1.5, 0.025, 1000)`);
+  for (let i = 0; i < 5; i++) pos.run(Number(tok.run(`0xg${i}`, now).lastInsertRowid), now - 3_600_000);
+  const txt = standings(db, now - 86_400_000, 60, now, cfg);
+  assert.match(txt, /• grad_15_hold: még nincs lezárt; nyitottakkal ~\+0\.4\d \(n=5, nyitott 5\)/);
+});

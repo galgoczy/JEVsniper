@@ -27,9 +27,13 @@ A felhasználó nem programozó: magyarul, egyszerűen fogalmazz, a parancsokat 
 - Döntési szabály: élesítés-jelölt csak ≥ 100 lezárt pozíció és teljesen nulla fölötti 90% CI mellett, és egy második, független időszakban is tartania kell.
 - Hirtelen, túl szép javulás = először mérési hibát keress (eddig ez mindig az volt). Futás közben a szabályokat nem írjuk át sorozatok alapján.
 
-## Állapot (2026-09-29)
-- Tiszta, torzítatlan adat: `alerts.since` / `features_since` = 2026-09-30 (előtte több mérési hiba volt; lásd FELTETELEZESEK.md, 09-28 és 09-29).
-- Eredmény eddig: friss Base/Uniswap és PONS indulásoknál minden stratégia veszít (fő ok: likviditás-kihúzás a Uniswap-indításoknál; a likviditás tulajdonosa sem véd). Jev ki van kapcsolva (nem hozott mérhető előnyt).
-- Futó tesztek: V2 graduációs szakasz (`grad_at`, `grad_15_all`, `grad_15_hold`), `clanker_all`, `pons_all`, copy trading (`copy_smart`, `copy_unskilled`), listázás-figyelő (Coinbase / Robinhood), korábbi karok.
-- Következő döntési pont: 2026-10-01 – `npm run report -- --since 2026-09-30` és `npm run explore`. Kérdés: van-e a graduációs karok közt a véletlennél és a költségeknél jobb; ha a szabálykereső sem talál a friss adaton tartó szabályt, a snipelést javasolt lezárni.
+## Állapot (2026-09-30)
+- Tiszta, torzítatlan adat: `alerts.since` / `features_since` = 2026-09-30. A riport csak az időszakban NYITOTT pozíciókat számolja.
+- Indulás-snipelés (friss Base/Uniswap és PONS): minden stratégia veszít (véletlen kontroll kb. −0,4 USD/pozíció; base_uni_all −0,4…−0,9). Fő ok: likviditás-kihúzás a Uniswap-indításoknál; a likviditás tulajdonosa sem véd. A szabálykereső (09-30) sem talált a friss adaton nyereséges szabályt → az indulási irány lezártnak tekinthető (a karok futhatnak tovább viszonyításnak).
+- Nyitott kérdések, ezeket figyeld:
+  - V2 graduáció (`grad_at`, `grad_15_all`, `grad_15_hold`): a pozíciók napokig nyitva lehetnek → a `npm run allas` „nyitottakkal ~” értéke (utolsó áron becsülve) ad korai képet.
+  - Copy trading: `copy_smart` 09-30-án +0,06 (n=59) – kevés, lehet véletlen; `copy_unskilled` −0,16.
+  - `clanker_all`, `pons_all` alapvonal; listázás-figyelő (még nem volt esemény).
+- Jev ki van kapcsolva (nem hozott mérhető előnyt).
+- Döntési szabály változatlan: élesítés-jelölt csak ≥ 100 lezárt pozíció, teljesen nulla fölötti 90% CI, és egy második független időszakban is tartson. Élesítésről csak a felhasználó dönt.
 - Tervezett karbantartás: a `wallet_trades` tábla gyorsan nő (~1 millió sor/nap) – 1–2 hét múlva automatikus törlés a régi sorokra.
