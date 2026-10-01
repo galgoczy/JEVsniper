@@ -8,7 +8,8 @@ import type { ChainKey } from "../chains/index.js";
 import { JevClient, JevPausedError } from "../jev/client.js";
 import { entryQuestions } from "../jev/questions.js";
 import { jevStateFromSnapshot } from "./state.js";
-import { labelsFrom, liveEntryRule, jevDirectArm, ruleScoreArm, randomControlArm, ruleV2, baseUniArm, baseUniLpArm, lateSurvivorArm, launchpadArm, inJevScope, type Labels, type RuleResult } from "./rules.js";
+import { labelsFrom, liveEntryRule, jevDirectArm, ruleScoreArm, randomControlArm, ruleV2, baseUniArm, baseUniLpArm, lateSurvivorArm, launchpadArm, noFactory, inJevScope, type Labels, type RuleResult } from "./rules.js";
+import { factoryRugCount } from "./factory.js";
 import { riskBlock, currentPositionUsd } from "./risk.js";
 import type { RegimeGate } from "./regime.js";
 import type { Executor } from "../exec/executor.js";
@@ -67,6 +68,10 @@ export class DecisionEngine {
     arms.push({ arm: "rule_v2_nojev", res: ruleV2(snap, null, "loose") });
     arms.push({ arm: "base_uni_all", res: baseUniArm(t.chain, t.launchpad, snap, "all") });
     arms.push({ arm: "base_uni_hold", res: baseUniArm(t.chain, t.launchpad, snap, "hold") });
+    // Gyári-token szűrő (2026-10-01): a két legjobb jelölt + „ezzel a szerződéskóddal még nem volt teljes likviditás-kihúzás”
+    const factoryRugs = factoryRugCount(db, t.id);
+    arms.push({ arm: "rule_v2_nofactory", res: noFactory(ruleV2(snap, null, "loose"), factoryRugs) });
+    arms.push({ arm: "base_uni_hold_nofactory", res: noFactory(baseUniArm(t.chain, t.launchpad, snap, "hold"), factoryRugs) });
     arms.push({ arm: "base_uni_lp_burned", res: baseUniLpArm(t.chain, t.launchpad, snap, "burned") });
     arms.push({ arm: "base_uni_clean", res: baseUniLpArm(t.chain, t.launchpad, snap, "clean") });
     arms.push({ arm: "clanker_all", res: launchpadArm(t.chain, t.launchpad, "base/clanker") });
@@ -85,15 +90,18 @@ export class DecisionEngine {
       }
     }
 
-    // 3) élő belépés csak az élő ablakban
-    if (w !== cfg.evaluation.live_window_sec || !labels) return;
-    const live = arms.find((a) => a.arm === "live_rule")!.res;
-    if (!live.enter) return;
-    const block = cfg.mode === "dry_run" ? "dry_run" : riskBlock(db, cfg, t, { jevPaused: this.d.jev.paused, regime, consecutiveFailed: this.d.executors[t.chain]?.consecutiveFailed ?? 0 });
-    ins.run(t.id, "live", w, regime, nowMs(), block ? 0 : 1, block ?? "enter", block ? null : posUsd * live.sizeMultiplier, callId);
+    // 3) élő belépés csak az élő ablakban: a config live_entry.arm kar dönt (2026-10-01-ig fixen a Jev-címkés live_rule volt)
+    if (w !== cfg.evaluation.live_window_sec) return;
+    const liveArm = cfg.live_entry.arm;
+    const live = arms.find((a) => a.arm === liveArm)?.res; // live_rule címkék nélkül nincs → nincs élő döntés
+    if (!live?.enter) return;
+    // a Jev szünete csak a Jev-címkés élő szabályt blokkolja; a Jev nélküli karoknak nem akadály
+    const jevPaused = liveArm === "live_rule" && this.d.jev.paused;
+    const block = cfg.mode === "dry_run" ? "dry_run" : riskBlock(db, cfg, t, { jevPaused, regime, consecutiveFailed: this.d.executors[t.chain]?.consecutiveFailed ?? 0 });
+    ins.run(t.id, "live", w, regime, nowMs(), block ? 0 : 1, block ?? `enter:${liveArm}`, block ? null : posUsd * live.sizeMultiplier, callId);
     if (block) {
-      log.info(`Élő belépés blokkolva: ${block}`, { token: t.symbol });
-      if (block === "dry_run") await this.d.notify(`🧪 dry_run: az élő szabály BELÉPNE ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${posUsd.toFixed(2)} USD-vel (P(2x)=${labels.p_tp1.toFixed(2)}, vevőminőség ${labels.buyer_quality}, ${labels.trade_pattern}, ${labels.entry_timing})`);
+      log.info(`Élő belépés blokkolva: ${block}`, { token: t.symbol, arm: liveArm });
+      if (block === "dry_run") await this.d.notify(`🧪 dry_run: az élő kar (${liveArm}) BELÉPNE ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${posUsd.toFixed(2)} USD-vel${labels ? ` (P(2x)=${labels.p_tp1.toFixed(2)}, vevőminőség ${labels.buyer_quality}, ${labels.trade_pattern}, ${labels.entry_timing})` : ""}`);
       return;
     }
     await this.enterLive(t, snap, labels, Math.min(cfg.risk.max_position_usd, posUsd * live.sizeMultiplier), w);
@@ -123,10 +131,11 @@ export class DecisionEngine {
     return n;
   }
 
-  private async enterLive(t: TokenRow, snap: ParamSnapshot, labels: Labels, sizeUsd: number, w: number) {
+  private async enterLive(t: TokenRow, snap: ParamSnapshot, labels: Labels | null, sizeUsd: number, w: number) {
     const { db, cfg } = this.d;
     const ex = this.d.executors[t.chain];
     if (!ex) return;
+    const plan = cfg.live_entry.exit_plan; // az élő pozíció kilépési terve (ugyanaz a készlet, mint az árnyékban)
     const eth = await this.d.ethUsd();
     if (typeof eth !== "number") { log.warn("nincs ETH/USD ár – nincs élő vétel"); return; }
     const wei = parseEther((sizeUsd / eth).toFixed(18));
@@ -136,13 +145,13 @@ export class DecisionEngine {
       // A pozíció sora csak sikeres vétel után jön létre; a sikertelen vétel gas-költsége a fills táblába kerül (position_id nélkül)
       const r = await ex.buy(route, token, wei, cfg.execution.max_slippage_pct, {});
       if (!r.ok || r.tokensReceived <= 0n) {
-        db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason, gas_usd, net_pnl_usd) VALUES (?,?,'live','live',?,?,?,?,?,0,0,'closed',?,?,?,?)")
-          .run(t.id, t.chain, w, nowMs(), num(snap.dynamics.price_native) ?? 0, sizeUsd, Number(wei) / 1e18, nowMs(), `buy_failed:${r.error ?? "no_tokens"}`, r.gasUsd ?? 0, -(r.gasUsd ?? 0));
+        db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason, gas_usd, net_pnl_usd) VALUES (?,?,'live',?,?,?,?,?,?,0,0,'closed',?,?,?,?)")
+          .run(t.id, t.chain, plan, w, nowMs(), num(snap.dynamics.price_native) ?? 0, sizeUsd, Number(wei) / 1e18, nowMs(), `buy_failed:${r.error ?? "no_tokens"}`, r.gasUsd ?? 0, -(r.gasUsd ?? 0));
         await this.d.notify(`⚠️ Vétel sikertelen ${t.chain}/${t.symbol ?? t.address}: ${r.error ?? "nem jött token"}`);
         return;
       }
       const posId = Number(db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase)
-        VALUES (?,?,'live','live',?,?,?,?,?,0,0,'pre_tp1')`).run(t.id, t.chain, w, nowMs(), num(snap.dynamics.price_native) ?? 0, sizeUsd, Number(wei) / 1e18).lastInsertRowid);
+        VALUES (?,?,'live',?,?,?,?,?,?,0,0,'pre_tp1')`).run(t.id, t.chain, plan, w, nowMs(), num(snap.dynamics.price_native) ?? 0, sizeUsd, Number(wei) / 1e18).lastInsertRowid);
       db.prepare("INSERT INTO fills(position_id, chain, kind, is_live, at, tx_hash, nonce, block_number, status, real_gas_usd, amount_in) VALUES (?,?,'buy',1,?,?,?,?,'success',?,?)")
         .run(posId, t.chain, nowMs(), r.hash, r.nonce, r.blockNumber !== null ? Number(r.blockNumber) : null, r.gasUsd, Number(wei) / 1e18);
       const tokens = Number(r.tokensReceived) / 1e18;
@@ -152,7 +161,7 @@ export class DecisionEngine {
         .run(tokens, tokens, entryPrice, entryPrice, r.gasUsd ?? 0, creatorBal, num(snap.contract.liquidity_native), nowMs(), posId);
       db.prepare("INSERT INTO daily_state(day, entries) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET entries = entries + 1").run(todayUtc());
       db.prepare("UPDATE tokens SET status = 'entered' WHERE id = ?").run(t.id);
-      await this.d.notify(`🟢 VÉTEL ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${sizeUsd.toFixed(2)} USD\nP(2x előbb)=${labels.p_tp1.toFixed(2)} vevőminőség=${labels.buyer_quality} minta=${labels.trade_pattern} időzítés=${labels.entry_timing}\ngas ${(r.gasUsd ?? 0).toFixed(4)} USD, tx ${r.hash}`);
+      await this.d.notify(`🟢 VÉTEL ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${sizeUsd.toFixed(2)} USD (kar ${cfg.live_entry.arm}, terv ${plan})${labels ? `\nP(2x előbb)=${labels.p_tp1.toFixed(2)} vevőminőség=${labels.buyer_quality} minta=${labels.trade_pattern} időzítés=${labels.entry_timing}` : ""}\ngas ${(r.gasUsd ?? 0).toFixed(4)} USD, tx ${r.hash}`);
     } catch (e) {
       log.warn("élő belépés hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) });
     }

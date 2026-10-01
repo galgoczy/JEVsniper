@@ -123,6 +123,38 @@ test("rule_v2 címkék nélkül: csak a számok döntenek", async () => {
   assert.equal(ruleV2(base, null).enter, true);
 });
 
+test("gyári-token szűrő: ugyanilyen kódú, kihúzott likviditású előzmény kiejt; egyedi kód átmegy", async () => {
+  const { noFactory } = await import("../src/decision/rules.js");
+  const { factoryRugCount } = await import("../src/decision/factory.js");
+  const db = openDb(":memory:");
+  const tok = db.prepare("INSERT INTO tokens(id, chain, address, creator, launchpad, mechanics, discovered_at, bytecode_hash) VALUES (?,'base',?,'0xc','uniswap','v4',0,?)");
+  tok.run(1, "0x1", "0xfab"); tok.run(2, "0x2", "0xfab"); tok.run(3, "0x3", "0xfab"); tok.run(4, "0x4", "0xunique"); tok.run(5, "0x5", null);
+  const pos = db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason) VALUES (?,'base','base_uni_all',?,60,1,1,1,0,1,0,'closed',2,?)");
+  pos.run(1, "live", "emergency:liquidity_drop_-100%"); pos.run(1, "B", "emergency:liquidity_drop_-100%"); // egy token, két terv → 1 token számít
+  pos.run(2, "live", "emergency:price_drop_-40%");  // nem teljes kihúzás → nem számít
+  assert.equal(factoryRugCount(db, 3), 1);   // az 1-es token kihúzása az előzmény
+  assert.equal(factoryRugCount(db, 1), 0);   // saját maga nem számít
+  assert.equal(factoryRugCount(db, 4), 0);   // egyedi kód
+  assert.equal(factoryRugCount(db, 5), 0);   // ismeretlen kód
+  const ok = { enter: true, reasons: [], sizeMultiplier: 1 };
+  assert.equal(noFactory(ok, 0).enter, true);
+  const blocked = noFactory(ok, 2);
+  assert.equal(blocked.enter, false); assert.deepEqual(blocked.reasons, ["factory_rugs=2"]);
+  db.close();
+});
+
+test("élő kar: config live_entry – alapértelmezés live_rule/live, ismeretlen kar elutasítva, config.yaml kara Jev nélküli", async () => {
+  const { ConfigSchema, LIVE_ARMS } = await import("../src/config.js");
+  const raw = structuredClone(cfg) as Record<string, unknown>;
+  delete raw.live_entry;
+  const parsed = ConfigSchema.parse(raw);
+  assert.deepEqual(parsed.live_entry, { arm: "live_rule", exit_plan: "live" });
+  assert.equal(ConfigSchema.safeParse({ ...raw, live_entry: { arm: "nincs_ilyen", exit_plan: "live" } }).success, false);
+  assert.equal(ConfigSchema.safeParse({ ...raw, live_entry: { arm: "rule_v2", exit_plan: "X" } }).success, false);
+  assert.ok((LIVE_ARMS as readonly string[]).includes(cfg.live_entry.arm));
+  assert.notEqual(cfg.live_entry.arm, "live_rule"); // 2026-10-01: Jev nélküli kar van bekötve
+});
+
 test("Jev kikapcsolva: nem hív, szünetelőnek számít", async () => {
   const db = openDb(":memory:");
   let calls = 0;

@@ -153,6 +153,7 @@ async function main() {
 
   const status = () => [
     `Jev Sniper – ${cfg.mode}`,
+    `élő kar: ${cfg.live_entry.arm} (${cfg.evaluation.live_window_sec} mp, terv ${cfg.live_entry.exit_plan})`,
     `wallet: ${account.address}`,
     ...chainStatus,
     `nyitott élő pozíciók: ${(db.prepare("SELECT COUNT(*) n FROM positions WHERE arm='live' AND closed_at IS NULL").get() as { n: number }).n}, árnyék: ${(db.prepare("SELECT COUNT(*) n FROM positions WHERE arm NOT IN ('live','day1_test') AND closed_at IS NULL").get() as { n: number }).n}, lezárt élő (24h): ${(db.prepare("SELECT COUNT(*) n, COALESCE(SUM(net_pnl_usd),0) s FROM positions WHERE arm='live' AND closed_at > ?").get(Date.now() - 86_400_000) as { n: number; s: number }).n}`,

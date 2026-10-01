@@ -23,6 +23,12 @@ const WatcherCfg = z.object({
   sources: z.record(z.string(), z.boolean()),
 });
 
+/** Élő vételre beköthető karok (a döntési motor árnyékkarjai közül azok, amelyek az élő ablakban is döntenek). */
+export const LIVE_ARMS = ["live_rule", "rule_v2", "rule_v2_strict", "rule_v2_nojev", "rule_v2_nofactory", "base_uni_all", "base_uni_hold",
+  "base_uni_hold_nofactory", "base_uni_lp_burned", "base_uni_clean", "clanker_all", "pons_all", "rule_score"] as const;
+/** Kilépési tervek: ugyanaz a készlet, mint az árnyékpozícióknál (live = config exit_plan). */
+export const EXIT_PLANS = ["live", "B", "C", "moon10", "moon30", "trail40", "trail60"] as const;
+
 export const ConfigSchema = z.object({
   mode: z.enum(["live", "dry_run"]),
   chains: z.object({ base: ChainCfg, robinhood: ChainCfg }),
@@ -97,6 +103,12 @@ export const ConfigSchema = z.object({
     }),
     random_control_share: prob,
   }),
+  // Élő vétel (2026-10-01): melyik kar dönt az élő ablakban (evaluation.live_window_sec), és milyen kilépési tervvel.
+  // live_rule = a régi Jev-címkés szabály (Jev kikapcsolva → sosem lép be); a többi Jev nélkül, a láncon mért adatokból dönt.
+  live_entry: z.object({
+    arm: z.enum(LIVE_ARMS).default("live_rule"),
+    exit_plan: z.enum(EXIT_PLANS).default("live"),
+  }).default({ arm: "live_rule", exit_plan: "live" }),
   exit_plan: z.object({
     tp1_multiple: z.number().min(1),
     tp1_sell_pct: pct,

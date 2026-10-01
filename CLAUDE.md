@@ -34,6 +34,8 @@ A felhasználó nem programozó: magyarul, egyszerűen fogalmazz, a parancsokat 
   - V2 graduáció (`grad_at`, `grad_15_all`, `grad_15_hold`): a pozíciók napokig nyitva lehetnek → a `npm run allas` „nyitottakkal ~” értéke (utolsó áron becsülve) ad korai képet.
   - Copy trading: `copy_smart` 09-30-án +0,06 (n=59) – kevés, lehet véletlen; `copy_unskilled` −0,16.
   - `clanker_all`, `pons_all` alapvonal; listázás-figyelő (még nem volt esemény).
+- 2026-10-01: a Jev nélküli karok (`rule_v2_strict` +0,83 n=25, `rule_v2` +0,64 n=37, `base_uni_hold` +0,64 n=24; véletlen −0,45) ⏳ pluszban, de a plusz időben olvad és néhány nagy nyerőn múlik – figyelni, nem élesíteni. Gyári tokenek (ismétlődő `bytecode_hash`, 100% likviditás-kihúzás): új karok `rule_v2_nofactory`, `base_uni_hold_nofactory`.
+- Élő vétel bekötve: `config.yaml` → `live_entry.arm` / `exit_plan` (most `rule_v2_strict` / `live`); dry_run-ban csak „BELÉPNE” Telegram-jelzés. Élesítés = `mode: live` + újraindítás + ETH a tárcában, csak a felhasználó döntésére.
 - Jev ki van kapcsolva (nem hozott mérhető előnyt).
 - Döntési szabály változatlan: élesítés-jelölt csak ≥ 100 lezárt pozíció, teljesen nulla fölötti 90% CI, és egy második független időszakban is tartson. Élesítésről csak a felhasználó dönt.
 - Tervezett karbantartás: a `wallet_trades` tábla gyorsan nő (~1 millió sor/nap) – 1–2 hét múlva automatikus törlés a régi sorokra.

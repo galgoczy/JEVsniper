@@ -103,6 +103,16 @@ entry:
     tp1_first_min_p: 0.5
   random_control_share: 0.20
 
+# Élő vétel (2026-10-01). Csak mode: live esetén vesz valóban; dry_run-ban Telegram-jelzés: „BELÉPNE”.
+# arm: melyik kar dönt az élő ablakban (evaluation.live_window_sec, ennek a windows_sec egyikének kell lennie).
+#   Jev nélküli karok: rule_v2, rule_v2_strict, rule_v2_nofactory, base_uni_hold, base_uni_hold_nofactory.
+#   live_rule = a régi Jev-címkés szabály (Jev kikapcsolva → sosem lép be).
+# exit_plan: live (a lenti exit_plan), B, C, moon10, moon30, trail40, trail60 – ugyanazok, mint az árnyékban.
+# 2026-10-01: rule_v2_strict a legjobb jelölt (+0,83, n=25) – még NEM élesítés-jelölt (kell ≥100 pozíció és második időszak).
+live_entry:
+  arm: rule_v2_strict
+  exit_plan: live
+
 exit_plan:
   tp1_multiple: 2.0
   tp1_sell_pct: 50

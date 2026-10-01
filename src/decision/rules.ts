@@ -126,6 +126,18 @@ export function baseUniArm(chain: string, launchpad: string | null, s: ParamSnap
   return { enter: r.length === 0, reasons: r, sizeMultiplier: 1 };
 }
 
+/**
+ * Gyári-token szűrő (2026-10-01): a Base/Uniswap indításoknál ugyanaz a szerződéskód (tokens.bytecode_hash) százszámra
+ * ismétlődik, és ezek a tokenek gyakorlatilag mind teljes likviditás-kihúzással végződnek (0xf381621c…: 386/386 pozíció,
+ * 0x592a9c4a…: 153/153) – előre megírt pump-and-pull. A nyerő karok plusza a NEM gyári tokenekből jött (rule_v2 60 mp:
+ * +1,55 vs. +0,15; base_uni_hold 30 mp: +1,53 vs. −0,04). factoryRugs = korábbi, ugyanilyen kódú tokenek száma, amelyeknél
+ * a likviditást teljesen kihúzták; ha van ilyen, a kar nem lép be.
+ */
+export function noFactory(base: RuleResult, factoryRugs: number): RuleResult {
+  if (factoryRugs <= 0) return base;
+  return { ...base, enter: false, reasons: [...base.reasons, `factory_rugs=${factoryRugs}`] };
+}
+
 /** Jev-címkézés hatóköre: üres lista = minden token; különben "lánc/launchpad" elemek. */
 export const inJevScope = (scope: string[], chain: string, launchpad: string | null): boolean =>
   scope.length === 0 || scope.includes(`${chain}/${launchpad}`);

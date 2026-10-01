@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tokens_status ON tokens(status);
+CREATE INDEX IF NOT EXISTS idx_tokens_bytecode ON tokens(bytecode_hash);
 CREATE INDEX IF NOT EXISTS idx_positions_open ON positions(phase) WHERE closed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_jev_calls_at ON jev_calls(called_at);
 CREATE INDEX IF NOT EXISTS idx_decisions_token ON decisions(token_id, arm);
