@@ -131,6 +131,9 @@ export class PositionMonitor {
     const now = nowMs();
     const setNext = (phase: Phase) => db.prepare("UPDATE positions SET next_check_at = ? WHERE id = ?").run(now + checkIntervalSec({ exit_plan: r.exit_plan, phase, entry_price: r.entry_price_native, peak_price: r.peak_price_native ?? r.entry_price_native, tokens_bought: r.tokens_bought, tokens_remaining: r.tokens_remaining, opened_at: r.opened_at, stages_done: r.stages_done }, now, cfg.monitoring) * 1000, r.id);
     if (!ps || ps.price <= 0) { setNext(r.phase); return; }
+    // v4 pool, amelynek a likviditás-előzménye még nincs visszatöltve (újraindítás után): a valódi ETH ismeretlen, egy közbeni
+    // kihúzás nem látszana → várunk vele (2026-10-02).
+    if (!feed.ready(r.token_id)) { setNext(r.phase); return; }
     const price = ps.price;
     const ratio = price / r.entry_price_native;
     if (!Number.isFinite(ratio) || ratio > 500 || ratio < 1e-6) { // árfeed-hiba (pl. tizedesjegy-eltérés), nem piaci mozgás

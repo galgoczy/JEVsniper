@@ -86,3 +86,41 @@ test("költségmodell: kiürített pool (0 ETH) eladáskor = semmit nem kapunk; 
   const thin = shadowCost("base", "sell", 0.001, { feePct: 1, liquidityNative: 0.001 }, cm).netNative;     // a pozíció akkora, mint a pool
   assert.ok(thin < 0.0005);
 });
+
+test("árfeed újraindítás után: régi tokennél nincs visszatöltés, a frissek adagolva, a várakozók nem értékelhetők", async () => {
+  const { PriceFeed } = await import("../src/exit/pricefeed.js");
+  const { openDb } = await import("../src/db/index.js");
+  const head = 1_000_000n;
+  let cur = head;
+  const backfilled = new Set<string>();
+  let backfillCalls = 0;
+  const client = {
+    getBlockNumber: async () => (cur += 5n),
+    getLogs: async (q: { args?: { id?: string | string[] }; fromBlock: bigint; toBlock: bigint }) => {
+      const id = q.args?.id;
+      if (typeof id === "string") { backfillCalls++; backfilled.add(id); }
+      return [];
+    },
+    multicall: async () => [],
+  } as never;
+  const db = openDb(":memory:");
+  const feed = new PriceFeed("base", client, db);
+  const pool = (i: number) => `0x${i.toString(16).padStart(64, "0")}`;
+  const tok = (i: number, disc: bigint) => ({ tokenId: i, token: `0x${i.toString(16).padStart(40, "0")}` as `0x${string}`, mechanics: "v4", pool: pool(i), creator: null, decimals: 18, pairToken: null, discoveredBlock: Number(disc) });
+  const tracked = [
+    ...Array.from({ length: 100 }, (_, i) => tok(i + 1, head - 50_000n)),      // régi: nincs visszatöltés
+    ...Array.from({ length: 50 }, (_, i) => tok(1000 + i, head - 1_000n - BigInt(i))), // friss: adagolva
+  ];
+  await feed.refresh(tracked);
+  for (let i = 1; i <= 100; i++) assert.equal(backfilled.has(pool(i)), false, `régi token ${i} nem tölthető`);
+  assert.equal(backfilled.size, 30);                       // első kör: legfeljebb 30 token
+  assert.ok(backfilled.has(pool(1000)));                   // a legfrissebb elöl
+  assert.equal(feed.ready(1), true);                       // régi token: értékelhető (virtuális becslés)
+  assert.equal(feed.ready(1000), true);                    // betöltve
+  assert.equal(feed.ready(1049), false);                   // a legrégebbi friss még vár
+  await feed.refresh(tracked);
+  assert.equal(backfilled.size, 50);
+  assert.equal(feed.ready(1049), true);
+  assert.ok(backfillCalls > 0);
+  db.close();
+});
