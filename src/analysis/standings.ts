@@ -70,10 +70,13 @@ const SHORT: Record<string, string> = {
   rule_v2: "v2", rule_v2_strict: "v2_strict", rule_v2_nofactory: "v2_nofact", rule_v2_nojev: "v2_nojev",
   base_uni_hold: "uni_hold", base_uni_hold_nofactory: "hold_nofact", base_uni_all: "base_uni_all", base_uni_clean: "uni_clean",
   copy_smart: "copy", copy_unskilled: "copy_rossz", pons_all: "pons", grad_at: "grad_at", clanker_all: "clanker",
+  pons_pregrad_50: "pregrad_50", pons_pregrad_80: "pregrad_80", grad_15_all: "grad_15",
 };
+/** Robinhood-blokk (2026-10-03): a Base-jelölt élő kar RH-eredménye („ha éled a tömeg”), a graduációs és a graduáció előtti karok. */
+const RH_ARMS: Array<[string, number | "live"]> = [["rule_v2_strict", "live"], ["pons_pregrad_50", 0], ["pons_pregrad_80", 0], ["grad_at", 0], ["grad_15_all", 0]];
 /** A telefonos nézet jelölt karjai (a Jev nélküli, eddig nyereséges család) és a viszonyítási alapvonalak. */
 const CANDIDATES = ["rule_v2_strict", "rule_v2", "rule_v2_nofactory", "base_uni_hold", "base_uni_hold_nofactory"];
-const BASELINES: Array<[string, number | "live"]> = [["base_uni_all", "live"], ["copy_smart", 0], ["pons_all", "live"], ["grad_at", 0]];
+const BASELINES: Array<[string, number | "live"]> = [["base_uni_all", "live"], ["copy_smart", 0], ["pons_all", "live"]];
 
 /**
  * Telefonos (Telegram /allas) állás, 2026-10-03: rövid sorok (≤ ~30 karakter), elöl az élő kar, a jelöltek Base-eredménye
@@ -106,6 +109,18 @@ export function standingsCompact(db: DB, sinceMs: number, cfg: Config, now = Dat
     for (const c of cands) L.push(`${(SHORT[c.arm] ?? c.arm).padEnd(11)} ${f(c.mean)}·n${c.n}·Σ${f1(c.sum)}`);
     L.push("");
   }
+
+  // Robinhood: lánconkénti eredmény (lezárt) + nyitott darabszám
+  const rh = new Map((db.prepare(`SELECT arm || '|' || window_sec k, SUM(closed_at IS NOT NULL) n, AVG(CASE WHEN closed_at IS NOT NULL THEN net_pnl_usd END) mean,
+      SUM(CASE WHEN closed_at IS NOT NULL THEN net_pnl_usd ELSE 0 END) sum, SUM(closed_at IS NULL) open FROM positions
+    WHERE chain = 'robinhood' AND exit_plan = 'live' AND opened_at > ? AND (close_reason IS NULL OR close_reason NOT LIKE 'invalid%') GROUP BY 1`)
+    .all(sinceMs) as Array<{ k: string; n: number; mean: number | null; sum: number; open: number }>).map((r) => [r.k, r]));
+  const rhLines = RH_ARMS.map(([a, win]) => {
+    const r = rh.get(`${a}|${win === "live" ? w : win}`); const name = (SHORT[a] ?? a).padEnd(11);
+    if (!r) return `${name} még nincs`;
+    return r.n ? `${name} ${f(r.mean ?? 0)}·n${r.n}·Σ${f1(r.sum)}` : `${name} nyitott ${r.open}`;
+  });
+  L.push("🟣 Robinhood", ...rhLines, "");
 
   const losers = BASELINES.map(([a, win]) => {
     const s = stats.get(`${a}|${win === "live" ? w : win}|live`);

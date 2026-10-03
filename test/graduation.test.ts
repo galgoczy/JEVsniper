@@ -73,3 +73,18 @@ test("figyelő: PONS-token későbbi v4 Initialize-a = graduáció → egyszer h
   await up({ ...init, blockNumber: 100n, address: "0x7777777777777777777777777777777777777777" }); // ismeretlen token → új uniswap token, nem graduáció
   assert.equal(calls.length, 1);
 });
+
+test("graduáció előtti kar: sávonként egyszer, átugrott sáv kimarad, csak natív quote", async () => {
+  const { PreGradArms } = await import("../src/graduation/pregrad.js");
+  const opened: string[] = [];
+  const arms = new PreGradArms(async (id, arm) => { opened.push(`${id}:${arm}`); return 7; });
+  const o = (tokenId: number, progressPct: number, nativeQuote = true) => arms.observe({ chain: "robinhood", tokenId, progressPct, price: 1e-9, liquidityNative: 1, nativeQuote });
+  assert.deepEqual(await o(1, 30), []);
+  assert.deepEqual(await o(1, 55), ["pons_pregrad_50"]);
+  assert.deepEqual(await o(1, 60), []);                    // már belépett
+  assert.deepEqual(await o(1, 85), ["pons_pregrad_80"]);
+  assert.deepEqual(await o(2, 95), ["pons_pregrad_80"]);   // az 50-es sávot átugrotta → csak a 80-as
+  assert.deepEqual(await o(3, 100), []);                   // mindkét sávot átugrotta
+  assert.deepEqual(await o(4, 70, false), []);             // nem natív quote
+  assert.deepEqual(opened, ["1:pons_pregrad_50", "1:pons_pregrad_80", "2:pons_pregrad_80"]);
+});

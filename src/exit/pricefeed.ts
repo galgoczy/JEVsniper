@@ -11,8 +11,8 @@ import { nativeInPositions, type LiqPos } from "../collector/lp.js";
 import { log } from "../logger.js";
 import { computePoolId, type PoolKey } from "../exec/routes.js";
 
-export interface Tracked { tokenId: number; token: Address; mechanics: string; pool: string | null; creator: Address | null; decimals: number; pairToken: string | null; poolKeyJson?: string | null; graduatedAt?: number | null; discoveredBlock?: number | null }
-export interface PriceState { price: number; at: number; block: bigint; liquidityNative: number | null; creatorBalance: number | null; swapsSinceLast: number; sellsSinceLast: number; graduated: boolean }
+export interface Tracked { tokenId: number; token: Address; mechanics: string; pool: string | null; creator: Address | null; decimals: number; pairToken: string | null; poolKeyJson?: string | null; graduatedAt?: number | null; discoveredBlock?: number | null; graduationThreshold?: string | null }
+export interface PriceState { price: number; at: number; block: bigint; liquidityNative: number | null; creatorBalance: number | null; swapsSinceLast: number; sellsSinceLast: number; graduated: boolean; curveProgressPct?: number | null }
 
 /**
  * Kötegelt árfolyam-követés láncenként: a nyitott pozíciók és a 24 órás kimenet-követés tokenjeire
@@ -128,7 +128,11 @@ export class PriceFeed {
         const tk = mc[i * 3 + 1]?.status === "success" ? (mc[i * 3 + 1]!.result as bigint) : null;
         const g = mc[i * 3 + 2]?.status === "success" ? (mc[i * 3 + 2]!.result as boolean) : false;
         if (g) bump(t.tokenId, { graduated: true, liquidityNative: null }); // graduált: az ár a v4 poolból (lent), a curve-tartalék nem érvényes
-        else if (q !== null && tk !== null && tk > 0n) bump(t.tokenId, { price: Number(q) / Number(tk) * 10 ** (t.decimals - 18), liquidityNative: Number(q) / 1e18, at: now, block: head, graduated: false });
+        else if (q !== null && tk !== null && tk > 0n) {
+          const thr = t.graduationThreshold ? BigInt(t.graduationThreshold) : 0n; // görbe haladása (graduáció előtti kar)
+          bump(t.tokenId, { price: Number(q) / Number(tk) * 10 ** (t.decimals - 18), liquidityNative: Number(q) / 1e18, at: now, block: head, graduated: false,
+            curveProgressPct: thr > 0n ? Math.min(100, Number((q * 10000n) / thr) / 100) : null });
+        }
       });
       if (head >= from) {
         const ev = ponsCurveAbi.filter((x) => x.type === "event");

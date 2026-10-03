@@ -18,13 +18,15 @@ export interface PosRow extends Omit<PosState, "entry_price" | "peak_price"> {
   native_received: number; gas_usd: number | null; fees_usd: number | null; jev_cost_usd: number | null; net_pnl_usd: number | null; next_check_at: number | null; closed_at: number | null; close_reason: string | null;
   creator_balance_at_entry: number | null; liquidity_at_entry: number | null; liq_rebased?: number;
   // token
-  address: string; symbol: string | null; launchpad: string; mechanics: string; pool_address: string | null; pool_key_json: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; decimals?: number | null;
+  address: string; symbol: string | null; launchpad: string; mechanics: string; pool_address: string | null; pool_key_json: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; decimals?: number | null; graduation_threshold?: string | null;
 }
 
 export interface MonitorDeps {
   db: DB; cfg: Config; jev: JevClient; executors: Partial<Record<ChainKey, Executor>>; feeds: Record<ChainKey, PriceFeed>;
   ethUsd: () => Promise<number | "unknown">; regime: () => string; notify: (t: string) => Promise<unknown>;
   onLiveClosed?: (pos: { id: number; net_pnl_usd: number }) => void;
+  /** PONS görbe-megfigyelés minden árfrissítés után (graduáció előtti árnyékkar) */
+  onCurve?: (o: { chain: ChainKey; tokenId: number; progressPct: number; price: number; liquidityNative: number | null; pairToken: string | null }) => Promise<unknown>;
 }
 
 /**
@@ -54,19 +56,19 @@ export class PositionMonitor {
   stop() { if (this.timer) clearInterval(this.timer); }
 
   private openRows(): PosRow[] {
-    return this.d.db.prepare(`SELECT p.*, t.address, t.symbol, t.launchpad, t.mechanics, t.pool_address, t.pool_key_json, t.creator, t.pair_token, t.graduated_at, t.decimals, t.discovered_block
+    return this.d.db.prepare(`SELECT p.*, t.address, t.symbol, t.launchpad, t.mechanics, t.pool_address, t.pool_key_json, t.creator, t.pair_token, t.graduated_at, t.decimals, t.discovered_block, t.graduation_threshold
       FROM positions p JOIN tokens t ON t.id = p.token_id WHERE p.closed_at IS NULL AND p.phase NOT IN ('closed','unsellable') AND p.arm != 'day1_test'`).all() as PosRow[];
   }
 
   private trackedFor(chain: ChainKey, rows: PosRow[]): Tracked[] {
     const seen = new Map<number, Tracked>();
-    const add = (r: { token_id: number; address: string; mechanics: string; pool_address: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; pool_key_json?: string | null; decimals?: number | null; discovered_block?: number | null }) => {
+    const add = (r: { token_id: number; address: string; mechanics: string; pool_address: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; pool_key_json?: string | null; decimals?: number | null; discovered_block?: number | null; graduation_threshold?: string | null }) => {
       if (seen.has(r.token_id)) return;
-      seen.set(r.token_id, { tokenId: r.token_id, token: getAddress(r.address), mechanics: r.mechanics, pool: r.pool_address, creator: r.creator ? getAddress(r.creator) : null, decimals: r.decimals ?? 18, pairToken: r.pair_token, poolKeyJson: r.pool_key_json ?? null, graduatedAt: r.graduated_at, discoveredBlock: r.discovered_block ?? null });
+      seen.set(r.token_id, { tokenId: r.token_id, token: getAddress(r.address), mechanics: r.mechanics, pool: r.pool_address, creator: r.creator ? getAddress(r.creator) : null, decimals: r.decimals ?? 18, pairToken: r.pair_token, poolKeyJson: r.pool_key_json ?? null, graduatedAt: r.graduated_at, discoveredBlock: r.discovered_block ?? null, graduationThreshold: r.graduation_threshold ?? null });
     };
     for (const r of rows) if (r.chain === chain) add(r);
     // 24 órás kimenet-követés: tokenek, ahol valamelyik kar belépett és még nincs lezárva
-    const oc = this.d.db.prepare(`SELECT DISTINCT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json, t.decimals, t.discovered_block FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
+    const oc = this.d.db.prepare(`SELECT DISTINCT o.token_id, t.address, t.mechanics, t.pool_address, t.creator, t.pair_token, t.graduated_at, t.pool_key_json, t.decimals, t.discovered_block, t.graduation_threshold FROM token_outcomes o JOIN tokens t ON t.id = o.token_id WHERE o.done_at IS NULL AND t.chain = ?`).all(chain) as never[];
     for (const r of oc) add(r);
     return [...seen.values()];
   }
@@ -83,6 +85,11 @@ export class PositionMonitor {
         if (!tracked.length || (!due && (this.d.db.prepare("SELECT COUNT(*) n FROM token_outcomes o JOIN tokens t ON t.id=o.token_id WHERE o.done_at IS NULL AND t.chain=?").get(chain) as { n: number }).n === 0)) continue;
         await this.d.feeds[chain].refresh(tracked).catch((e) => log.warn("árfeed hiba", { chain, error: (e as Error).message.slice(0, 120) }));
         this.updateOutcomes(chain);
+        if (this.d.onCurve) for (const t of tracked) {
+          const ps = this.d.feeds[chain].get(t.tokenId);
+          if (ps && !ps.graduated && typeof ps.curveProgressPct === "number" && ps.at >= now) // csak a most frissített görbék
+            await this.d.onCurve({ chain, tokenId: t.tokenId, progressPct: ps.curveProgressPct, price: ps.price, liquidityNative: ps.liquidityNative, pairToken: t.pairToken }).catch(() => undefined);
+        }
       }
       for (const r of rows) {
         if ((r.next_check_at ?? 0) > now) continue;
