@@ -184,6 +184,11 @@ bnb:
   enabled: true
   poll_ms: 5000
 
+# Solana / Pump.fun felvevő (2026-10-04): publikus websocket; sol_tokens, sol_trades (első 30 perc), sol_snapshots (30/60/180/600/1800 mp), sol_outcomes.
+# Nem kereskedik és nem nyit árnyékpozíciót.
+sol:
+  enabled: true
+
 listing:
   enabled: true
   poll_interval_sec: 60

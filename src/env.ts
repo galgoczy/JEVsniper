@@ -12,6 +12,8 @@ const EnvSchema = z.object({
   ROBINHOOD_PRIVATE_TX_RPC_URL: z.string().url().optional().or(z.literal("")),
   // BNB Chain (felvevő, 2026-10-04): opcionális; üresen a publicnode publikus végpontja
   BNB_RPC_URL: z.string().optional().or(z.literal("")),
+  // Solana (felvevő, 2026-10-04): opcionális websocket URL; üresen a publikus mainnet végpont
+  SOL_WS_URL: z.string().optional().or(z.literal("")),
   WALLET_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "WALLET_PRIVATE_KEY hiányzik vagy nem 0x + 64 hex"),
   TELEGRAM_BOT_TOKEN: z.string().min(10, "TELEGRAM_BOT_TOKEN hiányzik"),
   TELEGRAM_CHAT_ID: z.string().min(1, "TELEGRAM_CHAT_ID hiányzik"),

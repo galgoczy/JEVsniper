@@ -295,3 +295,25 @@ CREATE TABLE IF NOT EXISTS bnb_grads (
   quote TEXT, lp_tokens TEXT, funds TEXT,
   PRIMARY KEY (token, kind)
 );
+
+-- Solana / Pump.fun felvevő (2026-10-04). Árak SOL/token; összegek SOL (szám); idők ms (a láncon rögzített unix mp-ből).
+CREATE TABLE IF NOT EXISTS sol_tokens (
+  mint TEXT PRIMARY KEY, symbol TEXT, name TEXT, creator TEXT, user TEXT, created_at INTEGER NOT NULL,
+  quote_sol INTEGER NOT NULL, quote_mint TEXT, mayhem INTEGER, holder_reward INTEGER, creator_fee_bps INTEGER, bonding_curve TEXT
+);
+CREATE TABLE IF NOT EXISTS sol_trades (
+  id INTEGER PRIMARY KEY, mint TEXT NOT NULL, at INTEGER NOT NULL, side TEXT NOT NULL, user TEXT NOT NULL,
+  sol REAL NOT NULL, tokens REAL NOT NULL, price REAL NOT NULL, progress_pct REAL NOT NULL, signature TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sol_trades_mint ON sol_trades(mint, at);
+CREATE TABLE IF NOT EXISTS sol_snapshots (
+  mint TEXT NOT NULL, window_sec INTEGER NOT NULL, at INTEGER NOT NULL,
+  buys INTEGER, sells INTEGER, unique_buyers INTEGER, sol_in REAL, sol_out REAL, largest_buy_sol REAL,
+  price REAL, progress_pct REAL, creator_sold INTEGER, creator_bought INTEGER, last_trade_age_sec INTEGER,
+  PRIMARY KEY (mint, window_sec)
+);
+CREATE TABLE IF NOT EXISTS sol_outcomes (
+  mint TEXT PRIMARY KEY, ref_price REAL NOT NULL, ref_at INTEGER NOT NULL, max_x REAL NOT NULL, min_x REAL NOT NULL,
+  complete_at INTEGER, migrated_at INTEGER, done_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS sol_grads (mint TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL, pool TEXT, PRIMARY KEY (mint, kind));
