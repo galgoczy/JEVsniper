@@ -1,7 +1,7 @@
 # Jev Sniper Bot – minden paraméter és küszöb itt állítható.
 # A kockázati limitek (risk) CSAK itt állíthatók, kódban nincs felülírás.
 
-mode: live            # live | dry_run  (dry_run: minden fut, de nem küld tranzakciót)
+mode: dry_run         # live | dry_run  (dry_run: minden fut, Jev is, de tranzakció nem megy ki) – a 7. lépésig (kiszállás) maradjon dry_run!
 
 chains:
   base:
@@ -14,8 +14,8 @@ chains:
     native_symbol: ETH
 
 risk:
-  base_position_usd: 1
-  max_position_usd: 10
+  base_position_usd: 2          # élő vétel mérete (2026-10-03: 1 → 2 USD); az árnyékmérés fix 1 USD (evaluation.shadow_size_usd)
+  max_position_usd: null         # 2026-10-03: nincs felső határ a belépőre (visszaforgatással nőhet) – figyeljük; számmal visszaállítható
   deposit_cap_usd: 30
   max_open_positions: 15
   max_entries_per_hour: 10
@@ -25,7 +25,7 @@ risk:
   # Az 1. napi mérés után állítandó (irány: pozícióméret 5%-a, min. 0,05 USD)
   max_gas_per_tx_usd: 0.05
   max_gas_per_sell_usd: 0.15
-  jev_daily_budget_usd: 1.0
+  jev_daily_budget_usd: 5.0     # ~3–4 USD/nap várható (2026-09-22 mérés: 1791 token/2 óra); elérésekor a hold-kérdések ritkulnak
   one_entry_per_token: true
   max_entries_per_creator_per_day: 1
 
@@ -39,6 +39,7 @@ compound:
 regime:
   recalc_minutes: 60
   eth_24h_drop_pct_risk_off: 8        # kemény felülírás: ETH 24h esés efölött → risk_off
+  jev_risk_off_min_p: 0.7             # a Jev risk_off válaszát csak e valószínűség felett fogadjuk el, alatta cold
   risk_off_close_phases: ["pre_tp1"]  # mely fázisú pozíciók záródjanak risk_off-nál
 
 watcher:
@@ -57,8 +58,21 @@ watcher:
 evaluation:
   windows_sec: [30, 60, 180]
   live_window_sec: 60
+  # Jev-címkézés csak ezekre ("lánc/launchpad"); üres lista = minden token.
+  # 2026-09-24: a PONS-tokenekből egy 2x sem jött, a címkék ott csak költséget jelentettek.
+  jev_scope: ["base/uniswap"]
+  # Késői belépés teszt (2026-09-27): a csalások jellemzően az első 15–20 percben zuhannak be.
+  # 30 perc után még egy pillanatkép a Base/Uniswap tokenekről; a late_survivor árnyékkar csak itt dönt.
+  # 2026-09-28: KIKAPCSOLVA – 30 percnél a túlélő tokenek 14/16-a később nullára zuhant (átlag −1,00 USD; véletlen −0,99).
+  late_window_sec: 0
+  late_scope: ["base/uniswap"]
+  # Árnyékpozíciók fix mérete – NE változtasd menet közben (az átlagok USD/pozícióban összevethetők maradjanak)
+  shadow_size_usd: 1
 
 jev:
+  # false = a bot egyáltalán nem hívja a Jev-et (címkézés, rezsim, tartás); csak on-chain szabályok döntenek.
+  # 2026-09-26: egynapos Jev nélküli próba.
+  enabled: false
   model: jev-latest
   timeout_ms: 8000
   max_retries: 2
@@ -91,6 +105,18 @@ entry:
     tp1_first_min_p: 0.5
   random_control_share: 0.20
 
+# Élő vétel (2026-10-01). Csak mode: live esetén vesz valóban; dry_run-ban Telegram-jelzés: „BELÉPNE”.
+# arm: melyik kar dönt az élő ablakban (evaluation.live_window_sec, ennek a windows_sec egyikének kell lennie).
+#   Jev nélküli karok: rule_v2, rule_v2_strict, rule_v2_nofactory, base_uni_hold, base_uni_hold_nofactory.
+#   live_rule = a régi Jev-címkés szabály (Jev kikapcsolva → sosem lép be).
+# exit_plan: live (a lenti exit_plan), B, C, moon10, moon30, trail40, trail60 – ugyanazok, mint az árnyékban.
+# 2026-10-01: rule_v2_strict a legjobb jelölt (+0,83, n=25) – még NEM élesítés-jelölt (kell ≥100 pozíció és második időszak).
+live_entry:
+  arm: rule_v2_strict
+  exit_plan: live
+  # 2026-10-03: élő vétel csak Base-en (a nyereség Base/Uniswap-ról jön; a Robinhood-belépések veszítenek, és ott nincs pénz a tárcában)
+  chains: [base]
+
 exit_plan:
   tp1_multiple: 2.0
   tp1_sell_pct: 50
@@ -117,8 +143,15 @@ monitoring:
 execution:
   max_slippage_pct: 8
   panic_slippage_pct: 25
+  # ha a pozíció mérete ennél nagyobb árhatást okoz a poolban, nincs vétel (sekély pool = nem lehet kiszállni)
+  max_price_impact_pct: 10
   deadline_sec: 30
   retry_failed_tx_once: true
+
+# Árnyékkarok költségmodellje (8.) – az 1. napi mérésből; heti korrekció a riport alapján
+cost_model:
+  base:      { gas_buy_usd: 0.004, gas_sell_usd: 0.005, default_slippage_pct: 2, mev_allowance_pct: 0.3 }
+  robinhood: { gas_buy_usd: 0.025, gas_sell_usd: 0.030, default_slippage_pct: 2, mev_allowance_pct: 0.3 }
 
 telegram:
   enabled: true
@@ -127,6 +160,59 @@ telegram:
 report:
   daily_time_utc: "06:00"
   output_dir: reports
+
+# Copy trading árnyékteszt: a friss tokenek (utolsó 6 óra, szűrőn átment) összes vételét/eladását tárcánként menti,
+# 10 percenként pontozza a tárcákat (legalább 5 lezárt kör; nyerő arány ≥ 50% és összesen nyereséges = „smart”,
+# összesen veszteséges = „unskilled” kontroll), és ha egy ilyen tárca legalább 0,005 ETH-ért vesz, árnyék-belépés:
+# copy_smart / copy_unskilled. Valódi vétel nincs.
+copy:
+  enabled: true
+  universe_hours: 6
+  poll_interval_ms: 20000
+  min_closed_tokens: 5
+  min_win_rate: 0.5
+  min_buy_native: 0.005
+  score_refresh_min: 10
+
+# Listázás-figyelő: percenként lekéri a Coinbase (hivatalos, nyilvános API) és a Robinhood (NEM hivatalos,
+# nyilvános végpont) kereskedhető listáját. Új Base-tokenes Coinbase-listázás / új Robinhood-appos token, amelynek
+# Robinhood Chain címe van → Telegram + árnyék-belépés az észleléskori áron, ár-mintavétel 7 napig, és 5 kiszállási
+# terv szimulációja (gyors 1,3x; lépcsős 1,5x/3x; nagy 2x/5x; tartás 1 óra / 24 óra). Valódi vétel nincs.
+# BNB Chain / Four.Meme felvevő (2026-10-04): a TokenManager2 minden eseményét menti (bnb_tokens, bnb_trades, bnb_grads).
+# Nem kereskedik és nem nyit árnyékpozíciót – az adatból 1–2 nap múlva visszajátsszuk a belépési pillanatokat.
+bnb:
+  enabled: true
+  poll_ms: 5000
+
+# Solana / Pump.fun felvevő (2026-10-04): publikus websocket; sol_tokens, sol_trades (első 30 perc), sol_snapshots (30/60/180/600/1800 mp), sol_outcomes.
+# Nem kereskedik és nem nyit árnyékpozíciót.
+sol:
+  enabled: true
+
+listing:
+  enabled: true
+  poll_interval_sec: 60
+  coinbase: true
+  robinhood: true
+  robinhood_chain_match: "robinhood"   # DexScreener chainId-részlet a Robinhood Chainhez (nem ellenőrzött azonosító)
+  size_usd: 1
+  track_days: 7
+
+# V2 – graduációs szakasz: a PONS-tokenek a bonding curve után Uniswap v4 poolba kerülnek (napi több száz).
+# Árnyékkarok: grad_at (graduáláskor), grad_15_all (15 perc múlva, ha átmegy a kemény szűrőn),
+# grad_15_hold (15 perc múlva, ha az ár a graduációs ár fölött van, van valódi ETH és a készítő nem dömpingelt).
+graduation:
+  enabled: true
+  delay_min: 15
+
+# Futás közbeni figyelő (Telegram): szól, ha egy árnyékstratégia ígéretes lesz (90% CI > 0, n ≥ 20),
+# élesítés-jelölt lesz (n ≥ 100), vagy kiesik; és ha egy token 10x fölé megy. A szabályokon nem változtat.
+alerts:
+  enabled: true
+  since: "2026-09-30"      # tiszta adat ettől: v4 irány + valódi ETH-likviditás + kiürített pool = teljes veszteség (09-29-i javítás)
+  features_since: "2026-09-30"  # szabálykereső alapértelmezése
+  interval_min: 60
+  big_winner_multiple: 10
 
 db:
   path: data/jev-sniper.db
