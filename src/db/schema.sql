@@ -269,3 +269,29 @@ CREATE TABLE IF NOT EXISTS listing_prices (
   liq_usd REAL,
   PRIMARY KEY (event_id, at)
 );
+
+-- BNB Chain / Four.Meme felvevő (2026-10-04): a TokenManager2 nyers eseményei. A nagy számok (wei, token-mennyiség) szövegként.
+CREATE TABLE IF NOT EXISTS bnb_tokens (
+  address TEXT PRIMARY KEY,           -- kisbetűs
+  creator TEXT, name TEXT, symbol TEXT,
+  total_supply TEXT, launch_time INTEGER, launch_fee TEXT, request_id TEXT,
+  created_block INTEGER NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS bnb_trades (
+  tx TEXT NOT NULL, log_index INTEGER NOT NULL,
+  token TEXT NOT NULL, block INTEGER NOT NULL, at INTEGER NOT NULL,   -- at: becsült ms (blokkszám pontos)
+  side TEXT NOT NULL,                 -- buy | sell
+  account TEXT NOT NULL,              -- vételnél a token címzettje, eladásnál az eladó
+  price TEXT NOT NULL,                -- lastPrice a kötés UTÁN (quote wei / token, 1e18 skála)
+  amount TEXT NOT NULL, cost TEXT NOT NULL, fee TEXT NOT NULL,
+  offers TEXT NOT NULL,               -- maradék görbe-készlet a kötés után
+  funds TEXT NOT NULL,                -- összegyűlt quote a kötés után (görbe-haladás = funds / maxFunds)
+  PRIMARY KEY (tx, log_index)
+);
+CREATE INDEX IF NOT EXISTS idx_bnb_trades_token ON bnb_trades(token, block);
+CREATE TABLE IF NOT EXISTS bnb_grads (
+  token TEXT NOT NULL, block INTEGER NOT NULL, at INTEGER NOT NULL, tx TEXT,
+  kind TEXT NOT NULL,                 -- trade_stop | liquidity_added (graduáció → PancakeSwap)
+  quote TEXT, lp_tokens TEXT, funds TEXT,
+  PRIMARY KEY (token, kind)
+);

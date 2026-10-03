@@ -178,6 +178,12 @@ copy:
 # nyilvános végpont) kereskedhető listáját. Új Base-tokenes Coinbase-listázás / új Robinhood-appos token, amelynek
 # Robinhood Chain címe van → Telegram + árnyék-belépés az észleléskori áron, ár-mintavétel 7 napig, és 5 kiszállási
 # terv szimulációja (gyors 1,3x; lépcsős 1,5x/3x; nagy 2x/5x; tartás 1 óra / 24 óra). Valódi vétel nincs.
+# BNB Chain / Four.Meme felvevő (2026-10-04): a TokenManager2 minden eseményét menti (bnb_tokens, bnb_trades, bnb_grads).
+# Nem kereskedik és nem nyit árnyékpozíciót – az adatból 1–2 nap múlva visszajátsszuk a belépési pillanatokat.
+bnb:
+  enabled: true
+  poll_ms: 5000
+
 listing:
   enabled: true
   poll_interval_sec: 60

@@ -28,6 +28,7 @@ import { currentPositionUsd, shadowSizeUsd } from "./decision/risk.js";
 import { getAddress, isAddressEqual, type Address } from "viem";
 import { ADDRESSES, ZERO } from "./chains/addresses.js";
 import { PreGradArms } from "./graduation/pregrad.js";
+import { BnbRecorder } from "./bnb/recorder.js";
 
 /**
  * Főprogram – 1. lépés: váz. Indul, ellenőrzi a configot/env-et, megnyitja a DB-t,
@@ -118,6 +119,8 @@ async function main() {
   // Listázás-figyelő (Coinbase / Robinhood)
   const listing = new ListingWatcher({ db, cfg, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
   listing.start();
+  const bnbRecorder = cfg.bnb.enabled ? new BnbRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms }) : null;
+  bnbRecorder?.start();
   // 9. lépés: napi riport (config report.daily_time_utc) + /report parancs
   // Telegram-riport (2026-10-03): időarányos + állás + visszaforgatás, telefonra; a teljes markdown riport fájlba (napi, 24 órás)
   const telegramReport = () => {
@@ -186,6 +189,7 @@ async function main() {
     `szűrőn kiesett (24h): ${(db.prepare("SELECT COUNT(DISTINCT token_id) n FROM filter_log WHERE at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
+    ...(bnbRecorder ? [`BNB felvevő: ${bnbRecorder.stats.tokens} token, ${bnbRecorder.stats.trades} kötés, ${bnbRecorder.stats.grads} graduáció (indulás óta), ${bnbRecorder.stats.errors} hiba, blokk ${bnbRecorder.stats.lastBlock}`] : []),
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
     `Jev: ${jev.disabled ? "kikapcsolva" : jev.paused ? "szünetel" : "ok"}, rezsim: ${regime.regime}`,
     `döntések (24h): ${(db.prepare("SELECT SUM(arm='live' AND enter=1) l, SUM(arm='live_rule' AND enter=1) lr, SUM(arm='random_control' AND enter=1) rc, COUNT(DISTINCT token_id) n FROM decisions WHERE decided_at > ?").get(Date.now() - 86_400_000) as { l: number; lr: number; rc: number; n: number }).n} token címkézve`,
@@ -226,6 +230,7 @@ async function main() {
     clearInterval(alertTimer);
     copyTrackers.forEach((c) => c.stop());
     listing.stop();
+    bnbRecorder?.stop();
     graduation.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();

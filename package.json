@@ -21,7 +21,8 @@
     "verify:lp": "tsx scripts/verify-lp.ts",
     "explore": "tsx scripts/explore.ts",
     "allas": "tsx scripts/allas.ts",
-    "verify:listing": "tsx scripts/verify-listing.ts"
+    "verify:listing": "tsx scripts/verify-listing.ts",
+    "verify:bnb": "tsx scripts/verify-bnb.ts"
   },
   "repository": {
     "type": "git",

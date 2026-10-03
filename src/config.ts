@@ -170,6 +170,8 @@ export const ConfigSchema = z.object({
     size_usd: z.number().positive().default(1),
     track_days: z.number().positive().default(7),
   }).default({ enabled: true, poll_interval_sec: 60, coinbase: true, robinhood: true, robinhood_chain_match: "robinhood", size_usd: 1, track_days: 7 }),
+  // BNB Chain / Four.Meme felvevő (2026-10-04): minden indítás/vétel/eladás/graduáció mentése a későbbi szabályépítéshez; nem kereskedik
+  bnb: z.object({ enabled: z.boolean().default(false), poll_ms: z.number().int().min(1000).default(5000) }).default({ enabled: false, poll_ms: 5000 }),
   // V2 – graduációs szakasz (PONS curve → v4): árnyék-belépés graduáláskor és +delay_min perccel később
   graduation: z.object({
     enabled: z.boolean().default(true),

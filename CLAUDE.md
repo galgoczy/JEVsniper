@@ -36,6 +36,7 @@ A felhasználó nem programozó: magyarul, egyszerűen fogalmazz, a parancsokat 
   - `clanker_all`, `pons_all` alapvonal; listázás-figyelő (még nem volt esemény).
 - 2026-10-01: a Jev nélküli karok (`rule_v2_strict` +0,83 n=25, `rule_v2` +0,64 n=37, `base_uni_hold` +0,64 n=24; véletlen −0,45) ⏳ pluszban, de a plusz időben olvad és néhány nagy nyerőn múlik – figyelni, nem élesíteni. Gyári tokenek (ismétlődő `bytecode_hash`, 100% likviditás-kihúzás): új karok `rule_v2_nofactory`, `base_uni_hold_nofactory`.
 - Élő vétel bekötve: `config.yaml` → `live_entry.arm` / `exit_plan` (most `rule_v2_strict` / `live`), élő méret 2 USD (az árnyék fixen 1 USD: `evaluation.shadow_size_usd`); dry_run-ban csak „BELÉPNE” Telegram-jelzés. Élesítés = `mode: live` + újraindítás + ETH a tárcában, csak a felhasználó döntésére.
+- BNB Chain / Four.Meme (10-04): felvevő fut (`bnb_tokens`, `bnb_trades`, `bnb_grads`; `npm run verify:bnb`). Első mérés: ~6 200 indítás/nap, de szinte csak 1 vevős (készítő) tokenek; 1–2 nap adat után visszajátszás és szabály-jelöltek.
 - Jev ki van kapcsolva (nem hozott mérhető előnyt).
 - Döntési szabály változatlan: élesítés-jelölt csak ≥ 100 lezárt pozíció, teljesen nulla fölötti 90% CI, és egy második független időszakban is tartson. Élesítésről csak a felhasználó dönt.
 - Tervezett karbantartás: a `wallet_trades` tábla gyorsan nő (~1 millió sor/nap) – 1–2 hét múlva automatikus törlés a régi sorokra.
