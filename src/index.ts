@@ -20,7 +20,7 @@ import { PositionMonitor } from "./exit/monitor.js";
 import { CompoundManager } from "./compound/index.js";
 import { writeReport } from "./report/index.js";
 import { checkArms } from "./analysis/watch.js";
-import { standings, standingsCompact } from "./analysis/standings.js";
+import { standings, standingsCompact, tempoCompact } from "./analysis/standings.js";
 import { CopyTracker } from "./copy/tracker.js";
 import { ListingWatcher } from "./listing/watcher.js";
 import { GraduationTracker } from "./graduation/index.js";
@@ -202,8 +202,9 @@ async function main() {
       }
       case "report": { try { const r = writeReport(db, cfg); return r.telegram + `\nfájl: ${r.file}`; } catch (e) { return `riport hiba: ${(e as Error).message.slice(0, 120)}`; } }
       case "allas": { try { return standingsCompact(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "allasplus": { try { return tempoCompact(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg); } catch (e) { return `időarányos hiba: ${(e as Error).message.slice(0, 120)}`; } }
       case "allas_reszletes": { try { return standings(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg.evaluation.live_window_sec, Date.now(), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
-      case "help": return "/status /allas /allas_reszletes /report /stop /resume /panic";
+      case "help": return "/status /allas /allasplus /allas_reszletes /report /stop /resume /panic";
     }
   });
 

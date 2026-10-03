@@ -70,7 +70,7 @@ const SHORT: Record<string, string> = {
   rule_v2: "v2", rule_v2_strict: "v2_strict", rule_v2_nofactory: "v2_nofact", rule_v2_nojev: "v2_nojev",
   base_uni_hold: "uni_hold", base_uni_hold_nofactory: "hold_nofact", base_uni_all: "base_uni_all", base_uni_clean: "uni_clean",
   copy_smart: "copy", copy_unskilled: "copy_rossz", pons_all: "pons", grad_at: "grad_at", clanker_all: "clanker",
-  pons_pregrad_50: "pregrad_50", pons_pregrad_80: "pregrad_80", grad_15_all: "grad_15",
+  pons_pregrad_50: "pregrad_50", pons_pregrad_80: "pregrad_80", grad_15_all: "grad_15", random_control: "véletlen",
 };
 /** Robinhood-blokk (2026-10-03): a Base-jelölt élő kar RH-eredménye („ha éled a tömeg”), a graduációs és a graduáció előtti karok. */
 const RH_ARMS: Array<[string, number | "live"]> = [["rule_v2_strict", "live"], ["pons_pregrad_50", 0], ["pons_pregrad_80", 0], ["grad_at", 0], ["grad_15_all", 0]];
@@ -136,6 +136,46 @@ export function standingsCompact(db: DB, sinceMs: number, cfg: Config, now = Dat
   L.push(bal ? `💰 Tárca ${bal.usd.toFixed(1)}$ · igény ${wn.needUsd.toFixed(1)}$ ${bal.usd >= wn.needUsd ? "✅" : "⚠️ KEVÉS"}` : `💰 Igény ${wn.needUsd.toFixed(1)}$ (nincs egyenleg)`);
   const l = listingSummary(db, cfg, sinceMs);
   L.push(`📣 Listázás: ${l.events ? `${l.events} esemény` : "nincs"}`);
-  L.push("", "Részletes: /allas_reszletes");
+  L.push("", "Időarányos: /allasplus", "Részletes: /allas_reszletes");
+  return L.join("\n");
+}
+
+/** Kiesett mérési időszakok (a kilépés-figyelő leállása, 2026-10-01/02) – az időarányos számításból levonva. */
+const OUTAGES: Array<[number, number]> = [[Date.parse("2026-10-01T21:27:44Z"), Date.parse("2026-10-02T06:09:50Z")]];
+
+/** Aktív napok: az első érvényes belépéstől most-ig, a kiesett időszakok átfedését levonva. */
+export function activeDays(firstMs: number, now: number): number {
+  let ms = now - firstMs;
+  for (const [a, b] of OUTAGES) ms -= Math.max(0, Math.min(b, now) - Math.max(a, firstMs));
+  return Math.max(ms, 0) / 86_400_000;
+}
+
+/**
+ * Időarányos összehasonlítás (Telegram /allasplus, npm run allas -- --plus), 2026-10-03: karonként USD/nap és belépés/nap
+ * a lezárt pozíciókból (1 USD-s mérés), az élő mérettel átszámolt napi értékkel. Láncok külön (Base: a jelöltek és
+ * alapvonalak az élő ablakban; Robinhood: a saját karok). Az első érvényes belépéstől számol – a később indult karok is összevethetők.
+ */
+export function tempoCompact(db: DB, sinceMs: number, cfg: Config, now = Date.now()): string {
+  const w = cfg.evaluation.live_window_sec, live = currentPositionUsd(db, cfg);
+  const rows = db.prepare(`SELECT chain, arm, window_sec w, COUNT(*) n, SUM(net_pnl_usd) sum, MIN(opened_at) first FROM positions
+    WHERE exit_plan = 'live' AND opened_at > ? AND closed_at IS NOT NULL AND close_reason NOT LIKE 'invalid%' AND arm NOT IN ('live','day1_test')
+    GROUP BY chain, arm, window_sec`).all(sinceMs) as Array<{ chain: string; arm: string; w: number; n: number; sum: number; first: number }>;
+  const by = new Map(rows.map((r) => [`${r.chain}|${r.arm}|${r.w}`, r]));
+  const s = (x: number, d = 1) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
+  const line = (chain: string, arm: string, win: number, withLive: boolean) => {
+    const r = by.get(`${chain}|${arm}|${win}`); const name = `${SHORT[arm] ?? arm}${arm === cfg.live_entry.arm && chain === "base" ? "★" : ""}`.padEnd(11);
+    if (!r) return null;
+    const d = activeDays(r.first, now); if (d < 0.25) return `${name} kevés idő (n${r.n})`;
+    const perDay = r.sum / d;
+    return `${name} ${s(perDay).padStart(6)} ·${(r.n / d).toFixed(0).padStart(3)}p${withLive ? ` ·${live.toFixed(0)}$:${s(perDay * live, 0)}` : ""}`;
+  };
+  const L = ["⏱ Időarányos · USD/nap", "1$ mérés · belépés/nap", `jobb oldalt: élő ${live.toFixed(0)}$-ral`, ""];
+  const perDayOf = (a: string) => { const r = by.get(`base|${a}|${w}`); return r ? r.sum / Math.max(activeDays(r.first, now), 1e-9) : -Infinity; };
+  const base = [...[...CANDIDATES].sort((a, b) => perDayOf(b) - perDayOf(a)).map((a) => line("base", a, w, true)),
+    line("base", "random_control", w, false), line("base", "base_uni_all", w, false)].filter((x): x is string => x !== null);
+  L.push(`🔵 Base (${w}s)`, ...base, "");
+  const rh = RH_ARMS.map(([a, win]) => line("robinhood", a, win === "live" ? w : win, false)).filter((x): x is string => x !== null);
+  L.push("🟣 Robinhood", ...(rh.length ? rh : ["még nincs lezárt"]), "");
+  L.push("Lezártak; kiesett órák levonva", "★ = élő kar · Részletek: /allas");
   return L.join("\n");
 }

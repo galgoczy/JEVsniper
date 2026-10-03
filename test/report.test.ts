@@ -134,3 +134,25 @@ test("telefonos állás: rövid sorok, élő kar Base-eredménye, jelöltek Σ-v
   for (const line of txt.split("\n")) assert.ok(line.length <= 34, `túl hosszú sor: ${line}`);
   db.close();
 });
+
+test("időarányos: aktív napok a kiesett időszak levonásával; USD/nap sor", async () => {
+  const { activeDays, tempoCompact } = await import("../src/analysis/standings.js");
+  const day = 86_400_000;
+  const a = Date.parse("2026-10-01T21:27:44Z"), b = Date.parse("2026-10-02T06:09:50Z");
+  assert.ok(Math.abs(activeDays(a - day, b + day) - (2 * day) / day) < 1e-9);   // a kiesett szakasz teljesen levonva
+  assert.ok(Math.abs(activeDays(b, b + 2 * day) - 2) < 1e-9);                 // utána indult kar: nincs levonás
+  const { openDb } = await import("../src/db/index.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml");
+  const db = openDb(":memory:");
+  const now = Date.parse("2026-10-10T00:00:00Z"), start = now - 2 * day;
+  for (let i = 1; i <= 4; i++) {
+    db.prepare("INSERT INTO tokens(id, chain, address, creator, launchpad, mechanics, discovered_at) VALUES (?,'base',?,'0xc','uniswap','v4',0)").run(i, `0x${i}`);
+    db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason, net_pnl_usd) VALUES (?,'base',?,'live',?,?,1,1,0,1,0,'closed',?,'x',3)")
+      .run(i, cfg.live_entry.arm, cfg.evaluation.live_window_sec, start + i, start + i + 1000);
+  }
+  const txt = tempoCompact(db, start - 1, cfg, now);
+  assert.match(txt, /v2_strict★ +\+6\.0 · +2p ·2\$:\+12/);   // 12 USD / 2 nap = +6/nap, 2 belépés/nap, élő 2 USD-vel +12
+  for (const line of txt.split("\n")) assert.ok(line.length <= 36, `túl hosszú: ${line}`);
+  db.close();
+});
