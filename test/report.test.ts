@@ -77,3 +77,33 @@ test("riport: az időszak előtt nyitott, de most lezáruló pozíció nem szám
   const md = buildReport(db, cfg).markdown;
   assert.ok(!md.includes("| stale_arm |"), "a 7 napja nyitott pozíció nem kerülhet a 24 órás riportba");
 });
+
+test("tárca-igény: az élő kar egyidejűleg nyitott pozícióinak csúcsa × élő méret", async () => {
+  const { walletNeed, walletLine } = await import("../src/analysis/wallet.js");
+  const { openDb } = await import("../src/db/index.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml");
+  const db = openDb(":memory:");
+  for (let i = 1; i <= 7; i++) db.prepare("INSERT INTO tokens(id, chain, address, creator, launchpad, mechanics, discovered_at) VALUES (?,'base',?,'0xc','uniswap','v4',0)").run(i, `0x${i}`);
+  let tid = 0;
+  const stmt = db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, closed_at, close_reason) VALUES (?,?,?,?,?,?,1,1,0,1,1,?,?)");
+  const ins = { run: (...a: unknown[]) => stmt.run(++tid, ...a) };
+  const arm = cfg.live_entry.arm, w = cfg.evaluation.live_window_sec, plan = cfg.live_entry.exit_plan;
+  ins.run("base", arm, plan, w, 1000, 5000, "x");     // 1000–5000
+  ins.run("base", arm, plan, w, 2000, 3000, "x");     // átfed → 2
+  ins.run("base", arm, plan, w, 2500, 4000, "x");     // átfed → 3 (2500–3000)
+  ins.run("base", arm, plan, w, 6000, null, null);    // nyitott
+  ins.run("base", arm, plan, w, 2600, 2700, "invalid_monitor_stall"); // érvénytelen → nem számít
+  ins.run("robinhood", arm, plan, w, 2600, 2700, "x"); // másik lánc → nem számít
+  ins.run("base", arm, "B", w, 2600, 2700, "x");      // másik terv → nem számít
+  const r = walletNeed(db, cfg, 0, 2, 10_000);
+  assert.equal(r.positions, 4); assert.equal(r.peakOpen, 3); assert.equal(r.openNow, 1);
+  assert.ok(Math.abs(r.needUsd - 3 * 2.08) < 1e-9);
+  assert.match(walletLine(db, cfg, 0, 2, 10_000), /még nincs mérve/);
+  const put = db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)");
+  put.run("wallet_base_eth", "0.005"); put.run("wallet_eth_usd", "3000"); put.run("wallet_at", "1");
+  assert.match(walletLine(db, cfg, 0, 2, 10_000), /15\.00 USD → ✅ elég/);
+  put.run("wallet_base_eth", "0.001");
+  assert.match(walletLine(db, cfg, 0, 2, 10_000), /KEVÉS/);
+  db.close();
+});

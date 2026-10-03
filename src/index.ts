@@ -116,6 +116,16 @@ async function main() {
     const d = new Date();
     if (d.getUTCHours() === rh && d.getUTCMinutes() === rm) { try { const r = writeReport(db, cfg); void tg.send(r.telegram + `\nfájl: ${r.file}`); } catch (e) { log.warn("riport hiba", { error: (e as Error).message }); } }
   }, 60_000);
+  // Tárca-ellenőrzés (2026-10-03): a Base-egyenleg és az ETH-ár mentése 10 percenként a meta táblába – az állás-lekérés ebből számol
+  const saveWallet = async () => {
+    const ex = executors.base; if (!ex) return;
+    const [bal, eth] = await Promise.all([ex.nativeBalance(), ethPrice.get()]);
+    if (typeof eth !== "number") return;
+    const put = db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)");
+    put.run("wallet_base_eth", String(Number(bal) / 1e18)); put.run("wallet_eth_usd", String(eth)); put.run("wallet_at", String(Date.now()));
+  };
+  void saveWallet().catch(() => undefined);
+  const walletTimer = setInterval(() => void saveWallet().catch((e) => log.debug("tárca-egyenleg hiba", { error: (e as Error).message.slice(0, 100) })), 10 * 60_000);
   const regimeTimer = setInterval(() => void regime.refresh().catch(() => undefined), 60_000);
   // Futás közbeni figyelő: állapotváltáskor Telegram-üzenet (legfeljebb 6 sor egyszerre)
   const alertsSince = Date.parse(`${cfg.alerts.since}T00:00:00Z`);
@@ -195,6 +205,7 @@ async function main() {
     watchers.forEach((w) => w.stop());
     scheduler.stop();
     clearInterval(regimeTimer);
+    clearInterval(walletTimer);
     monitor.stop();
     clearInterval(compoundTimer);
     clearInterval(reportTimer);
