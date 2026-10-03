@@ -6,6 +6,7 @@ import { listingSummary } from "../listing/watcher.js";
 import { positionValue } from "./explore.js";
 import { walletLine, walletNeed, savedWalletBalance } from "./wallet.js";
 import { currentPositionUsd } from "../decision/risk.js";
+import { applyClose, computePositionUsd, type CompoundState } from "../compound/index.js";
 
 /**
  * Egyszerűsített állás menet közben (Telegram /allas, npm run allas): stratégiánként egy sor.
@@ -136,7 +137,7 @@ export function standingsCompact(db: DB, sinceMs: number, cfg: Config, now = Dat
   L.push(bal ? `💰 Tárca ${bal.usd.toFixed(1)}$ · igény ${wn.needUsd.toFixed(1)}$ ${bal.usd >= wn.needUsd ? "✅" : "⚠️ KEVÉS"}` : `💰 Igény ${wn.needUsd.toFixed(1)}$ (nincs egyenleg)`);
   const l = listingSummary(db, cfg, sinceMs);
   L.push(`📣 Listázás: ${l.events ? `${l.events} esemény` : "nincs"}`);
-  L.push("", "Időarányos: /allasplus", "Részletes: /allas_reszletes");
+  L.push("", "Riport: /report", "Részletes: /allas_reszletes");
   return L.join("\n");
 }
 
@@ -150,32 +151,67 @@ export function activeDays(firstMs: number, now: number): number {
   return Math.max(ms, 0) / 86_400_000;
 }
 
-/**
- * Időarányos összehasonlítás (Telegram /allasplus, npm run allas -- --plus), 2026-10-03: karonként USD/nap és belépés/nap
- * a lezárt pozíciókból (1 USD-s mérés), az élő mérettel átszámolt napi értékkel. Láncok külön (Base: a jelöltek és
- * alapvonalak az élő ablakban; Robinhood: a saját karok). Az első érvényes belépéstől számol – a később indult karok is összevethetők.
- */
-export function tempoCompact(db: DB, sinceMs: number, cfg: Config, now = Date.now()): string {
-  const w = cfg.evaluation.live_window_sec, live = currentPositionUsd(db, cfg);
+/** Időarányos sorok (USD/nap · belépés/nap) a lezárt pozíciókból (1 USD-s mérés), az első érvényes belépéstől számolt aktív idővel. */
+export function tempoLines(db: DB, sinceMs: number, cfg: Config, now = Date.now()): { base: string[]; rh: string[] } {
+  const w = cfg.evaluation.live_window_sec;
   const rows = db.prepare(`SELECT chain, arm, window_sec w, COUNT(*) n, SUM(net_pnl_usd) sum, MIN(opened_at) first FROM positions
     WHERE exit_plan = 'live' AND opened_at > ? AND closed_at IS NOT NULL AND close_reason NOT LIKE 'invalid%' AND arm NOT IN ('live','day1_test')
     GROUP BY chain, arm, window_sec`).all(sinceMs) as Array<{ chain: string; arm: string; w: number; n: number; sum: number; first: number }>;
   const by = new Map(rows.map((r) => [`${r.chain}|${r.arm}|${r.w}`, r]));
-  const s = (x: number, d = 1) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
-  const line = (chain: string, arm: string, win: number, withLive: boolean) => {
-    const r = by.get(`${chain}|${arm}|${win}`); const name = `${SHORT[arm] ?? arm}${arm === cfg.live_entry.arm && chain === "base" ? "★" : ""}`.padEnd(11);
-    if (!r) return null;
-    const d = activeDays(r.first, now); if (d < 0.25) return `${name} kevés idő (n${r.n})`;
-    const perDay = r.sum / d;
-    return `${name} ${s(perDay).padStart(6)} ·${(r.n / d).toFixed(0).padStart(3)}p${withLive ? ` ·${live.toFixed(0)}$:${s(perDay * live, 0)}` : ""}`;
+  const s = (x: number) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(1);
+  const perDay = (chain: string, arm: string, win: number) => { const r = by.get(`${chain}|${arm}|${win}`); return r ? r.sum / Math.max(activeDays(r.first, now), 1e-9) : -Infinity; };
+  const line = (chain: string, arm: string, win: number) => {
+    const r = by.get(`${chain}|${arm}|${win}`); if (!r) return null;
+    const name = `${SHORT[arm] ?? arm}${arm === cfg.live_entry.arm && chain === "base" ? "★" : ""}`.padEnd(12);
+    const d = activeDays(r.first, now); if (d < 0.25) return `${name}kevés idő (n${r.n})`;
+    return `${name}${s(r.sum / d).padStart(7)} ·${(r.n / d).toFixed(0).padStart(3)}p`;
   };
-  const L = ["⏱ Időarányos · USD/nap", "1$ mérés · belépés/nap", `jobb oldalt: élő ${live.toFixed(0)}$-ral`, ""];
-  const perDayOf = (a: string) => { const r = by.get(`base|${a}|${w}`); return r ? r.sum / Math.max(activeDays(r.first, now), 1e-9) : -Infinity; };
-  const base = [...[...CANDIDATES].sort((a, b) => perDayOf(b) - perDayOf(a)).map((a) => line("base", a, w, true)),
-    line("base", "random_control", w, false), line("base", "base_uni_all", w, false)].filter((x): x is string => x !== null);
-  L.push(`🔵 Base (${w}s)`, ...base, "");
-  const rh = RH_ARMS.map(([a, win]) => line("robinhood", a, win === "live" ? w : win, false)).filter((x): x is string => x !== null);
-  L.push("🟣 Robinhood", ...(rh.length ? rh : ["még nincs lezárt"]), "");
-  L.push("Lezártak; kiesett órák levonva", "★ = élő kar · Részletek: /allas");
-  return L.join("\n");
+  const base = [...[...CANDIDATES].sort((a, b) => perDay("base", b, w) - perDay("base", a, w)).map((a) => line("base", a, w)),
+    line("base", "random_control", w), line("base", "base_uni_all", w)].filter((x): x is string => x !== null);
+  const rh = RH_ARMS.map(([a, win]) => line("robinhood", a, win === "live" ? w : win)).filter((x): x is string => x !== null);
+  return { base, rh };
+}
+
+/**
+ * Visszaforgatás-szimuláció (a compound-szabály napi felülvizsgálattal): ha az élő kar (Base, élő ablak, élő terv) az eddigi
+ * árnyékeredményeivel élesben, a mostani alapmérettel futott volna, mekkora lenne ma a belépő. Napi újraszámolás a
+ * compound.recalc_time_utc időpontjában (UTC-nap határán), ugyanazokkal a függvényekkel, mint az élő compound.
+ */
+export function compoundSim(db: DB, sinceMs: number, cfg: Config, now = Date.now()): { size: number; pool: number; reserve: number; closes: number } {
+  const rows = db.prepare(`SELECT opened_at o, closed_at c, net_pnl_usd v, size_usd s FROM positions WHERE arm = ? AND chain = 'base' AND window_sec = ? AND exit_plan = ?
+    AND opened_at > ? AND closed_at IS NOT NULL AND close_reason NOT LIKE 'invalid%' ORDER BY closed_at`)
+    .all(cfg.live_entry.arm, cfg.evaluation.live_window_sec, cfg.live_entry.exit_plan, sinceMs) as Array<{ o: number; c: number; v: number; s: number }>;
+  const [hh, mm] = cfg.compound.recalc_time_utc.split(":").map(Number) as [number, number];
+  const recalcAt = (t: number) => { const d = new Date(t); d.setUTCHours(hh, mm, 0, 0); return d.getTime() <= t ? d.getTime() : d.getTime() - 86_400_000; };
+  let st: CompoundState = { deposit_usd: cfg.risk.deposit_cap_usd, growth_pool_usd: 0, reserve_usd: 0, working_capital_peak_usd: cfg.risk.deposit_cap_usd, position_usd: cfg.risk.base_position_usd, updated_at: 0 };
+  const sizeAt = new Map<number, number>(); // napi újraszámolás időpontja → méret
+  let lastRecalc = rows.length ? recalcAt(rows[0]!.o) : recalcAt(now);
+  const advance = (t: number) => { // napi felülvizsgálatok t-ig
+    while (lastRecalc + 86_400_000 <= t) { lastRecalc += 86_400_000; st = { ...st, position_usd: computePositionUsd(st, cfg.risk, cfg.compound, true) }; sizeAt.set(lastRecalc, st.position_usd); }
+  };
+  const sizeFor = (t: number) => { let size = cfg.risk.base_position_usd; for (const [at, sz] of sizeAt) if (at <= t) size = sz; return size; };
+  for (const r of rows) { advance(r.c); const scale = sizeFor(r.o) / (r.s || 1); st = applyClose(st, r.v * scale, cfg.compound.profit_share_to_growth_pool); }
+  advance(now);
+  return { size: st.position_usd, pool: st.growth_pool_usd, reserve: st.reserve_usd, closes: rows.length };
+}
+
+/**
+ * Telegram /report (2026-10-03): időarányos összehasonlítás (USD/nap · belépés/nap) + az /allas adatai + visszaforgatás.
+ * Rövid sorok telefonra. A teljes markdown riport fájlba íródik (writeReport), a hivatkozást a hívó fűzi hozzá.
+ */
+export function reportCompact(db: DB, sinceMs: number, cfg: Config, now = Date.now()): string {
+  const all = standingsCompact(db, sinceMs, cfg, now).split("\n");
+  const body = all.slice(1).filter((l) => !l.startsWith("Részletes:") && !l.startsWith("Riport:"));
+  const t = tempoLines(db, sinceMs, cfg, now);
+  const hours = Math.round((now - sinceMs) / 3_600_000);
+  const at = body.findIndex((l) => l.startsWith("⭐") || l.startsWith("🟣"));
+  const tempo = ["⏱ USD/nap · belépés/nap", `🔵 Base (${cfg.evaluation.live_window_sec}s)`, ...t.base, "🟣 Robinhood", ...(t.rh.length ? t.rh : ["még nincs lezárt"]), ""];
+  const merged = at >= 0 ? [...body.slice(0, at), ...tempo, ...body.slice(at)] : [...body, ...tempo];
+  const sim = compoundSim(db, sinceMs, cfg, now), cs = db.prepare("SELECT position_usd, growth_pool_usd FROM compound_state WHERE id = 1").get() as { position_usd: number; growth_pool_usd: number } | undefined;
+  const [hh, mm] = cfg.compound.recalc_time_utc.split(":");
+  const comp = [`🔁 Visszaforgatás 30% · napi`, `felülvizsgálat ${hh}:${mm} UTC`, `Belépő most: ${currentPositionUsd(db, cfg).toFixed(2)}$ · kassza ${(cs?.growth_pool_usd ?? 0).toFixed(2)}$`,
+    `Élesben ma: ${sim.size.toFixed(2)}$ (kassza ${sim.pool.toFixed(1)}$)`];
+  const fi = merged.findIndex((l) => l.startsWith("💰"));
+  const out = fi >= 0 ? [...merged.slice(0, fi), ...comp, "", ...merged.slice(fi)] : [...merged, ...comp];
+  return [`📊 Riport · ${hours} óra (${new Date(sinceMs).toISOString().slice(5, 10)} óta)`, ...out].join("\n").replace(/\n{3,}/g, "\n\n");
 }

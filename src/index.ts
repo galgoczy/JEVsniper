@@ -20,7 +20,7 @@ import { PositionMonitor } from "./exit/monitor.js";
 import { CompoundManager } from "./compound/index.js";
 import { writeReport } from "./report/index.js";
 import { checkArms } from "./analysis/watch.js";
-import { standings, standingsCompact, tempoCompact } from "./analysis/standings.js";
+import { standings, standingsCompact, reportCompact } from "./analysis/standings.js";
 import { CopyTracker } from "./copy/tracker.js";
 import { ListingWatcher } from "./listing/watcher.js";
 import { GraduationTracker } from "./graduation/index.js";
@@ -119,10 +119,15 @@ async function main() {
   const listing = new ListingWatcher({ db, cfg, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
   listing.start();
   // 9. lépés: napi riport (config report.daily_time_utc) + /report parancs
+  // Telegram-riport (2026-10-03): időarányos + állás + visszaforgatás, telefonra; a teljes markdown riport fájlba (napi, 24 órás)
+  const telegramReport = () => {
+    const file = writeReport(db, cfg).file;
+    return reportCompact(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg) + `\nTeljes: ${file}`;
+  };
   const [rh, rm] = cfg.report.daily_time_utc.split(":").map(Number) as [number, number];
   const reportTimer = setInterval(() => {
     const d = new Date();
-    if (d.getUTCHours() === rh && d.getUTCMinutes() === rm) { try { const r = writeReport(db, cfg); void tg.send(r.telegram + `\nfájl: ${r.file}`); } catch (e) { log.warn("riport hiba", { error: (e as Error).message }); } }
+    if (d.getUTCHours() === rh && d.getUTCMinutes() === rm) { try { void tg.send(telegramReport()); } catch (e) { log.warn("riport hiba", { error: (e as Error).message }); } }
   }, 60_000);
   // Tárca-ellenőrzés (2026-10-03): a Base-egyenleg és az ETH-ár mentése 10 percenként a meta táblába – az állás-lekérés ebből számol
   const saveWallet = async () => {
@@ -200,11 +205,10 @@ async function main() {
         await tg.send("🚨 PANIC: STOP beállítva, minden nyitott élő pozíció eladása indul…");
         return "🚨 PANIC eredmény:\n" + (await panicSellAll());
       }
-      case "report": { try { const r = writeReport(db, cfg); return r.telegram + `\nfájl: ${r.file}`; } catch (e) { return `riport hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "report": { try { return telegramReport(); } catch (e) { return `riport hiba: ${(e as Error).message.slice(0, 120)}`; } }
       case "allas": { try { return standingsCompact(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
-      case "allasplus": { try { return tempoCompact(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg); } catch (e) { return `időarányos hiba: ${(e as Error).message.slice(0, 120)}`; } }
       case "allas_reszletes": { try { return standings(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg.evaluation.live_window_sec, Date.now(), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
-      case "help": return "/status /allas /allasplus /allas_reszletes /report /stop /resume /panic";
+      case "help": return "/status /allas /report /allas_reszletes /stop /resume /panic";
     }
   });
 
