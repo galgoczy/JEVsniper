@@ -27,12 +27,16 @@ export function riskBlock(db: DB, cfg: Config, t: { id: number; chain: string; c
   }
   // betét-plafon: a nyitott élő pozíciók összege + az új nem lépheti túl a betétet
   const exposure = (db.prepare("SELECT COALESCE(SUM(size_usd),0) s FROM positions WHERE arm = 'live' AND closed_at IS NULL").get() as { s: number }).s;
-  const posUsd = (db.prepare("SELECT position_usd FROM compound_state WHERE id = 1").get() as { position_usd: number } | undefined)?.position_usd ?? r.base_position_usd;
+  const posUsd = currentPositionUsd(db, cfg);
   if (exposure + posUsd > (cs?.deposit_usd ?? r.deposit_cap_usd) + (cs?.growth_pool_usd ?? 0)) return "deposit_cap";
   return null;
 }
 
+/** Élő pozícióméret: a compound-állapot, de legalább a config alapmérete (2026-10-03: az alap 1 → 2 USD; a DB-ben tárolt régebbi érték nem viszi lejjebb). */
 export function currentPositionUsd(db: DB, cfg: Config): number {
   const cs = db.prepare("SELECT position_usd FROM compound_state WHERE id = 1").get() as { position_usd: number } | undefined;
-  return Math.min(cfg.risk.max_position_usd, cs?.position_usd ?? cfg.risk.base_position_usd);
+  return Math.min(cfg.risk.max_position_usd, Math.max(cfg.risk.base_position_usd, cs?.position_usd ?? cfg.risk.base_position_usd));
 }
+
+/** Árnyékpozíció mérete: fix (evaluation.shadow_size_usd), az élő mérettől független, hogy az USD/pozíció átlagok időben összevethetők maradjanak. */
+export const shadowSizeUsd = (cfg: Config): number => cfg.evaluation.shadow_size_usd;

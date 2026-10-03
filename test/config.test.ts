@@ -8,7 +8,8 @@ import { parseCommand } from "../src/telegram.js";
 
 test("config.yaml valid és a kockázati limitek a specifikáció szerintiek", () => {
   const c = loadConfig("config.yaml");
-  assert.equal(c.risk.base_position_usd, 1);
+  assert.equal(c.risk.base_position_usd, 2);
+  assert.equal(c.evaluation.shadow_size_usd, 1);
   assert.equal(c.risk.max_position_usd, 10);
   assert.equal(c.risk.deposit_cap_usd, 30);
   assert.equal(c.risk.max_open_positions, 15);

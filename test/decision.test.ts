@@ -164,3 +164,16 @@ test("Jev kikapcsolva: nem hív, szünetelőnek számít", async () => {
   await assert.rejects(jev.ask({ x: 1 }, regimeQuestions, { purpose: "regime" }), JevPausedError);
   assert.equal(calls, 0);
 });
+
+test("pozícióméret: élő = max(alap, compound), árnyék fix", async () => {
+  const { currentPositionUsd, shadowSizeUsd } = await import("../src/decision/risk.js");
+  const db = openDb(":memory:");
+  ensureCompoundState(db, 30, 1); // régi állapot: 1 USD
+  assert.equal(currentPositionUsd(db, cfg), cfg.risk.base_position_usd); // az alap (2) nem megy lejjebb
+  db.prepare("UPDATE compound_state SET position_usd = 3 WHERE id = 1").run();
+  assert.equal(currentPositionUsd(db, cfg), 3);
+  db.prepare("UPDATE compound_state SET position_usd = 50 WHERE id = 1").run();
+  assert.equal(currentPositionUsd(db, cfg), cfg.risk.max_position_usd);
+  assert.equal(shadowSizeUsd(cfg), 1);
+  db.close();
+});

@@ -71,6 +71,8 @@ export const ConfigSchema = z.object({
     // Késői „túlélő” ablak: csak ezekre a "lánc/launchpad" tokenekre, ennyi mp-cel az indulás után (0 = kikapcsolva)
     late_window_sec: z.number().int().min(0).default(0),
     late_scope: z.array(z.string()).default([]),
+    // Árnyékpozíciók fix mérete (USD) – az élő pozícióméret (risk.base_position_usd, compound) változása nem érinti
+    shadow_size_usd: z.number().positive().default(1),
   }),
   jev: z.object({
     enabled: z.boolean().default(true),

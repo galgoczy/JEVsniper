@@ -14,7 +14,7 @@ chains:
     native_symbol: ETH
 
 risk:
-  base_position_usd: 1
+  base_position_usd: 2          # élő vétel mérete (2026-10-03: 1 → 2 USD); az árnyékmérés fix 1 USD (evaluation.shadow_size_usd)
   max_position_usd: 10
   deposit_cap_usd: 30
   max_open_positions: 15
@@ -66,6 +66,8 @@ evaluation:
   # 2026-09-28: KIKAPCSOLVA – 30 percnél a túlélő tokenek 14/16-a később nullára zuhant (átlag −1,00 USD; véletlen −0,99).
   late_window_sec: 0
   late_scope: ["base/uniswap"]
+  # Árnyékpozíciók fix mérete – NE változtasd menet közben (az átlagok USD/pozícióban összevethetők maradjanak)
+  shadow_size_usd: 1
 
 jev:
   # false = a bot egyáltalán nem hívja a Jev-et (címkézés, rezsim, tartás); csak on-chain szabályok döntenek.

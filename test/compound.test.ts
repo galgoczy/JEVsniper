@@ -4,6 +4,8 @@ import { loadConfig } from "../src/config.js";
 import { applyClose, computePositionUsd, effectiveGrowth, type CompoundState } from "../src/compound/index.js";
 
 const cfg = loadConfig("config.yaml");
+// a képlet-példák 1 USD-s alapmérettel számolnak (a config.yaml alapja 2026-10-03 óta 2 USD)
+const risk1 = { ...cfg.risk, base_position_usd: 1 };
 const s0: CompoundState = { deposit_usd: 30, growth_pool_usd: 0, reserve_usd: 0, working_capital_peak_usd: 30, position_usd: 1, updated_at: 0 };
 
 test("kézi példa: 3 nyerő (+2, +3, +5) és 2 vesztes (−1, −0.8) → kassza 3, tartalék 7, betét 28.2", () => {
@@ -14,7 +16,7 @@ test("kézi példa: 3 nyerő (+2, +3, +5) és 2 vesztes (−1, −0.8) → kassz
   assert.ok(Math.abs(s.deposit_usd - 28.2) < 1e-9);         // veszteség a betétből
   assert.ok(Math.abs(s.working_capital_peak_usd - 31.2) < 1e-9);
   // méret: 1 + 3/15 = 1.2 USD
-  assert.ok(Math.abs(computePositionUsd(s, cfg.risk, cfg.compound, true) - 1.2) < 1e-9);
+  assert.ok(Math.abs(computePositionUsd(s, risk1, cfg.compound, true) - 1.2) < 1e-9);
 });
 
 test("veszteség sosem éri a tartalékot; a betét után a kassza fogy", () => {
@@ -26,10 +28,10 @@ test("veszteség sosem éri a tartalékot; a betét után a kassza fogy", () => 
 test("visszaesés 30%-nál a kassza felezve a méretszámításban, új csúcsig", () => {
   let s = { ...s0, deposit_usd: 30, growth_pool_usd: 15, working_capital_peak_usd: 45 };
   assert.equal(effectiveGrowth(s, 30).inDrawdown, false);
-  assert.ok(Math.abs(computePositionUsd(s, cfg.risk, cfg.compound, true) - 2.0) < 1e-9);   // 1 + 15/15
+  assert.ok(Math.abs(computePositionUsd(s, risk1, cfg.compound, true) - 2.0) < 1e-9);   // 1 + 15/15
   s = applyClose(s, -14, 0.3);     // forgó tőke 45 → 31 (−31%)
   assert.equal(effectiveGrowth(s, 30).inDrawdown, true);
-  assert.ok(Math.abs(computePositionUsd(s, cfg.risk, cfg.compound, true) - 1.5) < 1e-9);   // 1 + 7.5/15
+  assert.ok(Math.abs(computePositionUsd(s, risk1, cfg.compound, true) - 1.5) < 1e-9);   // 1 + 7.5/15
   s = applyClose(s, 20, 0.3);      // új csúcs
   assert.equal(effectiveGrowth(s, 30).inDrawdown, false);
 });

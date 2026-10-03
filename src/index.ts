@@ -24,7 +24,7 @@ import { standings } from "./analysis/standings.js";
 import { CopyTracker } from "./copy/tracker.js";
 import { ListingWatcher } from "./listing/watcher.js";
 import { GraduationTracker } from "./graduation/index.js";
-import { currentPositionUsd } from "./decision/risk.js";
+import { currentPositionUsd, shadowSizeUsd } from "./decision/risk.js";
 import { getAddress } from "viem";
 
 /**
@@ -102,11 +102,11 @@ async function main() {
   monitor.start(15_000);
   // Copy trading árnyékteszt: tárcakövetés láncenként
   const copyTrackers = (["base", "robinhood"] as ChainKey[]).filter((k) => cfg.chains[k].enabled).map((k) => new CopyTracker({ db, cfg, chain: k, client: clients[k],
-    ethUsd: () => ethPrice.get(), openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, currentPositionUsd(db, cfg), eth, liq) }));
+    ethUsd: () => ethPrice.get(), openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, shadowSizeUsd(cfg), eth, liq) }));
   copyTrackers.forEach((c) => c.start());
   // V2: graduációs szakasz (PONS curve → v4)
   const graduation = new GraduationTracker({ db, cfg, collect: (t, w) => collector.collect(t, w), saveSnapshot: (t, snap) => collector.saveSnapshot(t, snap, cfg.db.max_snapshot_bytes),
-    openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, currentPositionUsd(db, cfg), eth, liq), ethUsd: () => ethPrice.get() });
+    openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, shadowSizeUsd(cfg), eth, liq), ethUsd: () => ethPrice.get() });
   // Listázás-figyelő (Coinbase / Robinhood)
   const listing = new ListingWatcher({ db, cfg, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
   listing.start();

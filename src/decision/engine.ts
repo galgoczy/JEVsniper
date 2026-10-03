@@ -10,7 +10,7 @@ import { entryQuestions } from "../jev/questions.js";
 import { jevStateFromSnapshot } from "./state.js";
 import { labelsFrom, liveEntryRule, jevDirectArm, ruleScoreArm, randomControlArm, ruleV2, baseUniArm, baseUniLpArm, lateSurvivorArm, launchpadArm, noFactory, inJevScope, type Labels, type RuleResult } from "./rules.js";
 import { factoryRugCount } from "./factory.js";
-import { riskBlock, currentPositionUsd } from "./risk.js";
+import { riskBlock, currentPositionUsd, shadowSizeUsd } from "./risk.js";
 import type { RegimeGate } from "./regime.js";
 import type { Executor } from "../exec/executor.js";
 import { routeFor } from "../exec/routes.js";
@@ -85,7 +85,7 @@ export class DecisionEngine {
     for (const a of arms) {
       ins.run(t.id, a.arm, w, regime, nowMs(), a.res.enter ? 1 : 0, a.res.reasons.join(","), a.res.enter ? posUsd * a.res.sizeMultiplier : null, callId);
       if (a.res.enter && price !== null && supported) {
-        this.openShadow(t, a.arm, w, price, Math.min(cfg.risk.max_position_usd, posUsd * a.res.sizeMultiplier), snap);
+        this.openShadow(t, a.arm, w, price, Math.min(cfg.risk.max_position_usd, shadowSizeUsd(cfg) * a.res.sizeMultiplier), snap);
         db.prepare("INSERT OR IGNORE INTO token_outcomes(token_id, window_sec, ref_price, ref_at) VALUES (?,?,?,?)").run(t.id, w, price, nowMs());
       }
     }
