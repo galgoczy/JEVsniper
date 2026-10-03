@@ -34,7 +34,8 @@ export const ConfigSchema = z.object({
   chains: z.object({ base: ChainCfg, robinhood: ChainCfg }),
   risk: z.object({
     base_position_usd: z.number().positive(),
-    max_position_usd: z.number().positive(),
+    // felső határ a belépő méretére; null = nincs (2026-10-03: a felhasználó kérésére kikapcsolva, figyeljük)
+    max_position_usd: z.number().positive().nullable().default(null),
     deposit_cap_usd: z.number().positive(),
     max_open_positions: z.number().int().positive(),
     max_entries_per_hour: z.number().int().positive(),
@@ -184,7 +185,7 @@ export const ConfigSchema = z.object({
   }).default({ enabled: true, since: "2026-09-27", interval_min: 60, big_winner_multiple: 10 }),
   db: z.object({ path: z.string(), max_snapshot_bytes: z.number().int().positive() }),
 }).superRefine((c, ctx) => {
-  if (c.risk.max_position_usd < c.risk.base_position_usd) {
+  if (c.risk.max_position_usd !== null && c.risk.max_position_usd < c.risk.base_position_usd) {
     ctx.addIssue({ code: "custom", message: "risk.max_position_usd < base_position_usd" });
   }
   const e = c.exit_plan;
@@ -197,6 +198,9 @@ export const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+/** Belépő méret a config felső határával (ha van; null = nincs plafon). */
+export const capPositionUsd = (risk: Config["risk"], usd: number): number => (risk.max_position_usd === null ? usd : Math.min(risk.max_position_usd, usd));
 
 export function loadConfig(file = process.env.CONFIG_PATH ?? "config.yaml"): Config {
   const abs = path.resolve(file);

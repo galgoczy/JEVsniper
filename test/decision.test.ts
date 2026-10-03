@@ -174,7 +174,7 @@ test("pozícióméret: élő = max(alap, compound), árnyék fix", async () => {
   db.prepare("UPDATE compound_state SET position_usd = 3 WHERE id = 1").run();
   assert.equal(currentPositionUsd(db, cfg), 3);
   db.prepare("UPDATE compound_state SET position_usd = 50 WHERE id = 1").run();
-  assert.equal(currentPositionUsd(db, cfg), cfg.risk.max_position_usd);
+  assert.equal(currentPositionUsd(db, cfg), cfg.risk.max_position_usd ?? 50); // plafon nélkül a compound-méret
   assert.equal(shadowSizeUsd(cfg), 1);
   db.close();
 });

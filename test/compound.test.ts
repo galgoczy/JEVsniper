@@ -38,7 +38,8 @@ test("visszaesés 30%-nál a kassza felezve a méretszámításban, új csúcsig
 
 test("méret a plafonig; kapu zárva → alapméret; veszteségből nem nő", () => {
   const big = { ...s0, growth_pool_usd: 500, working_capital_peak_usd: 530 };
-  assert.equal(computePositionUsd(big, cfg.risk, cfg.compound, true), cfg.risk.max_position_usd);
+  assert.equal(computePositionUsd(big, { ...cfg.risk, max_position_usd: 10 }, cfg.compound, true), 10);   // plafonnal
+  assert.ok(Math.abs(computePositionUsd(big, { ...cfg.risk, max_position_usd: null }, cfg.compound, true) - (cfg.risk.base_position_usd + 500 / cfg.risk.max_open_positions)) < 1e-9); // plafon nélkül
   assert.equal(computePositionUsd(big, cfg.risk, cfg.compound, false), cfg.risk.base_position_usd);
   const lossy = applyClose(s0, -5, 0.3);
   assert.equal(computePositionUsd(lossy, cfg.risk, cfg.compound, true), cfg.risk.base_position_usd);

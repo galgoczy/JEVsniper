@@ -15,7 +15,7 @@ chains:
 
 risk:
   base_position_usd: 2          # élő vétel mérete (2026-10-03: 1 → 2 USD); az árnyékmérés fix 1 USD (evaluation.shadow_size_usd)
-  max_position_usd: 10
+  max_position_usd: null         # 2026-10-03: nincs felső határ a belépőre (visszaforgatással nőhet) – figyeljük; számmal visszaállítható
   deposit_cap_usd: 30
   max_open_positions: 15
   max_entries_per_hour: 10

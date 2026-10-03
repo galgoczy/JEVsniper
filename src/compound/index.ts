@@ -1,6 +1,6 @@
 import type { DB } from "../db/index.js";
 import { nowMs, logEvent } from "../db/index.js";
-import type { Config } from "../config.js";
+import { capPositionUsd, type Config } from "../config.js";
 import { log } from "../logger.js";
 
 export interface CompoundState { deposit_usd: number; growth_pool_usd: number; reserve_usd: number; working_capital_peak_usd: number; position_usd: number; updated_at: number }
@@ -33,7 +33,7 @@ export function effectiveGrowth(s: CompoundState, drawdownHalvingPct: number): {
 export function computePositionUsd(s: CompoundState, risk: Config["risk"], comp: Config["compound"], gateOk: boolean): number {
   const { effective } = effectiveGrowth(s, comp.drawdown_halving_pct);
   const raw = risk.base_position_usd + (gateOk ? effective : 0) / risk.max_open_positions;
-  return Math.min(risk.max_position_usd, Math.max(risk.base_position_usd, raw));
+  return capPositionUsd(risk, Math.max(risk.base_position_usd, raw));
 }
 
 export class CompoundManager {

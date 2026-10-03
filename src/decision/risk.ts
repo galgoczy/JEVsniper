@@ -1,6 +1,6 @@
 import type { DB } from "../db/index.js";
 import { nowMs, todayUtc } from "../db/index.js";
-import type { Config } from "../config.js";
+import { capPositionUsd, type Config } from "../config.js";
 import { stopFileExists } from "../killswitch.js";
 
 /** 4. Kemény kockázati korlátok – kódban, a stratégiától függetlenül. Visszaadja az első sértett korlátot, vagy null-t. */
@@ -35,7 +35,7 @@ export function riskBlock(db: DB, cfg: Config, t: { id: number; chain: string; c
 /** Élő pozícióméret: a compound-állapot, de legalább a config alapmérete (2026-10-03: az alap 1 → 2 USD; a DB-ben tárolt régebbi érték nem viszi lejjebb). */
 export function currentPositionUsd(db: DB, cfg: Config): number {
   const cs = db.prepare("SELECT position_usd FROM compound_state WHERE id = 1").get() as { position_usd: number } | undefined;
-  return Math.min(cfg.risk.max_position_usd, Math.max(cfg.risk.base_position_usd, cs?.position_usd ?? cfg.risk.base_position_usd));
+  return capPositionUsd(cfg.risk, Math.max(cfg.risk.base_position_usd, cs?.position_usd ?? cfg.risk.base_position_usd));
 }
 
 /** Árnyékpozíció mérete: fix (evaluation.shadow_size_usd), az élő mérettől független, hogy az USD/pozíció átlagok időben összevethetők maradjanak. */

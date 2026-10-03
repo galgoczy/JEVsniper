@@ -1,7 +1,7 @@
 import { getAddress, parseEther } from "viem";
 import type { DB } from "../db/index.js";
 import { nowMs, todayUtc } from "../db/index.js";
-import type { Config } from "../config.js";
+import { capPositionUsd, type Config } from "../config.js";
 import type { ParamSnapshot } from "../collector/types.js";
 import type { TokenRow } from "../collector/index.js";
 import type { ChainKey } from "../chains/index.js";
@@ -85,7 +85,7 @@ export class DecisionEngine {
     for (const a of arms) {
       ins.run(t.id, a.arm, w, regime, nowMs(), a.res.enter ? 1 : 0, a.res.reasons.join(","), a.res.enter ? posUsd * a.res.sizeMultiplier : null, callId);
       if (a.res.enter && price !== null && supported) {
-        this.openShadow(t, a.arm, w, price, Math.min(cfg.risk.max_position_usd, shadowSizeUsd(cfg) * a.res.sizeMultiplier), snap);
+        this.openShadow(t, a.arm, w, price, capPositionUsd(cfg.risk, shadowSizeUsd(cfg) * a.res.sizeMultiplier), snap);
         db.prepare("INSERT OR IGNORE INTO token_outcomes(token_id, window_sec, ref_price, ref_at) VALUES (?,?,?,?)").run(t.id, w, price, nowMs());
       }
     }
@@ -105,7 +105,7 @@ export class DecisionEngine {
       if (block === "dry_run") await this.d.notify(`🧪 dry_run: az élő kar (${liveArm}) BELÉPNE ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${posUsd.toFixed(2)} USD-vel${labels ? ` (P(2x)=${labels.p_tp1.toFixed(2)}, vevőminőség ${labels.buyer_quality}, ${labels.trade_pattern}, ${labels.entry_timing})` : ""}`);
       return;
     }
-    await this.enterLive(t, snap, labels, Math.min(cfg.risk.max_position_usd, posUsd * live.sizeMultiplier), w);
+    await this.enterLive(t, snap, labels, capPositionUsd(cfg.risk, posUsd * live.sizeMultiplier), w);
   }
 
   private openShadow(t: TokenRow, arm: string, w: number, price: number, sizeUsd: number, snap: ParamSnapshot) {
