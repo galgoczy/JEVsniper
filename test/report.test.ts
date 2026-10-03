@@ -107,3 +107,30 @@ test("tárca-igény: az élő kar egyidejűleg nyitott pozícióinak csúcsa × 
   assert.match(walletLine(db, cfg, 0, 2, 10_000), /KEVÉS/);
   db.close();
 });
+
+test("telefonos állás: rövid sorok, élő kar Base-eredménye, jelöltek Σ-val", async () => {
+  const { standingsCompact } = await import("../src/analysis/standings.js");
+  const { openDb } = await import("../src/db/index.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml");
+  const db = openDb(":memory:");
+  const w = cfg.evaluation.live_window_sec;
+  let id = 0;
+  const pos = (chain: string, arm: string, net: number) => {
+    id++;
+    db.prepare("INSERT INTO tokens(id, chain, address, creator, launchpad, mechanics, discovered_at) VALUES (?,?,?,'0xc','uniswap','v4',0)").run(id, chain, `0x${id}`);
+    db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason, net_pnl_usd) VALUES (?,?,?,'live',?,?,1,1,0,1,0,'closed',?,'x',?)")
+      .run(id, chain, arm, w, 2000, 3000, net);
+  };
+  for (let i = 0; i < 5; i++) pos("base", cfg.live_entry.arm, 1);
+  pos("robinhood", cfg.live_entry.arm, -1);
+  for (let i = 0; i < 3; i++) pos("base", "rule_v2", 2);
+  for (let i = 0; i < 4; i++) pos("base", "random_control", -0.5);
+  const txt = standingsCompact(db, 1000, cfg, 3_600_000 * 10);
+  assert.match(txt, /Base: \+1\.00 · n5 · Σ\+5\.0/);
+  assert.match(txt, /Össz: \+0\.67 · n6/);
+  assert.match(txt, /v2 +\+2\.00·n3·Σ\+6\.0/);
+  assert.match(txt, /Véletlen: −0\.50 \(n4\)/);
+  for (const line of txt.split("\n")) assert.ok(line.length <= 34, `túl hosszú sor: ${line}`);
+  db.close();
+});

@@ -95,6 +95,7 @@ export class DecisionEngine {
     const liveArm = cfg.live_entry.arm;
     const live = arms.find((a) => a.arm === liveArm)?.res; // live_rule címkék nélkül nincs → nincs élő döntés
     if (!live?.enter) return;
+    if (cfg.live_entry.chains.length && !cfg.live_entry.chains.includes(t.chain)) return; // élő vétel csak a megadott láncokon (az árnyékmérés mindenhol fut)
     // a Jev szünete csak a Jev-címkés élő szabályt blokkolja; a Jev nélküli karoknak nem akadály
     const jevPaused = liveArm === "live_rule" && this.d.jev.paused;
     const block = cfg.mode === "dry_run" ? "dry_run" : riskBlock(db, cfg, t, { jevPaused, regime, consecutiveFailed: this.d.executors[t.chain]?.consecutiveFailed ?? 0 });

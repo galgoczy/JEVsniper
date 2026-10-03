@@ -110,7 +110,9 @@ export const ConfigSchema = z.object({
   live_entry: z.object({
     arm: z.enum(LIVE_ARMS).default("live_rule"),
     exit_plan: z.enum(EXIT_PLANS).default("live"),
-  }).default({ arm: "live_rule", exit_plan: "live" }),
+    // Élő vétel csak ezeken a láncokon (2026-10-03: a nyereség csak Base/Uniswap-ról jön; üres = mindegyik)
+    chains: z.array(z.enum(["base", "robinhood"])).default([]),
+  }).default({ arm: "live_rule", exit_plan: "live", chains: [] }),
   exit_plan: z.object({
     tp1_multiple: z.number().min(1),
     tp1_sell_pct: pct,

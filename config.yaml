@@ -114,6 +114,8 @@ entry:
 live_entry:
   arm: rule_v2_strict
   exit_plan: live
+  # 2026-10-03: élő vétel csak Base-en (a nyereség Base/Uniswap-ról jön; a Robinhood-belépések veszítenek, és ott nincs pénz a tárcában)
+  chains: [base]
 
 exit_plan:
   tp1_multiple: 2.0
