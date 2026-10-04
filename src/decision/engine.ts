@@ -24,7 +24,7 @@ export interface EngineDeps {
   notify: (text: string) => Promise<unknown>;
 }
 
-const SHADOW_EXIT_PLANS = ["live", "B", "C", "moon10", "moon30", "trail40", "trail60"];
+const SHADOW_EXIT_PLANS = ["live", "B", "C", "moon10", "moon30", "trail40", "trail60", "run70"]; // run70: 2026-10-04 óta
 
 /**
  * 6. Döntési motor. Minden pillanatképre (30/60/180 mp), ami átment a kemény szűrőn:

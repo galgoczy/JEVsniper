@@ -143,3 +143,16 @@ test("ár-józansági szűrő: tartós összeomlás (≥3 ellenőrzés és ≥5 
   assert.equal(sanityCheck(fresh, 4, 5e-7, 1_000_000, 3, 300_000, 1_000_000 - 400_000), "accept");
   assert.equal(sanityCheck(new Map(), 5, 5e-7, 1_000_000, 3, 300_000, 1_000_000 - 100_000), "skip"); // mentett, de még csak 100 mp
 });
+
+test("run70 kilépési terv: 2x-nél 30% el, a maradék a csúcstól −40%-nál zár", async () => {
+  const { planAction } = await import("../src/exit/plans.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml");
+  const st = { exit_plan: "run70", phase: "pre_tp1" as const, entry_price: 1, peak_price: 1, tokens_bought: 100, tokens_remaining: 100, opened_at: 0, stages_done: 0 };
+  assert.equal(planAction(st, 1.9, 1, cfg.exit_plan), null);
+  const a = planAction(st, 2.1, 1, cfg.exit_plan)!; assert.equal(a.sellTokens, 30); assert.equal(a.phase, "post_tp1"); assert.equal(a.closeAll, false);
+  const s2 = { ...st, phase: "post_tp1" as const, tokens_remaining: 70, peak_price: 10, stages_done: 1 };
+  assert.equal(planAction(s2, 7, 1, cfg.exit_plan), null);                         // −30% a csúcstól: még fut (nincs 5x-es és 20x-es lépcső)
+  assert.equal(planAction({ ...s2, peak_price: 25 }, 20, 1, cfg.exit_plan), null); // 20x-nél sem zár
+  const c = planAction(s2, 5.9, 1, cfg.exit_plan)!; assert.equal(c.closeAll, true); assert.equal(c.sellTokens, 70); assert.match(c.reason, /run70_trailing/);
+});

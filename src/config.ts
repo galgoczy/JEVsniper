@@ -27,7 +27,7 @@ const WatcherCfg = z.object({
 export const LIVE_ARMS = ["live_rule", "rule_v2", "rule_v2_strict", "rule_v2_nojev", "rule_v2_nofactory", "base_uni_all", "base_uni_hold",
   "base_uni_hold_nofactory", "base_uni_lp_burned", "base_uni_clean", "clanker_all", "pons_all", "rule_score"] as const;
 /** Kilépési tervek: ugyanaz a készlet, mint az árnyékpozícióknál (live = config exit_plan). */
-export const EXIT_PLANS = ["live", "B", "C", "moon10", "moon30", "trail40", "trail60"] as const;
+export const EXIT_PLANS = ["live", "B", "C", "moon10", "moon30", "trail40", "trail60", "run70"] as const;
 
 export const ConfigSchema = z.object({
   mode: z.enum(["live", "dry_run"]),

@@ -13,6 +13,7 @@ export interface ExitAction { sellTokens: number; reason: string; phase: Phase; 
  *  moon10/moon30: mint live, csak a moon-cél 10x/30x;  trail40/trail60: mint live, trailing -40%/-60%
  *  B:      +150/+200/+300/+500% (2,5x/3x/4x/6x) lépcsőknél a vett mennyiség 25%-a, 4 lépcső után zárva
  *  C:      2x-nél 50% (tőke ki), a maradék a csúcstól -35%-nál zár
+ *  run70:  2x-nél csak 30%, a maradék 70% a csúcstól -40%-nál zár (2026-10-04: „hagyjuk jobban futni” – csak előre mérve)
  * A 7 napos limit és a vészfékek (-40% stb.) minden tervre érvényesek (a monitor kezeli).
  */
 export function planAction(p: PosState, price: number, now: number, cfg: Config["exit_plan"]): ExitAction | null {
@@ -30,6 +31,15 @@ export function planAction(p: PosState, price: number, now: number, cfg: Config[
       const sell = last ? p.tokens_remaining : Math.min(p.tokens_remaining, p.tokens_bought * 0.25);
       return { sellTokens: sell, reason: `B_stage${p.stages_done + 1}_${next}x`, phase: last ? "closed" : p.stages_done + 1 >= 2 ? "post_tp2" : "post_tp1", closeAll: last };
     }
+    return null;
+  }
+
+  if (p.exit_plan === "run70") {
+    if (p.phase === "pre_tp1") {
+      if (mult >= cfg.tp1_multiple) return { sellTokens: Math.min(p.tokens_remaining, p.tokens_bought * 0.3), reason: `run70_tp1_${cfg.tp1_multiple}x`, phase: "post_tp1", closeAll: false };
+      return null;
+    }
+    if (price <= peak * 0.6) return { sellTokens: p.tokens_remaining, reason: "run70_trailing_-40%", phase: "closed", closeAll: true };
     return null;
   }
 
