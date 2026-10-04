@@ -138,4 +138,8 @@ test("ár-józansági szűrő: tartós összeomlás (≥3 ellenőrzés és ≥5 
   assert.equal(st.has(1), false);
   for (let i = 0; i < 40; i++) assert.equal(sanityCheck(st, 2, 900, i * 15_000), "skip"); // felfelé kiugrás: soha nem fogadjuk el
   for (let i = 0; i < 40; i++) assert.equal(sanityCheck(st, 3, Number.NaN, i * 15_000), "skip");
+  // újraindítás után: a DB-ben mentett, 5 percnél régebbi első észlelés → az első friss megerősítés elég
+  const fresh = new Map<number, { n: number; since: number }>();
+  assert.equal(sanityCheck(fresh, 4, 5e-7, 1_000_000, 3, 300_000, 1_000_000 - 400_000), "accept");
+  assert.equal(sanityCheck(new Map(), 5, 5e-7, 1_000_000, 3, 300_000, 1_000_000 - 100_000), "skip"); // mentett, de még csak 100 mp
 });

@@ -16,7 +16,7 @@ export interface PosRow extends Omit<PosState, "entry_price" | "peak_price"> {
   entry_price_native: number; peak_price_native: number | null;
   id: number; token_id: number; chain: ChainKey; arm: string; window_sec: number; size_usd: number; size_native: number;
   native_received: number; gas_usd: number | null; fees_usd: number | null; jev_cost_usd: number | null; net_pnl_usd: number | null; next_check_at: number | null; closed_at: number | null; close_reason: string | null;
-  creator_balance_at_entry: number | null; liquidity_at_entry: number | null; liq_rebased?: number;
+  creator_balance_at_entry: number | null; liquidity_at_entry: number | null; liq_rebased?: number; low_price_native?: number | null; low_price_since?: number | null;
   // token
   address: string; symbol: string | null; launchpad: string; mechanics: string; pool_address: string | null; pool_key_json: string | null; creator: string | null; pair_token: string | null; graduated_at: number | null; decimals?: number | null; graduation_threshold?: string | null;
 }
@@ -139,36 +139,43 @@ export class PositionMonitor {
     const ps = feed.get(r.token_id);
     const now = nowMs();
     const setNext = (phase: Phase) => db.prepare("UPDATE positions SET next_check_at = ? WHERE id = ?").run(now + checkIntervalSec({ exit_plan: r.exit_plan, phase, entry_price: r.entry_price_native, peak_price: r.peak_price_native ?? r.entry_price_native, tokens_bought: r.tokens_bought, tokens_remaining: r.tokens_remaining, opened_at: r.opened_at, stages_done: r.stages_done }, now, cfg.monitoring) * 1000, r.id);
-    if (!ps || ps.price <= 0) { setNext(r.phase); return; }
+    // Összeomlott, azóta kereskedés nélküli token újraindítás után: nincs friss ár, de a DB-ben van 5 percnél régebbi
+    // összeomlás-észlelés → a mentett összeomlott áron zárjuk (2026-10-04; különben örökre nyitva maradna).
+    const staleCrash = (!ps || ps.price <= 0) && r.low_price_native && r.low_price_since && now - r.low_price_since >= CRASH_MIN_MS;
+    if ((!ps || ps.price <= 0) && !staleCrash) { setNext(r.phase); return; }
     // v4 pool, amelynek a likviditás-előzménye még nincs visszatöltve (újraindítás után): a valódi ETH ismeretlen, egy közbeni
     // kihúzás nem látszana → várunk vele (2026-10-02).
-    if (!feed.ready(r.token_id)) { setNext(r.phase); return; }
-    const price = ps.price;
+    if (!staleCrash && !feed.ready(r.token_id)) { setNext(r.phase); return; }
+    const price = staleCrash ? r.low_price_native! : ps!.price;
     const ratio = price / r.entry_price_native;
-    const sanity = sanityCheck(this.crash, r.id, ratio, now);
+    const sanity = staleCrash ? "accept" : sanityCheck(this.crash, r.id, ratio, now, 3, CRASH_MIN_MS, r.low_price_since ?? null);
     if (sanity !== "ok") {
       if (sanity === "skip") { // árfeed-hiba (pl. tizedesjegy-eltérés), nem piaci mozgás – a napló ritkítva
         const n = this.crash.get(r.id)?.n ?? 1;
         if (n === 1 || n % 50 === 0) log.warn("árfeed józansági hiba – kihagyva", { id: r.id, token: r.symbol, ratio, egymás_után: n });
+        // a „gyanúsan alacsony” árat és az első észlelést elmentjük (újraindítás-álló összeomlás-felismerés)
+        if (Number.isFinite(ratio) && ratio > 0 && ratio < 1e-6) db.prepare("UPDATE positions SET low_price_native = ?, low_price_since = COALESCE(low_price_since, ?) WHERE id = ?").run(price, now, r.id);
         setNext(r.phase); return;
       }
-      log.info("tartós ár-összeomlás elfogadva (valódi zuhanás, nem adathiba)", { id: r.id, token: r.symbol, ratio });
-    }
+      log.info("tartós ár-összeomlás elfogadva (valódi zuhanás, nem adathiba)", { id: r.id, token: r.symbol, ratio, mentett_árból: !!staleCrash });
+    } else if (r.low_price_since) db.prepare("UPDATE positions SET low_price_native = NULL, low_price_since = NULL WHERE id = ?").run(r.id);
+    // a mentett összeomlott ár esetén nincs élő árfeed-állapot: likviditás/készítő ismeretlen (a vészfék az árra lép)
+    const q = ps && ps.price > 0 ? ps : { price, at: now, block: 0n, liquidityNative: null, creatorBalance: null, swapsSinceLast: 0, sellsSinceLast: 0, graduated: false };
     const peak = Math.max(r.peak_price_native ?? r.entry_price_native, price);
     db.prepare("UPDATE positions SET peak_price_native = ?, last_price_native = ?, last_price_at = ? WHERE id = ?").run(peak, price, now, r.id);
     // Graduáció a belépés után: a curve-tartalék átkerül a v4 poolba – a likviditás-alap egyszer átáll a v4 valódi ETH-jára,
     // különben a két mérés különbsége hamis „likviditás-esés” vészjelzést adna.
-    if (r.graduated_at && r.graduated_at > r.opened_at && !r.liq_rebased && ps.liquidityNative !== null && ps.liquidityNative > 0) {
-      db.prepare("UPDATE positions SET liquidity_at_entry = ?, liq_rebased = 1 WHERE id = ?").run(ps.liquidityNative, r.id);
-      r.liquidity_at_entry = ps.liquidityNative; r.liq_rebased = 1;
+    if (r.graduated_at && r.graduated_at > r.opened_at && !r.liq_rebased && q.liquidityNative !== null && q.liquidityNative > 0) {
+      db.prepare("UPDATE positions SET liquidity_at_entry = ?, liq_rebased = 1 WHERE id = ?").run(q.liquidityNative, r.id);
+      r.liquidity_at_entry = q.liquidityNative; r.liq_rebased = 1;
     }
     // ha belépéskor nem volt ismert likviditás (pl. copy/listázás), az első árfeed-érték lesz a viszonyítási alap
-    if (r.liquidity_at_entry === null && ps.liquidityNative !== null) { db.prepare("UPDATE positions SET liquidity_at_entry = ? WHERE id = ?").run(ps.liquidityNative, r.id); r.liquidity_at_entry = ps.liquidityNative; }
+    if (r.liquidity_at_entry === null && q.liquidityNative !== null) { db.prepare("UPDATE positions SET liquidity_at_entry = ? WHERE id = ?").run(q.liquidityNative, r.id); r.liquidity_at_entry = q.liquidityNative; }
     const state: PosState = { exit_plan: r.exit_plan, phase: r.phase, entry_price: r.entry_price_native, peak_price: peak, tokens_bought: r.tokens_bought, tokens_remaining: r.tokens_remaining, opened_at: r.opened_at, stages_done: r.stages_done };
 
     // vészfékek (Jev nélkül)
-    const creatorSoldPct = ps.creatorBalance !== null && r.creator_balance_at_entry ? Math.max(0, (1 - ps.creatorBalance / r.creator_balance_at_entry) * 100) : null;
-    const liqDrop = ps.liquidityNative !== null && r.liquidity_at_entry ? Math.max(0, (1 - ps.liquidityNative / r.liquidity_at_entry) * 100) : null;
+    const creatorSoldPct = q.creatorBalance !== null && r.creator_balance_at_entry ? Math.max(0, (1 - q.creatorBalance / r.creator_balance_at_entry) * 100) : null;
+    const liqDrop = q.liquidityNative !== null && r.liquidity_at_entry ? Math.max(0, (1 - q.liquidityNative / r.liquidity_at_entry) * 100) : null;
     const emergency = emergencyReason(state, price, { creatorSoldPct, liquidityDropPct: liqDrop, sellSimFailed: false, regime: this.d.regime(), scammerBigSell: false }, cfg.emergency, cfg.regime);
     let action = emergency ? { sellTokens: r.tokens_remaining, reason: `emergency:${emergency}`, phase: "closed" as Phase, closeAll: true } : planAction(state, price, now, cfg.exit_plan);
 
@@ -177,7 +184,7 @@ export class PositionMonitor {
       try {
         const hold = await this.d.jev.ask({
           position: { multiple_now: Number((price / r.entry_price_native).toFixed(3)), peak_multiple: Number((peak / r.entry_price_native).toFixed(3)), drawdown_from_peak_pct: Number(((1 - price / peak) * 100).toFixed(1)), minutes_held: Math.round((now - r.opened_at) / 60_000), phase: r.phase },
-          recent: { swaps_since_last_check: ps.swapsSinceLast, sells_since_last_check: ps.sellsSinceLast, creator_sold_pct: creatorSoldPct ?? "unknown", liquidity_change_pct: liqDrop !== null ? -liqDrop : "unknown", graduated: ps.graduated },
+          recent: { swaps_since_last_check: q.swapsSinceLast, sells_since_last_check: q.sellsSinceLast, creator_sold_pct: creatorSoldPct ?? "unknown", liquidity_change_pct: liqDrop !== null ? -liqDrop : "unknown", graduated: q.graduated },
           token: { chain: r.chain, launchpad: r.launchpad, symbol: r.symbol }, market_regime: this.d.regime(),
         }, holdQuestions, { purpose: "hold", tokenId: r.token_id, priceNative: price });
         db.prepare("UPDATE positions SET jev_cost_usd = COALESCE(jev_cost_usd,0) + ? WHERE id = ?").run(hold.costUsd, r.id);
@@ -185,7 +192,7 @@ export class PositionMonitor {
       } catch (e) { log.debug("Jev hold hiba", { id: r.id, error: (e as Error).message.slice(0, 100) }); }
     }
     if (!action) { setNext(r.phase); return; }
-    if (r.arm === "live") await this.executeLive(r, action, price); else this.executeShadow(r, action, price, ps.liquidityNative ?? r.liquidity_at_entry);
+    if (r.arm === "live") await this.executeLive(r, action, price); else this.executeShadow(r, action, price, q.liquidityNative ?? r.liquidity_at_entry);
   }
 
   private async executeLive(r: PosRow, a: { sellTokens: number; reason: string; phase: Phase; closeAll: boolean }, price: number) {
@@ -256,12 +263,14 @@ export class PositionMonitor {
  * (Először 20 ellenőrzés volt – az 1 óránál idősebb pozíciókat a monitor csak 5 percenként nézi, így az ~100 perc lett volna.)
  * A felfelé kiugró (>500x) és a nem véges ár továbbra is kihagyás ("skip"). Normál ár a számlálót nullázza.
  */
-export function sanityCheck(state: Map<number, { n: number; since: number }>, id: number, ratio: number, now: number, minChecks = 3, minMs = 5 * 60_000): "ok" | "skip" | "accept" {
+export const CRASH_MIN_MS = 5 * 60_000;
+export function sanityCheck(state: Map<number, { n: number; since: number }>, id: number, ratio: number, now: number, minChecks = 3, minMs = CRASH_MIN_MS, persistedSince: number | null = null): "ok" | "skip" | "accept" {
   const low = Number.isFinite(ratio) && ratio > 0 && ratio < 1e-6;
   if (Number.isFinite(ratio) && ratio <= 500 && ratio >= 1e-6) { state.delete(id); return "ok"; }
   const cur = state.get(id) ?? { n: 0, since: now };
   cur.n++; state.set(id, cur);
-  if (low && cur.n >= minChecks && now - cur.since >= minMs) return "accept";
+  // a DB-ben mentett első észlelés (újraindítás után is) – ha az régebbi, azt vesszük; ilyenkor elég 1 friss megerősítés
+  const since = persistedSince !== null ? Math.min(persistedSince, cur.since) : cur.since;
+  if (low && now - since >= minMs && (cur.n >= minChecks || persistedSince !== null)) return "accept";
   return "skip";
 }
-
