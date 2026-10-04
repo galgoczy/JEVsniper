@@ -252,10 +252,11 @@ export class PositionMonitor {
  * Ár-józansági szűrő (2026-10-04): a belépéshez képest 500x fölötti vagy egymilliomod alatti ár eddig mindig „adathiba – kihagyva”
  * volt. 10-04-én kiderült, hogy a lefelé kiugró ár lehet valódi, szinte teljes zuhanás (8 Base-token 2,7e-7…9,3e-7-szeresre esett);
  * ezek a pozíciók soha nem zárultak le (231 árnyékpozíció, főleg base_uni_all / copy_smart / random_control). Mostantól ha a
- * „gyanúsan alacsony” ár legalább 20 egymás utáni ellenőrzésen ÉS legalább 5 percig fennáll, valódinak számít ("accept").
+ * „gyanúsan alacsony” ár legalább 3 egymás utáni ellenőrzésen ÉS legalább 5 percig fennáll, valódinak számít ("accept").
+ * (Először 20 ellenőrzés volt – az 1 óránál idősebb pozíciókat a monitor csak 5 percenként nézi, így az ~100 perc lett volna.)
  * A felfelé kiugró (>500x) és a nem véges ár továbbra is kihagyás ("skip"). Normál ár a számlálót nullázza.
  */
-export function sanityCheck(state: Map<number, { n: number; since: number }>, id: number, ratio: number, now: number, minChecks = 20, minMs = 5 * 60_000): "ok" | "skip" | "accept" {
+export function sanityCheck(state: Map<number, { n: number; since: number }>, id: number, ratio: number, now: number, minChecks = 3, minMs = 5 * 60_000): "ok" | "skip" | "accept" {
   const low = Number.isFinite(ratio) && ratio > 0 && ratio < 1e-6;
   if (Number.isFinite(ratio) && ratio <= 500 && ratio >= 1e-6) { state.delete(id); return "ok"; }
   const cur = state.get(id) ?? { n: 0, since: now };

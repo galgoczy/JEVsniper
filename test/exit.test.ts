@@ -125,13 +125,15 @@ test("árfeed újraindítás után: régi tokennél nincs visszatöltés, a fris
   db.close();
 });
 
-test("ár-józansági szűrő: tartós összeomlás (≥20 ellenőrzés és ≥5 perc) elfogadva; felfelé kiugró ár mindig kihagyva; normál ár nulláz", async () => {
+test("ár-józansági szűrő: tartós összeomlás (≥3 ellenőrzés és ≥5 perc) elfogadva; felfelé kiugró ár mindig kihagyva; normál ár nulláz", async () => {
   const { sanityCheck } = await import("../src/exit/monitor.js");
   const st = new Map<number, { n: number; since: number }>();
   assert.equal(sanityCheck(st, 1, 1.5, 0), "ok");
-  for (let i = 0; i < 19; i++) assert.equal(sanityCheck(st, 1, 5e-7, i * 15_000), "skip");
-  assert.equal(sanityCheck(st, 1, 5e-7, 19 * 15_000), "skip");            // 20. ellenőrzés, de még csak 4,75 perc
-  assert.equal(sanityCheck(st, 1, 5e-7, 20 * 15_000), "accept");          // 21. ellenőrzés, 5 perc
+  for (let i = 0; i < 20; i++) assert.equal(sanityCheck(st, 1, 5e-7, i * 15_000), "skip"); // 15 mp-es ütem: 4,75 percig kihagyás
+  assert.equal(sanityCheck(st, 1, 5e-7, 20 * 15_000), "accept");          // 5 perc után elfogadva
+  const slow = new Map<number, { n: number; since: number }>();          // 5 perces ütem (1 óránál idősebb pozíció)
+  assert.equal(sanityCheck(slow, 9, 5e-7, 0), "skip"); assert.equal(sanityCheck(slow, 9, 5e-7, 300_000), "skip");
+  assert.equal(sanityCheck(slow, 9, 5e-7, 600_000), "accept");            // 3. ellenőrzés, 10 perc
   assert.equal(sanityCheck(st, 1, 0.9, 21 * 15_000), "ok");               // normál ár → nullázás
   assert.equal(st.has(1), false);
   for (let i = 0; i < 40; i++) assert.equal(sanityCheck(st, 2, 900, i * 15_000), "skip"); // felfelé kiugrás: soha nem fogadjuk el
