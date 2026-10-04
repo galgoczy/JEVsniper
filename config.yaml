@@ -192,7 +192,7 @@ hud:
   enabled: true
   port: 8787
   host: 127.0.0.1
-  password_login: true
+  password_login: false   # 10-04: passkey felvéve és kipróbálva → csak passkey (visszakapcsolás: true + újraindítás)
   origins: ["https://tradehud.zentopia.hu", "http://localhost:8787"]
 
 # Solana / Pump.fun felvevő (2026-10-04): publikus websocket; sol_tokens, sol_trades (első 30 perc), sol_snapshots (30/60/180/600/1800 mp), sol_outcomes.

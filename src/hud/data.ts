@@ -118,3 +118,27 @@ export function hudFeed(db: DB, cfg: Config, sinceMs: number, limit = 40) {
   const name = (s: unknown) => String(s ?? "").split(",").map((a) => LABEL[a] ?? a).join(", ");
   return [...opens, ...sells].map((e) => ({ ...e, arms: name(e.arms) }) as Record<string, unknown>).sort((a, b) => Number(b.at) - Number(a.at)).slice(0, limit);
 }
+
+/**
+ * Nagy nyerők (2026-10-04): a v2 karok (élő ablak) és a Robinhood pregrad karok lezárt pozíciói tokenenként (a karok közül a legjobb
+ * eredmény), nettó szerint csökkenő sorrendben; és hogy az élő kar Base-nyereségéből mennyit adott a legjobb 5 token.
+ */
+export function hudWinners(db: DB, cfg: Config, sinceMs: number, limit = 15) {
+  const w = cfg.evaluation.live_window_sec, live = cfg.live_entry.arm;
+  const rows = db.prepare(`SELECT p.token_id, t.symbol, t.address, p.chain, p.arm, p.net_pnl_usd v, p.peak_price_native / p.entry_price_native peak_x, p.opened_at, p.closed_at, p.close_reason
+    FROM positions p JOIN tokens t ON t.id = p.token_id
+    WHERE p.exit_plan = 'live' AND p.closed_at IS NOT NULL AND p.opened_at > ? AND p.close_reason NOT LIKE 'invalid%'
+      AND ((p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?) OR p.arm IN (${PREGRAD_ARMS.map(() => "?").join(",")}))`).all(sinceMs, ...V2_ARMS, w, ...PREGRAD_ARMS) as Array<{ token_id: number; symbol: string; address: string; chain: string; arm: string; v: number; peak_x: number; opened_at: number; closed_at: number; close_reason: string }>;
+  const by = new Map<number, { symbol: string; address: string; chain: string; arms: string[]; pnl: number; peakX: number; openedAt: number; closedAt: number; reason: string; holdMin: number }>();
+  for (const r of rows) {
+    const e = by.get(r.token_id);
+    if (!e) by.set(r.token_id, { symbol: r.symbol, address: r.address, chain: r.chain, arms: [LABEL[r.arm] ?? r.arm], pnl: r.v, peakX: r.peak_x, openedAt: r.opened_at, closedAt: r.closed_at, reason: r.close_reason, holdMin: (r.closed_at - r.opened_at) / 60_000 });
+    else { e.arms.push(LABEL[r.arm] ?? r.arm); if (r.v > e.pnl) Object.assign(e, { pnl: r.v, peakX: r.peak_x, closedAt: r.closed_at, reason: r.close_reason, holdMin: (r.closed_at - r.opened_at) / 60_000 }); }
+  }
+  const list = [...by.values()].filter((x) => x.pnl > 0).sort((a, b) => b.pnl - a.pnl).slice(0, limit);
+  // az élő kar Base-nyereségének koncentrációja
+  const liveRows = rows.filter((r) => r.arm === live && r.chain === "base").map((r) => r.v).sort((a, b) => b - a);
+  const total = liveRows.reduce((a, b) => a + b, 0), top5 = liveRows.slice(0, 5).reduce((a, b) => a + b, 0);
+  const wins = liveRows.filter((x) => x > 0).length;
+  return { list, live: { n: liveRows.length, total, top5, wins, withoutTop5: total - top5 } };
+}

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
-import { hudSummary, hudPositions, hudFeed } from "./data.js";
+import { hudSummary, hudPositions, hudFeed, hudWinners } from "./data.js";
 import { HudAuth, CSP } from "./auth.js";
 import { log } from "../logger.js";
 
@@ -31,6 +31,7 @@ export function startHud(o: { db: DB; cfg: Config; port: number; host: string; t
         if (url.pathname === "/api/summary") return json(hudSummary(o.db, o.cfg, since()));
         if (url.pathname === "/api/positions") return json(hudPositions(o.db, o.cfg, since()));
         if (url.pathname === "/api/feed") return json(hudFeed(o.db, o.cfg, since()));
+        if (url.pathname === "/api/winners") return json(hudWinners(o.db, o.cfg, since()));
         if (url.pathname === "/" || url.pathname === "/index.html") {
           res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": CSP });
           res.end(fs.readFileSync(page)); return;

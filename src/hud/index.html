@@ -77,6 +77,13 @@ h1 span { background: var(--grad); -webkit-background-clip: text; background-cli
 .ev .t div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ev .t small { color: var(--dim); font-size: 11px; }
 .ev .r { text-align: right; font-size: 12px; }
+.wins { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.w { padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--line); position: relative; overflow: hidden; }
+.w .rank { position: absolute; right: 10px; top: 6px; font-size: 26px; opacity: .9; }
+.w .sym { font-weight: 700; font-size: 16px; padding-right: 34px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w .big { font-size: 22px; font-weight: 700; margin-top: 4px; }
+.w .meta { color: var(--muted); font-size: 11px; margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.w .shine { position: absolute; inset: 0; background: linear-gradient(120deg, transparent 30%, rgba(180,255,92,0.08) 50%, transparent 70%); pointer-events: none; }
 .mini { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 640px) { .mini { grid-template-columns: repeat(2, minmax(0, 1fr)); } .arm { grid-template-columns: 1.2fr 1fr .9fr; } .arm .hide-s { display: none; } .kpi .val { font-size: 23px; } }
 .mini .card { padding: 12px; }
@@ -145,6 +152,11 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
     </div>
   </section>
 
+  <section class="card sec">
+    <div class="ttl"><h2>🏆 Nagy nyerők · mi hozza a pénzt</h2><small id="win-note">–</small></div>
+    <div class="wins" id="wins"></div>
+  </section>
+
   <section class="grid row2 sec">
     <div class="card">
       <div class="ttl"><h2>⚡ Kötésfolyam</h2><small>belépések és eladások</small></div>
@@ -174,7 +186,7 @@ const hhmm = (ms) => new Date(ms).toLocaleTimeString("hu-HU", { hour: "2-digit",
 const setVal = (id, text, c) => { const e = $(id); e.textContent = text; e.className = e.className.replace(/\b(up|down|warn)\b/g, "").trim() + (c ? " " + c : ""); };
 
 function renderSummary(s) {
-  const L = s.live.sizeUsd;
+  const L = s.live.sizeUsd; window.__liveSize = L;
   $("mode").textContent = s.mode === "dry_run" ? "dry_run 🧪" : "LIVE 🔥";
   $("livearm").textContent = s.live.label;
   $("size").textContent = `${L.toFixed(2)}$`;
@@ -270,6 +282,25 @@ function renderPositions(rows) {
   }
 }
 
+function renderWinners(d) {
+  const box = $("wins"); box.replaceChildren();
+  const L = window.__liveSize || 2;
+  const lv = d.live, share = lv.total > 0 ? Math.round(lv.top5 / lv.total * 100) : null;
+  $("win-note").textContent = lv.n ? `élő kar, Base: ${lv.wins}/${lv.n} nyerő · a top 5 adja a nyereség ${share === null ? "–" : share + "%"}-át · nélkülük ${sgn(lv.withoutTop5, 1)}$ (1$ mérés)` : "még nincs lezárt pozíció";
+  if (!d.list.length) { box.append(el("div", "empty", "még nincs nyerő 🌱")); return; }
+  const medal = ["🥇", "🥈", "🥉"];
+  d.list.forEach((x, i) => {
+    const c = el("div", "w"); if (i < 3) c.append(el("div", "shine"));
+    c.append(el("div", "rank", medal[i] ?? `#${i + 1}`), el("div", "sym", `${x.chain === "base" ? "🔵" : "🟣"} ${x.symbol ?? "?"}`));
+    const big = el("div", "big mono up", `+${(x.pnl * L).toFixed(2)}$`); const sub = el("span", "", ` (${sgn(x.pnl)}$/1$)`); sub.style.cssText = "font-size:12px;color:var(--muted);font-weight:400"; big.append(sub);
+    const meta = el("div", "meta");
+    meta.append(el("span", "tag", `csúcs ${Number(x.peakX).toFixed(1)}x`), el("span", "tag", x.holdMin < 90 ? `${Math.round(x.holdMin)} perc` : `${(x.holdMin / 60).toFixed(1)} óra`));
+    for (const a of x.arms) meta.append(el("span", "tag", a));
+    meta.append(el("span", "", new Date(x.closedAt).toLocaleDateString("hu-HU", { month: "2-digit", day: "2-digit" }) + " · " + String(x.reason).replace(/_/g, " ")));
+    c.append(big, meta); box.append(c);
+  });
+}
+
 function renderFeed(rows) {
   const box = $("feed"); box.replaceChildren();
   if (!rows.length) { box.append(el("div", "empty", "még nincs esemény")); return; }
@@ -286,8 +317,8 @@ function renderFeed(rows) {
 
 async function refresh() {
   try {
-    const [s, p, f] = await Promise.all([api("/api/summary"), api("/api/positions"), api("/api/feed")]);
-    renderSummary(s); renderPositions(p); renderFeed(f);
+    const [s, p, f, w] = await Promise.all([api("/api/summary"), api("/api/positions"), api("/api/feed"), api("/api/winners")]);
+    renderSummary(s); renderPositions(p); renderFeed(f); renderWinners(w);
     $("upd").textContent = `élő · ${hhmm(Date.now())}`; $("live-dot").classList.remove("off");
   } catch (e) {
     if (String(e.message) === "401") { location.href = "/login"; return; }

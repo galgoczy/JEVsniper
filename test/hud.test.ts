@@ -87,3 +87,12 @@ test("HUD jelszó: scrypt-lenyomat ellenőrzés; jelszó kikapcsolása csak pass
   assert.equal(a.passwordEnabled(), false);                      // van passkey → kikapcsol
   db.close();
 });
+
+test("HUD nagy nyerők: tokenenként a legjobb kar, csak nyerők, koncentráció az élő karra", async () => {
+  const { hudWinners } = await import("../src/hud/data.js");
+  const { db } = seed();
+  const w = hudWinners(db, cfg, Date.parse("2026-10-01T00:00:00Z"));
+  assert.equal(w.list.length, 1); assert.equal(w.list[0]!.pnl, 3); assert.deepEqual(new Set(w.list[0]!.arms), new Set(["v2 strict", "v2"]));
+  assert.equal(w.live.n, 1); assert.equal(w.live.total, 3); assert.equal(w.live.top5, 3); assert.equal(w.live.withoutTop5, 0);
+  db.close();
+});
