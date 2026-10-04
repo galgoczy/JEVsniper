@@ -64,3 +64,23 @@ test("SOL felvevő: token, kötések, pillanatképek 30/60 mp-nél, kimenet a 60
   assert.equal(rec.stats.tracked, 0); assert.ok((db.prepare("SELECT done_at FROM sol_outcomes").get() as { done_at: number }).done_at > 0);
   db.close();
 });
+
+test("SOL visszajátszás: 2x-nél fele eladva, utána −40% vészfék; költségek levonva; nyitva maradt rész az utolsó áron", async () => {
+  const { replayPosition, solRandomPick } = await import("../src/sol/replay.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml");
+  const zero = { fee_pct: 0, mev_pct: 0, tx_sol: 0 };
+  // 1 → 2 (fele el: +1) → 0,5 (vészfék: a maradék fele 0,5-ön: +0,25) → nettó 1+0,25−1 = +0,25
+  const r = replayPosition(1, 0, [{ at: 1, price: 1.5 }, { at: 2, price: 2 }, { at: 3, price: 0.5 }], "live", 1, cfg, zero);
+  assert.ok(Math.abs(r.net - 0.25) < 1e-9, `net ${r.net}`); assert.equal(r.openAtEnd, false); assert.match(r.reason, /price_drop/);
+  // nincs esemény → nyitva a végén, utolsó áron (1,2x) → +0,2
+  const o = replayPosition(1, 0, [{ at: 5, price: 1.2 }], "live", 1, cfg, zero);
+  assert.ok(Math.abs(o.net - 0.2) < 1e-9); assert.equal(o.openAtEnd, true);
+  // költséggel: 1,25% + 0,3% irányonként, 2 tx × 0,0001 SOL; 1 SOL belépő, ár változatlan → kb. −3,1%
+  const c = replayPosition(1, 0, [{ at: 5, price: 1 }], "live", 1, cfg);
+  assert.ok(c.net < -0.03 && c.net > -0.032, `net ${c.net}`);
+  // a belépés előtti kötés nem számít
+  assert.ok(Math.abs(replayPosition(1, 10, [{ at: 5, price: 0.1 }, { at: 11, price: 1.1 }], "live", 1, cfg, zero).net - 0.1) < 1e-9);
+  let n = 0; for (let i = 0; i < 5000; i++) if (solRandomPick(`mint${i}`)) n++;
+  assert.ok(n > 850 && n < 1150, `véletlen minta ${n}/5000`);
+});

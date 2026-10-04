@@ -23,7 +23,8 @@
     "allas": "tsx scripts/allas.ts",
     "verify:listing": "tsx scripts/verify-listing.ts",
     "verify:bnb": "tsx scripts/verify-bnb.ts",
-    "verify:sol": "tsx scripts/verify-sol.ts"
+    "verify:sol": "tsx scripts/verify-sol.ts",
+    "sol:replay": "tsx scripts/sol-replay.ts"
   },
   "repository": {
     "type": "git",
