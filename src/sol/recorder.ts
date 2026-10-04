@@ -35,10 +35,32 @@ export class SolRecorder {
   private now() { return (this.d.now ?? Date.now)(); }
 
   start() {
+    this.restore();
     this.connect();
     this.timer = setInterval(() => { try { this.flush(); } catch (e) { this.stats.errors++; log.debug("SOL felvevő flush hiba", { error: (e as Error).message.slice(0, 120) }); } void this.refreshSolUsd(); }, 5_000);
   }
   stop() { this.stopped = true; if (this.timer) clearInterval(this.timer); this.ws?.close(); }
+
+  /**
+   * Újraindítás után a 24 órán belül indult tokenek kimenet-követésének visszatöltése (2026-10-04: újraindításkor a memóriában
+   * tartott követés elveszett, a 24 órás kimenetek nem zárultak le). A pillanatkép-ablakok mind „késznek” számítanak: a
+   * kiesett időszak kötései hiányoznak, a hiányos számlálással felvett pillanatkép torz lenne. Csak a csúcs/mélypont/teljesülés
+   * követése folytatódik (a websocket-kötésekből).
+   */
+  restore() {
+    const { db } = this.d; const since = this.now() - OUTCOME_HOURS * 3600_000;
+    const rows = db.prepare(`SELECT t.mint, t.created_at, t.creator, t.symbol, t.quote_sol, o.ref_price, o.max_x, o.min_x, o.complete_at, o.migrated_at, s.price p60
+      FROM sol_tokens t LEFT JOIN sol_outcomes o ON o.mint = t.mint LEFT JOIN sol_snapshots s ON s.mint = t.mint AND s.window_sec = ${REF_WINDOW}
+      WHERE t.created_at > ? AND (o.done_at IS NULL)`).all(since) as Array<{ mint: string; created_at: number; creator: string; symbol: string; quote_sol: number; ref_price: number | null; max_x: number | null; min_x: number | null; complete_at: number | null; migrated_at: number | null; p60: number | null }>;
+    for (const r of rows) {
+      if (this.tracks.has(r.mint)) continue;
+      const ref = r.ref_price ?? (r.p60 && r.p60 > 0 ? r.p60 : null);
+      this.tracks.set(r.mint, { mint: r.mint, createdAt: r.created_at, creator: r.creator, symbol: r.symbol, quoteSol: r.quote_sol === 1, buys: 0, sells: 0, buyers: new Set(), solIn: 0, solOut: 0, largestBuySol: 0, creatorSold: false, creatorBought: false,
+        price: 0, progress: 0, lastTradeAt: 0, tradesStored: TRADES_CAP, snapsDone: new Set(WINDOWS), refPrice: ref, maxX: r.max_x ?? 1, minX: r.min_x ?? 1, completeAt: r.complete_at, migratedAt: r.migrated_at, outcomeWritten: false });
+    }
+    this.stats.tracked = this.tracks.size;
+    if (rows.length) log.info(`SOL felvevő: ${this.tracks.size} token kimenet-követése visszatöltve`);
+  }
 
   private connect() {
     if (this.stopped) return;

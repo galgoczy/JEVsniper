@@ -84,3 +84,19 @@ test("SOL visszajátszás: 2x-nél fele eladva, utána −40% vészfék; költs�
   let n = 0; for (let i = 0; i < 5000; i++) if (solRandomPick(`mint${i}`)) n++;
   assert.ok(n > 850 && n < 1150, `véletlen minta ${n}/5000`);
 });
+
+test("SOL felvevő újraindítás: a 24 órán belüli tokenek kimenet-követése visszatöltődik, pillanatkép nem íródik újra", () => {
+  const db = openDb(":memory:");
+  const T = 1_790_000_000_000;
+  db.prepare("INSERT INTO sol_tokens(mint, symbol, name, creator, user, created_at, quote_sol) VALUES ('M1','A','A','C','C',?,1), ('M2','B','B','C','C',?,1)").run(T - 3600_000, T - 30 * 3600_000);
+  db.prepare("INSERT INTO sol_snapshots(mint, window_sec, at, price) VALUES ('M1', 60, ?, 2.0)").run(T - 3540_000);
+  db.prepare("INSERT INTO sol_outcomes(mint, ref_price, ref_at, max_x, min_x) VALUES ('M1', 2.0, ?, 3.5, 0.8)").run(T - 3540_000);
+  const rec = new SolRecorder({ db, now: () => T, fetchFn: (async () => ({ json: async () => ({}) })) as unknown as typeof fetch });
+  rec.restore();
+  assert.equal(rec.stats.tracked, 1);                                  // M2 30 órás → nem követjük
+  rec.flush();
+  assert.equal((db.prepare("SELECT count(*) n FROM sol_snapshots").get() as { n: number }).n, 1); // nem ír új (hiányos) pillanatképet
+  const o = db.prepare("SELECT max_x, min_x FROM sol_outcomes WHERE mint = 'M1'").get() as { max_x: number; min_x: number };
+  assert.equal(o.max_x, 3.5); assert.equal(o.min_x, 0.8);               // a korábbi csúcs/mélypont megmarad
+  db.close();
+});

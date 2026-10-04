@@ -47,7 +47,22 @@ export class PancakeRecorder {
     this.c = d.client ?? (createPublicClient({ chain: bsc, transport: http((d.rpcUrl ?? BNB_DEFAULT_RPC).split(",")[0]!.trim(), { timeout: 15_000, retryCount: 1 }) }) as PublicClient);
   }
   private now() { return (this.d.now ?? Date.now)(); }
-  start() { this.timer = setInterval(() => void this.tick(), this.d.pollMs ?? 5_000); void this.tick(); }
+  start() { this.restore(); this.timer = setInterval(() => void this.tick(), this.d.pollMs ?? 5_000); void this.tick(); }
+
+  /** Újraindítás után a 24 órán belüli indítások kimenet-követésének visszatöltése (a pillanatkép-ablakok késznek számítanak; a csúcs/mélypont/likviditás az 5 perces getReserves-ből folytatódik). */
+  restore() {
+    const since = this.now() - OUTCOME_HOURS * 3600_000;
+    const rows = this.d.db.prepare(`SELECT p.pair, p.token, p.wbnb_is0, p.created_at, o.ref_price, o.max_x, o.min_x, o.min_liq_bnb, o.peak_liq_bnb, s.price p60, s.liq_bnb l60
+      FROM bnb_pairs p LEFT JOIN bnb_pair_outcomes o ON o.pair = p.pair LEFT JOIN bnb_pair_snapshots s ON s.pair = p.pair AND s.window_sec = 60
+      WHERE p.created_at > ? AND o.done_at IS NULL`).all(since) as Array<{ pair: string; token: string; wbnb_is0: number; created_at: number; ref_price: number | null; max_x: number | null; min_x: number | null; min_liq_bnb: number | null; peak_liq_bnb: number | null; p60: number | null; l60: number | null }>;
+    for (const r of rows) {
+      if (this.pairs.has(r.pair)) continue;
+      const ref = r.ref_price ?? (r.p60 && r.p60 > 0 ? r.p60 : null);
+      this.pairs.set(r.pair, { pair: r.pair, token: r.token, wbnbIs0: r.wbnb_is0 === 1, createdAt: r.created_at, buys: 0, sells: 0, buyers: new Set(), bnbIn: 0, bnbOut: 0, price: 0, liq: 0, tradesStored: TRADES_CAP,
+        snapsDone: new Set(WINDOWS), refPrice: ref, maxX: r.max_x ?? 1, minX: r.min_x ?? 1, minLiq: r.min_liq_bnb ?? r.l60 ?? Infinity, peakLiq: r.peak_liq_bnb ?? r.l60 ?? 0 });
+    }
+    this.stats.tracked = this.pairs.size;
+  }
   stop() { if (this.timer) clearInterval(this.timer); }
 
   async tick(): Promise<void> {
