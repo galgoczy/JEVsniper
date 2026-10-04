@@ -29,6 +29,7 @@ import { getAddress, isAddressEqual, type Address } from "viem";
 import { ADDRESSES, ZERO } from "./chains/addresses.js";
 import { PreGradArms } from "./graduation/pregrad.js";
 import { BnbRecorder } from "./bnb/recorder.js";
+import { PancakeRecorder } from "./bnb/pancake.js";
 import { SolRecorder } from "./sol/recorder.js";
 
 /**
@@ -122,6 +123,8 @@ async function main() {
   listing.start();
   const bnbRecorder = cfg.bnb.enabled ? new BnbRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms }) : null;
   bnbRecorder?.start();
+  const pcsRecorder = cfg.bnb.enabled && cfg.bnb.pancake ? new PancakeRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms }) : null;
+  pcsRecorder?.start();
   const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
   solRecorder?.start();
   // 9. lépés: napi riport (config report.daily_time_utc) + /report parancs
@@ -193,6 +196,7 @@ async function main() {
     `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
     ...(bnbRecorder ? [`BNB felvevő: ${bnbRecorder.stats.tokens} token, ${bnbRecorder.stats.trades} kötés, ${bnbRecorder.stats.grads} graduáció (indulás óta), ${bnbRecorder.stats.errors} hiba, blokk ${bnbRecorder.stats.lastBlock}`] : []),
+    ...(pcsRecorder ? [`PancakeSwap felvevő: ${pcsRecorder.stats.pairs} WBNB-pár, ${pcsRecorder.stats.trades} kötés, ${pcsRecorder.stats.snapshots} pillanatkép, követett ${pcsRecorder.stats.tracked}, hiba ${pcsRecorder.stats.errors}`] : []),
     ...(solRecorder ? [`SOL felvevő: ${solRecorder.stats.tokens} token, ${solRecorder.stats.trades} kötés mentve, ${solRecorder.stats.snapshots} pillanatkép, ${solRecorder.stats.completes} görbe-teljesülés, ${solRecorder.stats.migrations} migráció, követett ${solRecorder.stats.tracked}, újracsatlakozás ${solRecorder.stats.reconnects}, hiba ${solRecorder.stats.errors}`] : []),
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
     `Jev: ${jev.disabled ? "kikapcsolva" : jev.paused ? "szünetel" : "ok"}, rezsim: ${regime.regime}`,
@@ -235,6 +239,7 @@ async function main() {
     copyTrackers.forEach((c) => c.stop());
     listing.stop();
     bnbRecorder?.stop();
+    pcsRecorder?.stop();
     solRecorder?.stop();
     graduation.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);

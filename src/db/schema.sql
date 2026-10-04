@@ -317,3 +317,24 @@ CREATE TABLE IF NOT EXISTS sol_outcomes (
   complete_at INTEGER, migrated_at INTEGER, done_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS sol_grads (mint TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL, pool TEXT, PRIMARY KEY (mint, kind));
+
+-- BNB Chain / PancakeSwap v2 felvevő (2026-10-04): közvetlen WBNB-pár indítások. Ár = WBNB-tartalék / token-tartalék (nyers arány, csak szorzóként).
+CREATE TABLE IF NOT EXISTS bnb_pairs (
+  pair TEXT PRIMARY KEY, token TEXT NOT NULL, wbnb_is0 INTEGER NOT NULL, created_block INTEGER NOT NULL, created_at INTEGER NOT NULL,
+  creator TEXT, tx_to TEXT            -- a pár-létrehozó tx küldője és címzettje (router / indítóplatform)
+);
+CREATE TABLE IF NOT EXISTS bnb_pair_trades (
+  pair TEXT NOT NULL, tx TEXT NOT NULL, log_index INTEGER NOT NULL, block INTEGER NOT NULL, at INTEGER NOT NULL,
+  side TEXT NOT NULL, to_addr TEXT, bnb REAL NOT NULL, price REAL NOT NULL,
+  PRIMARY KEY (tx, log_index)
+);
+CREATE INDEX IF NOT EXISTS idx_bnb_pair_trades_pair ON bnb_pair_trades(pair, at);
+CREATE TABLE IF NOT EXISTS bnb_pair_snapshots (
+  pair TEXT NOT NULL, window_sec INTEGER NOT NULL, at INTEGER NOT NULL,
+  buys INTEGER, sells INTEGER, unique_buyers INTEGER, bnb_in REAL, bnb_out REAL, price REAL, liq_bnb REAL,
+  PRIMARY KEY (pair, window_sec)
+);
+CREATE TABLE IF NOT EXISTS bnb_pair_outcomes (
+  pair TEXT PRIMARY KEY, ref_price REAL NOT NULL, ref_at INTEGER NOT NULL, max_x REAL NOT NULL, min_x REAL NOT NULL,
+  min_liq_bnb REAL, peak_liq_bnb REAL, done_at INTEGER
+);
