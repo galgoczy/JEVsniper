@@ -100,7 +100,8 @@ export class HudAuth {
       res.end(fs.readFileSync(path.join(import.meta.dirname, "login.html"))); return true;
     }
     if (p === "/auth/webauthn.js") {
-      const req2 = createRequire(import.meta.url), file = path.join(path.dirname(req2.resolve("@simplewebauthn/browser/package.json")), "dist/bundle/index.umd.min.js");
+      // a csomag "exports"-a nem engedi a package.json feloldását → a fő belépési pontból (script/index.js) lépünk a csomag gyökerébe
+      const main = createRequire(import.meta.url).resolve("@simplewebauthn/browser"), file = path.join(path.dirname(main), "..", "dist/bundle/index.umd.min.js");
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "max-age=86400" }); res.end(fs.readFileSync(file)); return true;
     }
     if (!p.startsWith("/auth/")) return false;

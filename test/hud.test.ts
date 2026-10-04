@@ -51,6 +51,7 @@ test("HUD szerver: belépés nélkül 401 / átirányítás; jelszóval munkamen
   assert.equal((await fetch(`${base}/api/summary`)).status, 401);
   const root = await fetch(`${base}/`, { redirect: "manual" }); assert.equal(root.status, 302); assert.equal(root.headers.get("location"), "/login");
   assert.equal((await fetch(`${base}/login`)).status, 200);
+  const wa = await fetch(`${base}/auth/webauthn.js`); assert.equal(wa.status, 200); assert.match(await wa.text(), /SimpleWebAuthnBrowser/); // a böngészőoldali passkey-szkript kiszolgálható
   const st = await (await fetch(`${base}/auth/state`)).json() as { loggedIn: boolean; password: boolean; passkeyHere: boolean };
   assert.equal(st.loggedIn, false); assert.equal(st.password, true); assert.equal(st.passkeyHere, false); // http://127.0.0.1 nem engedélyezett passkey-eredet
   assert.equal((await post("/auth/passkey/login/options", {})).status, 400);
