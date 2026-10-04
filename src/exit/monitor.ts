@@ -36,6 +36,8 @@ export interface MonitorDeps {
 export class PositionMonitor {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
+  /** pozíció → egymás utáni „gyanúsan alacsony” árak (tartós összeomlás felismeréséhez) */
+  private crash = new Map<number, { n: number; since: number }>();
   constructor(private d: MonitorDeps) {}
 
   start(tickMs = 15_000) {
@@ -143,9 +145,14 @@ export class PositionMonitor {
     if (!feed.ready(r.token_id)) { setNext(r.phase); return; }
     const price = ps.price;
     const ratio = price / r.entry_price_native;
-    if (!Number.isFinite(ratio) || ratio > 500 || ratio < 1e-6) { // árfeed-hiba (pl. tizedesjegy-eltérés), nem piaci mozgás
-      log.warn("árfeed józansági hiba – kihagyva", { id: r.id, token: r.symbol, ratio });
-      setNext(r.phase); return;
+    const sanity = sanityCheck(this.crash, r.id, ratio, now);
+    if (sanity !== "ok") {
+      if (sanity === "skip") { // árfeed-hiba (pl. tizedesjegy-eltérés), nem piaci mozgás – a napló ritkítva
+        const n = this.crash.get(r.id)?.n ?? 1;
+        if (n === 1 || n % 50 === 0) log.warn("árfeed józansági hiba – kihagyva", { id: r.id, token: r.symbol, ratio, egymás_után: n });
+        setNext(r.phase); return;
+      }
+      log.info("tartós ár-összeomlás elfogadva (valódi zuhanás, nem adathiba)", { id: r.id, token: r.symbol, ratio });
     }
     const peak = Math.max(r.peak_price_native ?? r.entry_price_native, price);
     db.prepare("UPDATE positions SET peak_price_native = ?, last_price_native = ?, last_price_at = ? WHERE id = ?").run(peak, price, now, r.id);
@@ -240,3 +247,20 @@ export class PositionMonitor {
     }
   }
 }
+
+/**
+ * Ár-józansági szűrő (2026-10-04): a belépéshez képest 500x fölötti vagy egymilliomod alatti ár eddig mindig „adathiba – kihagyva”
+ * volt. 10-04-én kiderült, hogy a lefelé kiugró ár lehet valódi, szinte teljes zuhanás (8 Base-token 2,7e-7…9,3e-7-szeresre esett);
+ * ezek a pozíciók soha nem zárultak le (231 árnyékpozíció, főleg base_uni_all / copy_smart / random_control). Mostantól ha a
+ * „gyanúsan alacsony” ár legalább 20 egymás utáni ellenőrzésen ÉS legalább 5 percig fennáll, valódinak számít ("accept").
+ * A felfelé kiugró (>500x) és a nem véges ár továbbra is kihagyás ("skip"). Normál ár a számlálót nullázza.
+ */
+export function sanityCheck(state: Map<number, { n: number; since: number }>, id: number, ratio: number, now: number, minChecks = 20, minMs = 5 * 60_000): "ok" | "skip" | "accept" {
+  const low = Number.isFinite(ratio) && ratio > 0 && ratio < 1e-6;
+  if (Number.isFinite(ratio) && ratio <= 500 && ratio >= 1e-6) { state.delete(id); return "ok"; }
+  const cur = state.get(id) ?? { n: 0, since: now };
+  cur.n++; state.set(id, cur);
+  if (low && cur.n >= minChecks && now - cur.since >= minMs) return "accept";
+  return "skip";
+}
+
