@@ -172,6 +172,8 @@ export const ConfigSchema = z.object({
   }).default({ enabled: true, poll_interval_sec: 60, coinbase: true, robinhood: true, robinhood_chain_match: "robinhood", size_usd: 1, track_days: 7 }),
   // BNB Chain / Four.Meme felvevő (2026-10-04): minden indítás/vétel/eladás/graduáció mentése a későbbi szabályépítéshez; nem kereskedik
   bnb: z.object({ enabled: z.boolean().default(false), poll_ms: z.number().int().min(1000).default(5000), pancake: z.boolean().default(false) }).default({ enabled: false, poll_ms: 5000, pancake: false }),
+  // Webes áttekintő (HUD, 2026-10-04): a bot folyamatában futó, csak olvasó webszerver
+  hud: z.object({ enabled: z.boolean().default(false), port: z.number().int().min(1024).max(65535).default(8787), host: z.string().default("0.0.0.0") }).default({ enabled: false, port: 8787, host: "0.0.0.0" }),
   // Solana / Pump.fun felvevő (2026-10-04): websocket-feliratkozás; tokenek, kötések (első 30 perc), pillanatképek, kimenetek – nem kereskedik
   sol: z.object({ enabled: z.boolean().default(false) }).default({ enabled: false }),
   // V2 – graduációs szakasz (PONS curve → v4): árnyék-belépés graduáláskor és +delay_min perccel később

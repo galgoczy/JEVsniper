@@ -14,6 +14,8 @@ const EnvSchema = z.object({
   BNB_RPC_URL: z.string().optional().or(z.literal("")),
   // Solana (felvevő, 2026-10-04): opcionális websocket URL; üresen a publikus mainnet végpont
   SOL_WS_URL: z.string().optional().or(z.literal("")),
+  // Webes áttekintő (HUD): opcionális hozzáférési token (?t=…)
+  HUD_TOKEN: z.string().optional().or(z.literal("")),
   WALLET_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "WALLET_PRIVATE_KEY hiányzik vagy nem 0x + 64 hex"),
   TELEGRAM_BOT_TOKEN: z.string().min(10, "TELEGRAM_BOT_TOKEN hiányzik"),
   TELEGRAM_CHAT_ID: z.string().min(1, "TELEGRAM_CHAT_ID hiányzik"),

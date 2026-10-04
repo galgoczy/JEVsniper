@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0d1a">
+<title>Jev Sniper HUD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0d1a; --bg2: #12152a; --card: rgba(255,255,255,0.045); --line: rgba(255,255,255,0.08);
+  --text: #eef0ff; --muted: #8e93b8; --dim: #5d6290;
+  --up: #3ef0a0; --down: #ff5c8a; --warn: #ffc94d; --a1: #8b5cff; --a2: #27d3ff; --a3: #b4ff5c;
+  --grad: linear-gradient(120deg, var(--a1), var(--a2) 55%, var(--a3));
+  --r: 18px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: radial-gradient(1200px 600px at 10% -10%, #231a52 0%, transparent 60%), radial-gradient(900px 500px at 110% 10%, #0f3a4f 0%, transparent 55%), var(--bg); color: var(--text); font-family: "Space Grotesk", system-ui, sans-serif; min-height: 100vh; }
+.mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 18px 16px 48px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo { width: 42px; height: 42px; border-radius: 13px; background: var(--grad); display: grid; place-items: center; font-size: 22px; box-shadow: 0 6px 24px rgba(139,92,255,0.35); transform: rotate(-6deg); }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.02em; }
+h1 span { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.pills { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill { border: 1px solid var(--line); background: var(--card); padding: 6px 11px; border-radius: 999px; font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.pill b { color: var(--text); font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 0 rgba(62,240,160,0.6); animation: pulse 2s infinite; }
+.dot.off { background: var(--down); animation: none; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(62,240,160,0.55); } 70% { box-shadow: 0 0 0 9px rgba(62,240,160,0); } 100% { box-shadow: 0 0 0 0 rgba(62,240,160,0); } }
+.grid { display: grid; gap: 14px; }
+.kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 860px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; backdrop-filter: blur(8px); min-width: 0; }
+.kpi .lab { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+.kpi .val { font-size: 28px; font-weight: 700; margin-top: 6px; letter-spacing: -0.02em; }
+.kpi .note { color: var(--dim); font-size: 12px; margin-top: 4px; }
+.up { color: var(--up); } .down { color: var(--down); } .warn { color: var(--warn); }
+.row2 { grid-template-columns: 1.3fr 1fr; margin-top: 14px; }
+@media (max-width: 860px) { .row2 { grid-template-columns: 1fr; } }
+.ttl { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; gap: 8px; }
+.ttl h2 { font-size: 15px; margin: 0; }
+.ttl small { color: var(--dim); font-size: 12px; }
+.bars { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding-top: 8px; }
+.bar { flex: 1; min-width: 8px; border-radius: 8px 8px 4px 4px; position: relative; transition: height .4s ease; }
+.bar.pos { background: linear-gradient(180deg, var(--up), rgba(62,240,160,0.25)); }
+.bar.neg { background: linear-gradient(0deg, var(--down), rgba(255,92,138,0.25)); align-self: flex-start; }
+.barwrap { flex: 1; display: flex; flex-direction: column; align-items: stretch; height: 100%; position: relative; }
+.barlbl { color: var(--dim); font-size: 10px; text-align: center; margin-top: 4px; }
+.axis { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--line); }
+.prog { height: 10px; border-radius: 999px; background: rgba(255,255,255,0.06); overflow: hidden; margin-top: 10px; }
+.prog > i { display: block; height: 100%; background: var(--grad); border-radius: 999px; transition: width .5s ease; }
+.arms { display: grid; gap: 8px; }
+.arm { display: grid; grid-template-columns: 1.2fr 1fr .8fr .9fr; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.025); border: 1px solid transparent; }
+.arm.live { border-color: rgba(139,92,255,0.5); background: rgba(139,92,255,0.08); }
+.arm .nm { font-weight: 600; display: flex; gap: 6px; align-items: center; min-width: 0; }
+.arm .nm span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arm .k { color: var(--dim); font-size: 10px; display: block; }
+.arm .v { font-size: 14px; }
+.arm.head { background: none; padding-top: 0; padding-bottom: 0; color: var(--dim); font-size: 11px; }
+.tag { font-size: 10px; padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,0.08); color: var(--muted); }
+.tag.star { background: var(--grad); color: #0b0d1a; font-weight: 700; }
+.pos { display: grid; gap: 10px; }
+.p { padding: 12px; border-radius: 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--line); }
+.p .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.p .sym { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p .meta { color: var(--muted); font-size: 11px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px; }
+.xbar { height: 8px; border-radius: 999px; background: rgba(255,255,255,0.06); margin-top: 10px; position: relative; overflow: hidden; }
+.xbar i { position: absolute; top: 0; bottom: 0; border-radius: 999px; }
+.feed { display: grid; gap: 6px; max-height: 520px; overflow: auto; padding-right: 4px; }
+.ev { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.025); }
+.ev .em { font-size: 18px; text-align: center; }
+.ev .t { font-size: 13px; min-width: 0; }
+.ev .t div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev .t small { color: var(--dim); font-size: 11px; }
+.ev .r { text-align: right; font-size: 12px; }
+.mini { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 640px) { .mini { grid-template-columns: repeat(2, minmax(0, 1fr)); } .arm { grid-template-columns: 1.2fr 1fr .9fr; } .arm .hide-s { display: none; } .kpi .val { font-size: 23px; } }
+.mini .card { padding: 12px; }
+.mini .val { font-size: 18px; font-weight: 700; margin-top: 4px; }
+.empty { color: var(--dim); font-size: 13px; padding: 14px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
+.sec { margin-top: 14px; }
+footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: center; }
+.wiggle { display: inline-block; animation: wig 3.5s ease-in-out infinite; }
+@keyframes wig { 0%, 92%, 100% { transform: rotate(0); } 94% { transform: rotate(-12deg); } 96% { transform: rotate(10deg); } 98% { transform: rotate(-6deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo"><span class="wiggle">🎯</span></div>
+      <div>
+        <h1>Jev Sniper <span>HUD</span></h1>
+        <div class="sub" id="sub">betöltés…</div>
+      </div>
+    </div>
+    <div class="pills">
+      <span class="pill"><span class="dot" id="live-dot"></span><b id="upd">–</b></span>
+      <span class="pill">mód <b id="mode">–</b></span>
+      <span class="pill">élő kar <b id="livearm">–</b></span>
+      <span class="pill">belépő <b id="size">–</b></span>
+    </div>
+  </header>
+
+  <section class="grid kpis">
+    <div class="card kpi"><div class="lab">💸 Élesben eddig (Base)</div><div class="val" id="k-total">–</div><div class="note" id="k-total-n">–</div></div>
+    <div class="card kpi"><div class="lab">☀️ Ma</div><div class="val" id="k-today">–</div><div class="note" id="k-today-n">–</div></div>
+    <div class="card kpi"><div class="lab">⏱ Tempó / nap</div><div class="val" id="k-rate">–</div><div class="note" id="k-rate-n">–</div></div>
+    <div class="card kpi"><div class="lab">👛 Tárca</div><div class="val" id="k-wallet">–</div><div class="note" id="k-wallet-n">–</div></div>
+  </section>
+
+  <section class="grid row2">
+    <div class="card">
+      <div class="ttl"><h2>📈 Napi eredmény · élő kar, Base</h2><small id="bars-note">élő mérettel</small></div>
+      <div class="bars" id="bars"></div>
+    </div>
+    <div class="card">
+      <div class="ttl"><h2>🏁 Döntésig</h2><small id="dec-state">–</small></div>
+      <div class="kpi"><div class="val" id="dec-n">–</div><div class="note" id="dec-note">–</div></div>
+      <div class="prog"><i id="dec-bar" style="width:0%"></i></div>
+      <div class="ttl" style="margin-top:16px"><h2>🔁 Visszaforgatás</h2><small>30% · napi</small></div>
+      <div class="note" id="comp" style="color:var(--muted);font-size:13px">–</div>
+    </div>
+  </section>
+
+  <section class="grid row2 sec">
+    <div class="card">
+      <div class="ttl"><h2>🔵 Base stratégiák</h2><small>1$ mérés · átlag · n · Σ · /nap</small></div>
+      <div class="arms" id="arms-base"></div>
+      <div class="ttl" style="margin-top:16px"><h2>🟣 Robinhood</h2><small>pregrad és graduáció</small></div>
+      <div class="arms" id="arms-rh"></div>
+      <div class="ttl" style="margin-top:16px"><h2>📉 Alapvonalak</h2><small>viszonyítás</small></div>
+      <div class="arms" id="arms-bl"></div>
+    </div>
+    <div class="card">
+      <div class="ttl"><h2>🧭 Nyitott pozíciók</h2><small id="pos-n">v2 + pregrad</small></div>
+      <div class="pos" id="pos"></div>
+    </div>
+  </section>
+
+  <section class="grid row2 sec">
+    <div class="card">
+      <div class="ttl"><h2>⚡ Kötésfolyam</h2><small>belépések és eladások</small></div>
+      <div class="feed" id="feed"></div>
+    </div>
+    <div class="card">
+      <div class="ttl"><h2>🛰 Felvevők</h2><small>új láncok, gyűjtés</small></div>
+      <div class="mini" id="rec"></div>
+    </div>
+  </section>
+
+  <footer>Csak olvas · dry_run-ban árnyékmérés · az „élesben” értékek az élő belépővel felszorozva · <span id="foot-since">–</span></footer>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.search).get("t");
+const api = (p) => fetch(p + (token ? `?t=${encodeURIComponent(token)}` : ""), { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+const sgn = (x, d = 2) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
+const usd = (x, d = 2) => (x === null || x === undefined) ? "–" : sgn(x, d) + "$";
+const cls = (x) => (x === null || x === undefined) ? "" : x > 0 ? "up" : x < 0 ? "down" : "";
+const ago = (ms) => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? "most" : m < 60 ? `${m} perce` : m < 1440 ? `${Math.floor(m / 60)} ó ${m % 60} p` : `${Math.floor(m / 1440)} napja`; };
+const hhmm = (ms) => new Date(ms).toLocaleTimeString("hu-HU", { hour: "2-digit", minute: "2-digit" });
+const setVal = (id, text, c) => { const e = $(id); e.textContent = text; e.className = e.className.replace(/\b(up|down|warn)\b/g, "").trim() + (c ? " " + c : ""); };
+
+function renderSummary(s) {
+  const L = s.live.sizeUsd;
+  $("mode").textContent = s.mode === "dry_run" ? "dry_run 🧪" : "LIVE 🔥";
+  $("livearm").textContent = s.live.label;
+  $("size").textContent = `${L.toFixed(2)}$`;
+  $("sub").textContent = `${new Date(s.since).toLocaleDateString("hu-HU")} óta · ${s.live.chains.length ? s.live.chains.join(", ") : "minden lánc"} · ablak ${s.live.window}s · terv ${s.live.plan}`;
+  $("foot-since").textContent = `mérés kezdete: ${new Date(s.since).toLocaleDateString("hu-HU")}`;
+  const p = s.pnl;
+  setVal("k-total", usd(p.realized * L), cls(p.realized));
+  $("k-total-n").textContent = `${p.n} lezárt · átlag ${sgn(p.mean)}$/1$ · nyitva ${p.openPositions} (${usd(p.unrealized * L)})`;
+  setVal("k-today", usd(p.todayRealized * L), cls(p.todayRealized));
+  const today = p.perDay.find((d) => d.day === new Date().toLocaleDateString("sv-SE"));
+  $("k-today-n").textContent = today ? `${today.n} lezárás ma` : "ma még nem zárult pozíció";
+  setVal("k-rate", p.perDayRate === null ? "–" : usd(p.perDayRate * L, 1), cls(p.perDayRate));
+  $("k-rate-n").textContent = p.perDayRate === null ? "–" : `1$ mérésben ${sgn(p.perDayRate, 1)}$/nap`;
+  const w = s.wallet;
+  setVal("k-wallet", w.usd === null ? "–" : `${w.usd.toFixed(1)}$`, w.ok === false ? "down" : "");
+  $("k-wallet-n").textContent = `igény ${w.needUsd.toFixed(1)}$ (${w.peakOpen} egyszerre) ${w.ok === null ? "" : w.ok ? "✅" : "⚠️ kevés"}`;
+
+  // napi oszlopok
+  const bars = $("bars"); bars.replaceChildren();
+  const days = p.perDay.slice(-10);
+  if (!days.length) bars.append(el("div", "empty", "még nincs lezárt nap"));
+  const max = Math.max(0.01, ...days.map((d) => Math.abs(d.sum * L)));
+  for (const d of days) {
+    const v = d.sum * L, wrap = el("div", "barwrap");
+    const zone = el("div"); zone.style.cssText = "flex:1;display:flex;flex-direction:column;justify-content:flex-end;position:relative";
+    const b = el("div", "bar " + (v >= 0 ? "pos" : "neg")); b.style.height = `${Math.max(4, Math.abs(v) / max * 100)}%`; b.title = `${d.day}: ${usd(v)} (${d.n} lezárás)`;
+    zone.append(b); wrap.append(zone, el("div", "barlbl", d.day.slice(5).replace("-", ".")));
+    bars.append(wrap);
+  }
+  $("bars-note").textContent = `élő mérettel (${L.toFixed(2)}$)`;
+
+  // döntés
+  const dec = s.decision, pct = Math.min(100, dec.nAll / dec.need * 100);
+  $("dec-n").textContent = `${dec.nAll} / ${dec.need}`;
+  $("dec-bar").style.width = `${pct}%`;
+  $("dec-note").textContent = `ebből Base ${dec.nBase} · 90% CI ${dec.ciLow === null ? "–" : `${sgn(dec.ciLow)} … ${sgn(dec.ciHigh)}`}`;
+  $("dec-state").textContent = dec.state === "candidate" ? "✅ élesítés-jelölt" : dec.state === "promising" ? "⏳ ígéretes" : "gyűjtés";
+  $("comp").textContent = `Belépő most ${s.compound.sizeNow.toFixed(2)}$ · kassza ${s.compound.poolNow.toFixed(2)}$ — élesben ma ${s.compound.simSize.toFixed(2)}$ lenne (kassza ${s.compound.simPool.toFixed(1)}$)`;
+
+  // karok
+  const armList = (id, rows, liveArm, liveChain) => {
+    const box = $(id); box.replaceChildren();
+    const head = el("div", "arm head"); head.append(el("div", "", "stratégia"), el("div", "", "átlag · n"), el("div", "hide-s", "Σ"), el("div", "", "/nap")); box.append(head);
+    for (const r of rows) {
+      const isLive = r.arm === liveArm && r.chain === liveChain;
+      const row = el("div", "arm" + (isLive ? " live" : ""));
+      const nm = el("div", "nm"); nm.append(el("span", "", r.label)); if (isLive) nm.append(el("span", "tag star", "élő")); if (r.open) nm.append(el("span", "tag", `${r.open} nyitva`));
+      const m = el("div", "v mono " + cls(r.mean), r.n ? `${sgn(r.mean)} · ${r.n}` : "–");
+      const sm = el("div", "v mono hide-s " + cls(r.sum), r.n ? sgn(r.sum, 1) : "–");
+      const pd = el("div", "v mono " + cls(r.perDay), r.perDay === null ? "–" : sgn(r.perDay, 1));
+      row.append(nm, m, sm, pd); box.append(row);
+    }
+  };
+  armList("arms-base", [...s.base].sort((a, b) => (b.perDay ?? -1e9) - (a.perDay ?? -1e9)), s.live.arm, "base");
+  armList("arms-rh", s.rh, null, null);
+  armList("arms-bl", s.baselines, null, null);
+
+  // felvevők
+  const rec = $("rec"); rec.replaceChildren();
+  const mini = (lab, val, note) => { const c = el("div", "card"); c.append(el("div", "kpi lab", lab), el("div", "val mono", val), el("div", "note", note)); return c; };
+  const n = (x) => (x === null || x === undefined) ? "–" : Number(x).toLocaleString("hu-HU");
+  rec.append(
+    mini("☀️ Solana", n(s.recorders.sol.tokens), `token · ${n(s.recorders.sol.grads)} graduáció`),
+    mini("🟡 Four.meme", n(s.recorders.fourmeme.tokens), `token · ${n(s.recorders.fourmeme.trades)} kötés`),
+    mini("🥞 PancakeSwap", n(s.recorders.pancake.launches), "valódi indítás"),
+    mini("📣 Listázás", n(s.recorders.listings), "esemény"),
+  );
+}
+
+function renderPositions(rows) {
+  const box = $("pos"); box.replaceChildren();
+  $("pos-n").textContent = `${rows.length} nyitott · v2 + pregrad`;
+  if (!rows.length) { box.append(el("div", "empty", "nincs nyitott pozíció 💤")); return; }
+  for (const p of rows.slice(0, 14)) {
+    const c = el("div", "p");
+    const top = el("div", "top");
+    const left = el("div"); left.style.minWidth = "0";
+    left.append(el("div", "sym", `${p.chain === "base" ? "🔵" : "🟣"} ${p.symbol ?? "?"}`));
+    const x = p.nowX, v = p.value;
+    const right = el("div", "mono " + cls(v), v === null ? "–" : `${sgn(v)}$/1$`); right.style.textAlign = "right";
+    const xs = el("div", "mono", x === null ? "ár még nincs" : `${x.toFixed(2)}x`); xs.style.cssText = "font-size:12px;color:var(--muted)"; right.append(xs);
+    top.append(left, right);
+    const meta = el("div", "meta");
+    for (const a of p.arms) meta.append(el("span", "tag", a));
+    meta.append(el("span", "", `· ${ago(p.openedAt)} · fázis ${p.phase}${p.peakX ? ` · csúcs ${p.peakX.toFixed(2)}x` : ""}`));
+    // x-sáv: log skála 0,5x … 20x, a jelenlegi és a csúcs
+    const bar = el("div", "xbar");
+    const pos = (val) => Math.max(0, Math.min(100, (Math.log(val) - Math.log(0.5)) / (Math.log(20) - Math.log(0.5)) * 100));
+    if (p.peakX) { const pk = el("i"); pk.style.cssText = `left:0;width:${pos(p.peakX)}%;background:rgba(39,211,255,0.25)`; bar.append(pk); }
+    if (x) { const cur = el("i"); cur.style.cssText = `left:0;width:${pos(x)}%;background:${x >= 1 ? "var(--up)" : "var(--down)"}`; bar.append(cur); }
+    const one = el("i"); one.style.cssText = `left:${pos(1)}%;width:2px;background:rgba(255,255,255,0.5)`; bar.append(one);
+    c.append(top, meta, bar); box.append(c);
+  }
+}
+
+function renderFeed(rows) {
+  const box = $("feed"); box.replaceChildren();
+  if (!rows.length) { box.append(el("div", "empty", "még nincs esemény")); return; }
+  for (const e of rows) {
+    const reason = String(e.reason ?? "");
+    const em = e.kind === "open" ? "🟢" : e.kind === "sell" ? "💸" : reason.startsWith("moon") ? "🚀" : (e.pnl ?? 0) > 0 ? "✅" : "🔴";
+    const verb = e.kind === "open" ? "belépés" : e.kind === "sell" ? `részeladás ${e.x ? Number(e.x).toFixed(1) + "x" : ""}` : `zárás · ${reason.replace("emergency:", "vészfék ").replace(/_/g, " ")}`;
+    const row = el("div", "ev");
+    const t = el("div", "t"); t.append(el("div", "", `${e.chain === "base" ? "🔵" : "🟣"} ${e.symbol ?? "?"} — ${verb}`), el("small", "", `${e.arms} · ${hhmm(Number(e.at))}`));
+    const r = el("div", "r mono " + cls(e.pnl), e.kind === "close" && e.pnl !== null ? `${sgn(Number(e.pnl))}$` : "");
+    row.append(el("div", "em", em), t, r); box.append(row);
+  }
+}
+
+async function refresh() {
+  try {
+    const [s, p, f] = await Promise.all([api("/api/summary"), api("/api/positions"), api("/api/feed")]);
+    renderSummary(s); renderPositions(p); renderFeed(f);
+    $("upd").textContent = `élő · ${hhmm(Date.now())}`; $("live-dot").classList.remove("off");
+  } catch (e) {
+    $("upd").textContent = "nincs kapcsolat"; $("live-dot").classList.add("off");
+  }
+}
+refresh(); setInterval(refresh, 10_000);
+</script>
+</body>
+</html>

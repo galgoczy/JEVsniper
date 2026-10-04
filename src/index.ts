@@ -31,6 +31,7 @@ import { PreGradArms } from "./graduation/pregrad.js";
 import { BnbRecorder } from "./bnb/recorder.js";
 import { PancakeRecorder } from "./bnb/pancake.js";
 import { SolRecorder } from "./sol/recorder.js";
+import { startHud } from "./hud/server.js";
 
 /**
  * Főprogram – 1. lépés: váz. Indul, ellenőrzi a configot/env-et, megnyitja a DB-t,
@@ -127,6 +128,7 @@ async function main() {
   pcsRecorder?.start();
   const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
   solRecorder?.start();
+  const hud = cfg.hud.enabled ? startHud({ db, cfg, port: cfg.hud.port, host: cfg.hud.host, token: env.HUD_TOKEN || undefined }) : null;
   // 9. lépés: napi riport (config report.daily_time_utc) + /report parancs
   // Telegram-riport (2026-10-03): időarányos + állás + visszaforgatás, telefonra; a teljes markdown riport fájlba (napi, 24 órás)
   const telegramReport = () => {
@@ -241,6 +243,7 @@ async function main() {
     bnbRecorder?.stop();
     pcsRecorder?.stop();
     solRecorder?.stop();
+    hud?.close();
     graduation.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
