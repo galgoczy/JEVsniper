@@ -196,7 +196,7 @@ async function main() {
     `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
     ...(bnbRecorder ? [`BNB felvevő: ${bnbRecorder.stats.tokens} token, ${bnbRecorder.stats.trades} kötés, ${bnbRecorder.stats.grads} graduáció (indulás óta), ${bnbRecorder.stats.errors} hiba, blokk ${bnbRecorder.stats.lastBlock}`] : []),
-    ...(pcsRecorder ? [`PancakeSwap felvevő: ${pcsRecorder.stats.pairs} WBNB-pár, ${pcsRecorder.stats.trades} kötés, ${pcsRecorder.stats.snapshots} pillanatkép, követett ${pcsRecorder.stats.tracked}, hiba ${pcsRecorder.stats.errors}`] : []),
+    ...(pcsRecorder ? [`PancakeSwap felvevő: ${pcsRecorder.stats.shells} új WBNB-pár (héj), ${pcsRecorder.stats.waiting} vár likviditásra, ${pcsRecorder.stats.pairs} valódi indítás, ${pcsRecorder.stats.trades} kötés, ${pcsRecorder.stats.snapshots} pillanatkép, követett ${pcsRecorder.stats.tracked}, hiba ${pcsRecorder.stats.errors}`] : []),
     ...(solRecorder ? [`SOL felvevő: ${solRecorder.stats.tokens} token, ${solRecorder.stats.trades} kötés mentve, ${solRecorder.stats.snapshots} pillanatkép, ${solRecorder.stats.completes} görbe-teljesülés, ${solRecorder.stats.migrations} migráció, követett ${solRecorder.stats.tracked}, újracsatlakozás ${solRecorder.stats.reconnects}, hiba ${solRecorder.stats.errors}`] : []),
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
     `Jev: ${jev.disabled ? "kikapcsolva" : jev.paused ? "szünetel" : "ok"}, rezsim: ${regime.regime}`,

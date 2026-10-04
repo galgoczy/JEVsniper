@@ -321,7 +321,8 @@ CREATE TABLE IF NOT EXISTS sol_grads (mint TEXT NOT NULL, kind TEXT NOT NULL, at
 -- BNB Chain / PancakeSwap v2 felvevő (2026-10-04): közvetlen WBNB-pár indítások. Ár = WBNB-tartalék / token-tartalék (nyers arány, csak szorzóként).
 CREATE TABLE IF NOT EXISTS bnb_pairs (
   pair TEXT PRIMARY KEY, token TEXT NOT NULL, wbnb_is0 INTEGER NOT NULL, created_block INTEGER NOT NULL, created_at INTEGER NOT NULL,
-  creator TEXT, tx_to TEXT            -- a pár-létrehozó tx küldője és címzettje (router / indítóplatform)
+  creator TEXT, tx_to TEXT,           -- a likviditás-betétel (indítás) tx küldője és címzettje (router / indítóplatform)
+  pair_created_block INTEGER           -- a PairCreated blokkja (a pár „héjként” ennyivel korábban jött létre)
 );
 CREATE TABLE IF NOT EXISTS bnb_pair_trades (
   pair TEXT NOT NULL, tx TEXT NOT NULL, log_index INTEGER NOT NULL, block INTEGER NOT NULL, at INTEGER NOT NULL,

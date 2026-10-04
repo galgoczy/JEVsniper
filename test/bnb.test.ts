@@ -40,40 +40,51 @@ test("BNB felvevő: indítás, vétel, eladás, graduáció mentése; dokumentá
   db.close();
 });
 
-test("PancakeSwap felvevő: csak WBNB-pár; vétel/eladás a WBNB irányából; ár a Sync-ből; pillanatképek 30/60 mp; kimenet a 60 mp-es árhoz", async () => {
+test("PancakeSwap felvevő: üres héj nem indítás; az első likviditás az indítás; vétel/eladás; pillanatképek; 24 órás kimenet", async () => {
   const { PancakeRecorder } = await import("../src/bnb/pancake.js");
   const { BNB } = await import("../src/bnb/addresses.js");
   const { encodeEventTopics, encodeAbiParameters, parseAbi } = await import("viem");
   const db = openDb(":memory:");
   let now = 1_000_000_000;
-  const client = { getTransaction: async () => ({ from: "0x00000000000000000000000000000000000000c1", to: "0x10ed43c718714eb63d5aa57b78b54704e256024e" }) } as never;
-  const rec = new PancakeRecorder({ db, client, now: () => now });
+  const TOKEN = "0x00000000000000000000000000000000000000aa", PAIR = "0x00000000000000000000000000000000000000bb", SHELL = "0x00000000000000000000000000000000000000dd", OTHER = "0x00000000000000000000000000000000000000cc";
   const fac = parseAbi(["event PairCreated(address indexed token0, address indexed token1, address pair, uint256 allPairsLength)"]);
   const pairAbi = parseAbi(["event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)", "event Sync(uint112 reserve0, uint112 reserve1)"]);
-  const TOKEN = "0x00000000000000000000000000000000000000aa", PAIR = "0x00000000000000000000000000000000000000bb", OTHER = "0x00000000000000000000000000000000000000cc";
   const mk = (abi: readonly unknown[], name: string, args: Record<string, unknown>, address: string, block: bigint, i: number) => {
     const ev = (abi as Array<{ name: string; inputs: Array<{ name: string; indexed?: boolean; type: string }> }>).find((e) => e.name === name)!;
     const topics = encodeEventTopics({ abi: [ev], eventName: name, args } as never) as `0x${string}`[];
     const data = encodeAbiParameters(ev.inputs.filter((x) => !x.indexed) as never, ev.inputs.filter((x) => !x.indexed).map((x) => args[x.name]) as never);
     return { address, topics, data, blockNumber: block, transactionHash: `0x${String(i).padStart(64, "0")}`, logIndex: i } as never;
   };
-  // WBNB < TOKEN címben? a WBNB 0xbb4c…, a TOKEN 0x…aa → token0 = TOKEN, token1 = WBNB
-  await rec.onPairsCreated([mk(fac, "PairCreated", { token0: TOKEN, token1: BNB.wbnb, pair: PAIR, allPairsLength: 1n }, BNB.pancakeV2Factory, 100n, 1),
-    mk(fac, "PairCreated", { token0: TOKEN, token1: OTHER, pair: OTHER, allPairsLength: 2n }, BNB.pancakeV2Factory, 100n, 2)], 100n, now);
-  assert.equal((db.prepare("SELECT count(*) n FROM bnb_pairs").get() as { n: number }).n, 1);
-  const p = db.prepare("SELECT * FROM bnb_pairs").get() as Record<string, unknown>; assert.equal(p.wbnb_is0, 0); assert.equal(p.creator, "0x00000000000000000000000000000000000000c1");
   const E = 10n ** 18n;
-  // vétel: 1 WBNB be (amount1In), token ki; Sync: token 900, WBNB 11 → ár 11/900
-  rec.ingestPairLogs([mk(pairAbi, "Sync", { reserve0: 900n * E, reserve1: 11n * E }, PAIR, 110n, 3), mk(pairAbi, "Swap", { sender: OTHER, amount0In: 0n, amount1In: E, amount0Out: 100n * E, amount1Out: 0n, to: OTHER }, PAIR, 110n, 4)], 110n, now);
+  let reserves: Record<string, [bigint, bigint]> = { [PAIR]: [0n, 0n], [SHELL]: [0n, 0n] };
+  const pairLogs = [mk(pairAbi, "Sync", { reserve0: 1000n * E, reserve1: 10n * E }, PAIR, 105n, 3),   // likviditás: 10 WBNB (token1)
+    mk(pairAbi, "Sync", { reserve0: 900n * E, reserve1: 11n * E }, PAIR, 110n, 4), mk(pairAbi, "Swap", { sender: OTHER, amount0In: 0n, amount1In: E, amount0Out: 100n * E, amount1Out: 0n, to: OTHER }, PAIR, 110n, 5)];
+  const client = {
+    getTransaction: async () => ({ from: "0x00000000000000000000000000000000000000c1", to: "0x10ed43c718714eb63d5aa57b78b54704e256024e" }),
+    multicall: async (q: { contracts: Array<{ address: string }> }) => q.contracts.map((x) => ({ status: "success", result: [...(reserves[x.address.toLowerCase()] ?? [0n, 0n]), 0] })),
+    getLogs: async (q: { address: string; fromBlock: bigint; toBlock: bigint }) => (String(q.address).toLowerCase() === PAIR ? pairLogs.filter((l: { blockNumber: bigint }) => l.blockNumber >= q.fromBlock && l.blockNumber <= q.toBlock) : []),
+  } as never;
+  const rec = new PancakeRecorder({ db, client, now: () => now });
+  await rec.onPairsCreated([mk(fac, "PairCreated", { token0: TOKEN, token1: BNB.wbnb, pair: PAIR, allPairsLength: 1n }, BNB.pancakeV2Factory, 100n, 1),
+    mk(fac, "PairCreated", { token0: TOKEN, token1: BNB.wbnb, pair: SHELL, allPairsLength: 2n }, BNB.pancakeV2Factory, 100n, 2),
+    mk(fac, "PairCreated", { token0: TOKEN, token1: OTHER, pair: OTHER, allPairsLength: 3n }, BNB.pancakeV2Factory, 100n, 6)], 100n, now);
+  assert.equal(rec.stats.shells, 2);                                                       // csak a WBNB-párok
+  await rec.checkShells(102n, now);                                                        // még üresek → nincs indítás
+  assert.equal((db.prepare("SELECT count(*) n FROM bnb_pairs").get() as { n: number }).n, 0);
+  reserves = { [PAIR]: [900n * E, 11n * E], [SHELL]: [0n, 0n] };
+  await rec.checkShells(110n, now);                                                        // PAIR-ba likviditás került
+  const p = db.prepare("SELECT * FROM bnb_pairs").get() as Record<string, unknown>;
+  assert.equal(p.pair, PAIR); assert.equal(p.created_block, 105); assert.equal(p.pair_created_block, 100); assert.equal(p.creator, "0x00000000000000000000000000000000000000c1");
+  assert.equal(rec.stats.waiting, 1);                                                      // a SHELL még vár
   now += 61_000; rec.flush();
   const s60 = db.prepare("SELECT * FROM bnb_pair_snapshots WHERE window_sec = 60").get() as Record<string, number>;
-  assert.equal(s60.buys, 1); assert.equal(s60.unique_buyers, 1); assert.ok(Math.abs(s60.bnb_in - 1) < 1e-9); assert.ok(Math.abs(s60.price - 11 / 900) < 1e-12); assert.ok(Math.abs(s60.liq_bnb - 11) < 1e-9);
-  // eladás: WBNB ki (amount1Out); ár felére
-  rec.ingestPairLogs([mk(pairAbi, "Sync", { reserve0: 1100n * E, reserve1: 6n * E }, PAIR, 300n, 5), mk(pairAbi, "Swap", { sender: OTHER, amount0In: 200n * E, amount1In: 0n, amount0Out: 0n, amount1Out: 5n * E, to: OTHER }, PAIR, 300n, 6)], 300n, now);
+  assert.equal(s60.buys, 1); assert.equal(s60.unique_buyers, 1); assert.ok(Math.abs(s60.price - 11 / 900) < 1e-12); assert.ok(Math.abs(s60.liq_bnb - 11) < 1e-9);
+  rec.ingestPairLogs([mk(pairAbi, "Sync", { reserve0: 1100n * E, reserve1: 6n * E }, PAIR, 300n, 7), mk(pairAbi, "Swap", { sender: OTHER, amount0In: 200n * E, amount1In: 0n, amount0Out: 0n, amount1Out: 5n * E, to: OTHER }, PAIR, 300n, 8)], 300n, now);
   assert.equal((db.prepare("SELECT count(*) n FROM bnb_pair_trades WHERE side = 'sell'").get() as { n: number }).n, 1);
   now += 25 * 3600_000; rec.flush();
   const o = db.prepare("SELECT * FROM bnb_pair_outcomes").get() as Record<string, number>;
   assert.ok(o.min_x < 0.5 && o.min_x > 0.4, `min_x ${o.min_x}`); assert.ok(Math.abs(o.min_liq_bnb - 6) < 1e-9); assert.ok(o.done_at > 0);
   assert.equal(rec.stats.tracked, 0);
+  await rec.checkShells(400n, now); assert.equal(rec.stats.waiting, 0);                    // 6 óránál régebbi héj kikerül
   db.close();
 });

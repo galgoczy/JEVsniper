@@ -6,9 +6,12 @@ import { BNB, BNB_DEFAULT_RPC } from "./addresses.js";
 import { log } from "../logger.js";
 
 /**
- * BNB Chain / PancakeSwap v2 felvevő (2026-10-04). 10-04-i mérés: a BNB-memeforgalom nagy része NEM a Four.meme-en,
- * hanem közvetlenül a PancakeSwap v2-n indul (~24 000 új pár/nap, ~60%-a WBNB-pár) – ez a Base/Uniswap-indítások megfelelője.
- *  - bnb_pairs: minden új WBNB-pár (pár, token, blokk, létrehozó tx küldője);
+ * BNB Chain / PancakeSwap v2 felvevő (2026-10-04). A PancakeSwap v2-n ~24 000 új pár/nap jön létre, ~60%-a WBNB-pár – DE ezek
+ * túlnyomó része üres héj (a tokenszerződés a konstruktorában létrehozza, likviditás soha nem kerül bele; 10-04 minta: 17/18).
+ * Ezért az indítás pillanata NEM a PairCreated, hanem az első likviditás-betétel: a friss WBNB-párokat („héjak”, 6 óráig)
+ * 20 mp-enként egy getReserves-multicall ellenőrzi; ha WBNB került bele, a pár naplójából (a legutóbbi üres ellenőrzés
+ * blokkjától) visszakeressük az első Sync-et – ez az indítás blokkja. (A publikus végpont cím nélküli getLogs-ot nem enged.)
+ *  - bnb_pairs: minden valódi indítás (pár, token, indítási blokk, a likviditás-betétel tx küldője és címzettje);
  *  - bnb_pair_trades: az első 30 perc Swap-jai (vétel = WBNB be a párba), az ár a Sync-tartalékokból (WBNB / token, nyers arány);
  *  - bnb_pair_snapshots: 30/60/180/600/1800 mp: vételek, eladások, egyedi vevők (Swap.to), BNB be/ki, ár, WBNB-likviditás;
  *  - bnb_pair_outcomes: a 60 mp-es árhoz mért csúcs/mélypont és a WBNB-likviditás minimuma 24 órán át (5 percenként getReserves).
@@ -22,6 +25,8 @@ const PAIR_ABI = parseAbi([
 const WINDOWS = [30, 60, 180, 600, 1800];
 const CHUNK = 100n, MAX_CATCHUP = 8000n, BLOCK_SEC = 0.45, ADDR_BATCH = 100;
 const TRADES_UNTIL_SEC = 1800, TRADES_CAP = 500, OUTCOME_HOURS = 24, OUTCOME_EVERY_MS = 5 * 60_000;
+const SHELL_HOURS = 6, SHELL_CHECK_MS = 20_000;
+interface Shell { pair: string; token: string; wbnbIs0: boolean; createdBlock: bigint; createdAt: number; zeroAtBlock: bigint }
 
 interface Pair {
   pair: string; token: string; wbnbIs0: boolean; createdAt: number;
@@ -35,7 +40,9 @@ export class PancakeRecorder {
   private c: PublicClient;
   private pairs = new Map<string, Pair>();
   private lastOutcome = 0;
-  stats = { pairs: 0, trades: 0, snapshots: 0, errors: 0, tracked: 0, lastBlock: 0n };
+  private shells = new Map<string, Shell>();
+  private lastShellCheck = 0;
+  stats = { shells: 0, pairs: 0, trades: 0, snapshots: 0, errors: 0, tracked: 0, waiting: 0, lastBlock: 0n };
   constructor(private d: { db: DB; rpcUrl?: string; pollMs?: number; client?: PublicClient; now?: () => number }) {
     this.c = d.client ?? (createPublicClient({ chain: bsc, transport: http((d.rpcUrl ?? BNB_DEFAULT_RPC).split(",")[0]!.trim(), { timeout: 15_000, retryCount: 1 }) }) as PublicClient);
   }
@@ -64,6 +71,7 @@ export class PancakeRecorder {
         db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('pcs_last_block', ?)").run(to.toString());
         this.stats.lastBlock = to;
       }
+      if (nowMs - this.lastShellCheck >= SHELL_CHECK_MS) { this.lastShellCheck = nowMs; await this.checkShells(head, nowMs); }
       this.flush();
       if (nowMs - this.lastOutcome >= OUTCOME_EVERY_MS) { this.lastOutcome = nowMs; await this.refreshOutcomes(); }
     } catch (e) { this.stats.errors++; log.debug("PancakeSwap felvevő hiba", { error: (e as Error).message.slice(0, 160) }); }
@@ -72,6 +80,7 @@ export class PancakeRecorder {
 
   private atOf(head: bigint, nowMs: number, b: bigint) { return Math.round(nowMs - Number(head - b) * BLOCK_SEC * 1000); }
 
+  /** Új WBNB-párok nyilvántartása „héjként” (még nincs likviditás); indításnak csak az első likviditás-betétel számít. */
   async onPairsCreated(logs: Array<Log & { args?: Record<string, unknown> }>, head: bigint, nowMs: number) {
     const wbnb = BNB.wbnb.toLowerCase();
     for (const l of logs) {
@@ -79,14 +88,46 @@ export class PancakeRecorder {
       try { a = decodeEventLog({ abi: uniswapV2FactoryAbi, data: l.data, topics: l.topics }).args as Record<string, unknown>; } catch { continue; }
       const t0 = String(a.token0).toLowerCase(), t1 = String(a.token1).toLowerCase(), pair = String(a.pair).toLowerCase();
       if (t0 !== wbnb && t1 !== wbnb) continue;
-      const token = t0 === wbnb ? t1 : t0, at = this.atOf(head, nowMs, l.blockNumber ?? head);
-      const tx = l.transactionHash ? await this.c.getTransaction({ hash: l.transactionHash }).catch(() => null) : null;
-      const r = this.d.db.prepare("INSERT OR IGNORE INTO bnb_pairs(pair, token, wbnb_is0, created_block, created_at, creator, tx_to) VALUES (?,?,?,?,?,?,?)")
-        .run(pair, token, t0 === wbnb ? 1 : 0, Number(l.blockNumber ?? 0n), at, tx?.from?.toLowerCase() ?? null, tx?.to?.toLowerCase() ?? null);
-      if (r.changes) this.stats.pairs++;
-      if (!this.pairs.has(pair)) this.pairs.set(pair, { pair, token, wbnbIs0: t0 === wbnb, createdAt: at, buys: 0, sells: 0, buyers: new Set(), bnbIn: 0, bnbOut: 0, price: 0, liq: 0, tradesStored: 0,
-        snapsDone: new Set(), refPrice: null, maxX: 1, minX: 1, minLiq: Infinity, peakLiq: 0 });
+      const b = l.blockNumber ?? head;
+      if (!this.shells.has(pair) && !this.pairs.has(pair)) { this.shells.set(pair, { pair, token: t0 === wbnb ? t1 : t0, wbnbIs0: t0 === wbnb, createdBlock: b, createdAt: this.atOf(head, nowMs, b), zeroAtBlock: b > 0n ? b - 1n : 0n }); this.stats.shells++; }
     }
+    this.stats.waiting = this.shells.size;
+  }
+
+  /** Héjak: van-e már WBNB a párban? Ha igen, az első Sync blokkja az indítás; onnan a kötések is visszatöltődnek. */
+  async checkShells(head: bigint, nowMs: number) {
+    for (const [k, sh] of this.shells) if (nowMs - sh.createdAt > SHELL_HOURS * 3600_000) this.shells.delete(k);
+    const list = [...this.shells.values()];
+    for (let i = 0; i < list.length; i += 400) {
+      const batch = list.slice(i, i + 400);
+      const res = await this.c.multicall({ allowFailure: true, contracts: batch.map((p) => ({ address: getAddress(p.pair), abi: PAIR_ABI, functionName: "getReserves" as const })) }).catch(() => null);
+      if (!res) continue;
+      for (let k = 0; k < batch.length; k++) {
+        const sh = batch[k]!, r = res[k]; if (!r || r.status !== "success") continue;
+        const [r0, r1] = r.result as readonly [bigint, bigint, number];
+        if ((sh.wbnbIs0 ? r0 : r1) === 0n) { sh.zeroAtBlock = head; continue; }
+        await this.launch(sh, head, nowMs).catch((e) => log.debug("PancakeSwap indítás-visszakeresés hiba", { error: (e as Error).message.slice(0, 120) }));
+      }
+    }
+    this.stats.waiting = this.shells.size;
+  }
+
+  private async launch(sh: Shell, head: bigint, nowMs: number) {
+    const from = sh.zeroAtBlock + 1n > head - MAX_CATCHUP ? sh.zeroAtBlock + 1n : head - MAX_CATCHUP;
+    const logs: Log[] = [];
+    for (let f = from; f <= head; f += CHUNK) logs.push(...await this.c.getLogs({ address: getAddress(sh.pair), events: PAIR_ABI.filter((x) => x.type === "event"), fromBlock: f, toBlock: f + CHUNK - 1n > head ? head : f + CHUNK - 1n }));
+    const first = logs.find((l) => { try { const d = decodeEventLog({ abi: PAIR_ABI, data: l.data, topics: l.topics }); return d.eventName === "Sync" && ((sh.wbnbIs0 ? d.args.reserve0 : d.args.reserve1) as bigint) > 0n; } catch { return false; } });
+    this.shells.delete(sh.pair);
+    if (!first) return;
+    const lb = first.blockNumber ?? head, at = this.atOf(head, nowMs, lb);
+    const tx = first.transactionHash ? await this.c.getTransaction({ hash: first.transactionHash }).catch(() => null) : null;
+    const r = this.d.db.prepare("INSERT OR IGNORE INTO bnb_pairs(pair, token, wbnb_is0, created_block, created_at, creator, tx_to, pair_created_block) VALUES (?,?,?,?,?,?,?,?)")
+      .run(sh.pair, sh.token, sh.wbnbIs0 ? 1 : 0, Number(lb), at, tx?.from?.toLowerCase() ?? null, tx?.to?.toLowerCase() ?? null, Number(sh.createdBlock));
+    if (r.changes) this.stats.pairs++;
+    this.pairs.set(sh.pair, { pair: sh.pair, token: sh.token, wbnbIs0: sh.wbnbIs0, createdAt: at, buys: 0, sells: 0, buyers: new Set(), bnbIn: 0, bnbOut: 0, price: 0, liq: 0, tradesStored: 0,
+      snapsDone: new Set(), refPrice: null, maxX: 1, minX: 1, minLiq: Infinity, peakLiq: 0 });
+    // a likviditás-betétel óta eltelt kötések (a pillanatképek ezekből is számolnak)
+    this.ingestPairLogs(logs.filter((l) => (l.blockNumber ?? 0n) >= lb), head, nowMs);
   }
 
   /** Swap és Sync események feldolgozása (tesztelhető). Vétel = WBNB megy a párba; az ár a legutóbbi Sync tartalékaiból. */
