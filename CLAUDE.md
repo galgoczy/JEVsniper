@@ -14,7 +14,7 @@ A felhasználó nem programozó: magyarul, egyszerűen fogalmazz, a parancsokat 
 - Indítás: `npm start` (a bot terminálban fut; leállítás Ctrl+C). Frissítés után újraindítás kell.
 - Ha a botot te indítod, háttérben futtasd, és a kimenetét fájlba irányítsd, pl. `mkdir -p logs && nohup npm start > logs/bot.out 2>&1 &`; leállítás: a folyamat megkeresése (`pgrep -f "tsx src/index.ts"`) és `kill` (SIGINT/SIGTERM – a bot rendben leáll).
 - Telegram: `/status`, `/allas` (rövid állás), `/report` (időarányos + állás + visszaforgatás), `/allas_reszletes`, `/stop`, `/resume`, `/panic`, `/help`.
-- Webes áttekintő (HUD): http://<mini-IP>:8787 (config `hud`; `HUD_TOKEN` a .env-ben → `?t=<token>`). Később Cloudflare Tunnel a zentopia.hu alá.
+- Webes áttekintő (HUD): http://<mini-IP>:8787 (config `hud`; `HUD_TOKEN` a .env-ben → `?t=<token>`). Később Cloudflare Tunnel: `tradehud.zentopia.hu`.
 
 ## Rendszeres kiértékelés (ezeket futtasd és értelmezd a felhasználónak)
 - Állás: `npm run allas`
