@@ -186,11 +186,14 @@ bnb:
   # PancakeSwap v2 közvetlen WBNB-pár indítások; indítás = az első likviditás (a frissen létrehozott párok többsége üres héj)
   pancake: true
 
-# Webes áttekintő (HUD): http://<mini-IP>:8787 a helyi hálón; kívülről Tailscale-lel. Csak olvas. HUD_TOKEN a .env-ben → ?t=<token> kell.
+# Webes áttekintő (HUD): https://tradehud.zentopia.hu (Cloudflare Tunnel → 127.0.0.1:8787). Csak olvas.
+# Belépés: jelszó (npm run hud:jelszo → HUD_PASSWORD_HASH a .env-ben), majd passkey; a passkey felvétele után password_login: false.
 hud:
   enabled: true
   port: 8787
-  host: 0.0.0.0
+  host: 127.0.0.1
+  password_login: true
+  origins: ["https://tradehud.zentopia.hu", "http://localhost:8787"]
 
 # Solana / Pump.fun felvevő (2026-10-04): publikus websocket; sol_tokens, sol_trades (első 30 perc), sol_snapshots (30/60/180/600/1800 mp), sol_outcomes.
 # Nem kereskedik és nem nyit árnyékpozíciót.

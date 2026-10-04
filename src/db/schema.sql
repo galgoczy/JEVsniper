@@ -339,3 +339,7 @@ CREATE TABLE IF NOT EXISTS bnb_pair_outcomes (
   pair TEXT PRIMARY KEY, ref_price REAL NOT NULL, ref_at INTEGER NOT NULL, max_x REAL NOT NULL, min_x REAL NOT NULL,
   min_liq_bnb REAL, peak_liq_bnb REAL, done_at INTEGER
 );
+
+-- HUD beléptetés (2026-10-04): munkamenetek (csak a süti SHA-256 lenyomata) és passkey-k (WebAuthn nyilvános kulcsok).
+CREATE TABLE IF NOT EXISTS hud_sessions (token_hash TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, method TEXT, ip TEXT);
+CREATE TABLE IF NOT EXISTS hud_passkeys (id TEXT PRIMARY KEY, public_key BLOB NOT NULL, counter INTEGER NOT NULL, transports TEXT, label TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER);

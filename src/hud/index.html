@@ -84,6 +84,7 @@ h1 span { background: var(--grad); -webkit-background-clip: text; background-cli
 .empty { color: var(--dim); font-size: 13px; padding: 14px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
 .sec { margin-top: 14px; }
 footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: center; }
+.btn { cursor: pointer; font: inherit; } .btn:hover { border-color: rgba(139,92,255,0.6); color: var(--text); } .hidden { display: none !important; }
 .wiggle { display: inline-block; animation: wig 3.5s ease-in-out infinite; }
 @keyframes wig { 0%, 92%, 100% { transform: rotate(0); } 94% { transform: rotate(-12deg); } 96% { transform: rotate(10deg); } 98% { transform: rotate(-6deg); } }
 </style>
@@ -103,6 +104,8 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
       <span class="pill">mód <b id="mode">–</b></span>
       <span class="pill">élő kar <b id="livearm">–</b></span>
       <span class="pill">belépő <b id="size">–</b></span>
+      <button class="pill btn hidden" id="pk-add" title="Passkey felvétele erre az eszközre">🔑 passkey <b id="pk-n"></b></button>
+      <button class="pill btn" id="logout" title="Kilépés">🚪</button>
     </div>
   </header>
 
@@ -156,6 +159,7 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
   <footer>Csak olvas · dry_run-ban árnyékmérés · az „élesben” értékek az élő belépővel felszorozva · <span id="foot-since">–</span></footer>
 </div>
 
+<script src="/auth/webauthn.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -286,9 +290,28 @@ async function refresh() {
     renderSummary(s); renderPositions(p); renderFeed(f);
     $("upd").textContent = `élő · ${hhmm(Date.now())}`; $("live-dot").classList.remove("off");
   } catch (e) {
+    if (String(e.message) === "401") { location.href = "/login"; return; }
     $("upd").textContent = "nincs kapcsolat"; $("live-dot").classList.add("off");
   }
 }
+const post = (u, b) => fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }).then(async (r) => ({ ok: r.ok, j: await r.json().catch(() => ({})) }));
+async function authState() {
+  try {
+    const s = await fetch("/auth/state").then((r) => r.json());
+    if (s.passkeyHere && window.PublicKeyCredential) { $("pk-add").classList.remove("hidden"); $("pk-n").textContent = s.passkeys ? `(${s.passkeys})` : "+"; }
+  } catch { /* nincs */ }
+}
+$("pk-add").onclick = async () => {
+  try {
+    const o = await post("/auth/passkey/register/options"); if (!o.ok) return alert(o.j.error || "hiba");
+    const resp = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: o.j });
+    const label = prompt("Eszköz neve (pl. iPhone, MacBook):", "") || "";
+    const v = await post("/auth/passkey/register/verify", { ...resp, label }); if (!v.ok) return alert(v.j.error || "sikertelen");
+    alert(`Passkey felvéve 🎉 (összesen ${v.j.passkeys})`); authState();
+  } catch (e) { alert("Megszakítva vagy sikertelen: " + (e.message || e)); }
+};
+$("logout").onclick = async () => { await post("/auth/logout"); location.href = "/login"; };
+authState();
 refresh(); setInterval(refresh, 10_000);
 </script>
 </body>

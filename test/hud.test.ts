@@ -40,15 +40,49 @@ test("HUD adatok: élő kar Base-eredménye, nyitott pozíciók tokenenként, k�
   db.close();
 });
 
-test("HUD szerver: JSON végpontok; token esetén nélküle 401", async () => {
+test("HUD szerver: belépés nélkül 401 / átirányítás; jelszóval munkamenet; hibás jelszónál korlát; passkey csak az engedélyezett eredeten", async () => {
   const { db } = seed();
-  const srv = startHud({ db, cfg, port: 0, host: "127.0.0.1", token: "titok" });
+  const { hashPassword } = await import("../src/hud/auth.js");
+  const c2 = { ...cfg, hud: { ...cfg.hud, origins: ["https://tradehud.zentopia.hu"] } };
+  const srv = startHud({ db, cfg: c2, port: 0, host: "127.0.0.1", passwordHash: hashPassword("helyes-jelszo-123") });
   await new Promise((r) => srv.once("listening", r));
-  const port = (srv.address() as { port: number }).port;
-  assert.equal((await fetch(`http://127.0.0.1:${port}/api/summary`)).status, 401);
-  const r = await fetch(`http://127.0.0.1:${port}/api/summary?t=titok`); assert.equal(r.status, 200);
-  const j = await r.json() as { mode: string }; assert.equal(j.mode, cfg.mode);
-  const page = await fetch(`http://127.0.0.1:${port}/?t=titok`); assert.equal(page.status, 200); assert.match(await page.text(), /Jev Sniper/);
-  assert.equal((await fetch(`http://127.0.0.1:${port}/nincs?t=titok`)).status, 404);
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  const post = (u: string, b: unknown, h: Record<string, string> = {}) => fetch(base + u, { method: "POST", headers: { "content-type": "application/json", ...h }, body: JSON.stringify(b), redirect: "manual" });
+  assert.equal((await fetch(`${base}/api/summary`)).status, 401);
+  const root = await fetch(`${base}/`, { redirect: "manual" }); assert.equal(root.status, 302); assert.equal(root.headers.get("location"), "/login");
+  assert.equal((await fetch(`${base}/login`)).status, 200);
+  const st = await (await fetch(`${base}/auth/state`)).json() as { loggedIn: boolean; password: boolean; passkeyHere: boolean };
+  assert.equal(st.loggedIn, false); assert.equal(st.password, true); assert.equal(st.passkeyHere, false); // http://127.0.0.1 nem engedélyezett passkey-eredet
+  assert.equal((await post("/auth/passkey/login/options", {})).status, 400);
+  assert.equal((await post("/auth/password", { password: "rossz" })).status, 401);
+  const ok = await post("/auth/password", { password: "helyes-jelszo-123" }); assert.equal(ok.status, 200);
+  const cookie = ok.headers.get("set-cookie")!.split(";")[0]!; assert.match(ok.headers.get("set-cookie")!, /HttpOnly; SameSite=Strict/);
+  assert.ok(!/helyes-jelszo/.test(JSON.stringify(db.prepare("SELECT * FROM hud_sessions").all())));    // a jelszó nem kerül a DB-be
+  const s = await fetch(`${base}/api/summary`, { headers: { cookie } }); assert.equal(s.status, 200); assert.equal((await s.json() as { mode: string }).mode, cfg.mode);
+  // https-eredetről (Cloudflare mögül) a passkey-kihívás belépve kérhető
+  const reg = await post("/auth/passkey/register/options", {}, { cookie, "x-forwarded-proto": "https", "x-forwarded-host": "tradehud.zentopia.hu" });
+  assert.equal(reg.status, 200); assert.equal(((await reg.json()) as { rp: { id: string } }).rp.id, "tradehud.zentopia.hu");
+  assert.equal((await post("/auth/passkey/register/options", {}, { "x-forwarded-proto": "https", "x-forwarded-host": "tradehud.zentopia.hu" })).status, 401); // belépés nélkül nem
+  // kilépés után a munkamenet érvénytelen
+  assert.equal((await post("/auth/logout", {}, { cookie })).status, 200);
+  assert.equal((await fetch(`${base}/api/summary`, { headers: { cookie } })).status, 401);
+  // hibás jelszó: IP-nként 15 percenként legfeljebb 5
+  for (let i = 0; i < 4; i++) await post("/auth/password", { password: "rossz" }, { "cf-connecting-ip": "9.9.9.9" });
+  assert.equal((await post("/auth/password", { password: "rossz" }, { "cf-connecting-ip": "9.9.9.9" })).status, 401);
+  assert.equal((await post("/auth/password", { password: "helyes-jelszo-123" }, { "cf-connecting-ip": "9.9.9.9" })).status, 429);
+  assert.equal((await post("/auth/password", { password: "helyes-jelszo-123" }, { "cf-connecting-ip": "8.8.8.8" })).status, 200);
   await new Promise((r) => srv.close(r)); db.close();
+});
+
+test("HUD jelszó: scrypt-lenyomat ellenőrzés; jelszó kikapcsolása csak passkey mellett", async () => {
+  const { hashPassword, verifyPassword, HudAuth } = await import("../src/hud/auth.js");
+  const h = hashPassword("abc-def-ghi-123");
+  assert.ok(h.startsWith("scrypt$")); assert.equal(verifyPassword("abc-def-ghi-123", h), true); assert.equal(verifyPassword("abc-def-ghi-124", h), false);
+  assert.notEqual(hashPassword("abc-def-ghi-123"), h); // só miatt más
+  const db = openDb(":memory:");
+  const a = new HudAuth({ db, passwordHash: h, passwordLogin: false, origins: [] });
+  assert.equal(a.passwordEnabled(), true);                       // nincs passkey → nem zárjuk ki
+  db.prepare("INSERT INTO hud_passkeys(id, public_key, counter, created_at) VALUES ('x', x'00', 0, 0)").run();
+  assert.equal(a.passwordEnabled(), false);                      // van passkey → kikapcsol
+  db.close();
 });

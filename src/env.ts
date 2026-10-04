@@ -16,6 +16,8 @@ const EnvSchema = z.object({
   SOL_WS_URL: z.string().optional().or(z.literal("")),
   // Webes áttekintő (HUD): opcionális hozzáférési token (?t=…)
   HUD_TOKEN: z.string().optional().or(z.literal("")),
+  // HUD-jelszó scrypt-lenyomata (npm run hud:jelszo) – maga a jelszó sehol nincs tárolva
+  HUD_PASSWORD_HASH: z.string().optional().or(z.literal("")),
   WALLET_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "WALLET_PRIVATE_KEY hiányzik vagy nem 0x + 64 hex"),
   TELEGRAM_BOT_TOKEN: z.string().min(10, "TELEGRAM_BOT_TOKEN hiányzik"),
   TELEGRAM_CHAT_ID: z.string().min(1, "TELEGRAM_CHAT_ID hiányzik"),
@@ -34,7 +36,7 @@ export function loadEnv(opts: { requireWallet?: boolean } = {}): Env {
     throw new Error(`Hiányzó/hibás .env beállítás: ${missing}`);
   }
   const env = parsed.data;
-  registerSecrets([env.TYPESAFE_API_KEY, env.TELEGRAM_BOT_TOKEN, env.WALLET_PRIVATE_KEY, env.WALLET_PRIVATE_KEY.replace(/^0x/, "")]);
+  registerSecrets([env.TYPESAFE_API_KEY, env.TELEGRAM_BOT_TOKEN, env.WALLET_PRIVATE_KEY, env.WALLET_PRIVATE_KEY.replace(/^0x/, ""), ...(env.HUD_PASSWORD_HASH ? [env.HUD_PASSWORD_HASH] : []), ...(env.HUD_TOKEN ? [env.HUD_TOKEN] : [])]);
   // Védelem véletlen kiírás ellen (JSON.stringify, console.log).
   Object.defineProperty(env, "toJSON", { value: () => "[env: rejtett]", enumerable: false });
   Object.defineProperty(env, Symbol.for("nodejs.util.inspect.custom"), { value: () => "[env: rejtett]", enumerable: false });

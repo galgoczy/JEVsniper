@@ -173,7 +173,10 @@ export const ConfigSchema = z.object({
   // BNB Chain / Four.Meme felvevő (2026-10-04): minden indítás/vétel/eladás/graduáció mentése a későbbi szabályépítéshez; nem kereskedik
   bnb: z.object({ enabled: z.boolean().default(false), poll_ms: z.number().int().min(1000).default(5000), pancake: z.boolean().default(false) }).default({ enabled: false, poll_ms: 5000, pancake: false }),
   // Webes áttekintő (HUD, 2026-10-04): a bot folyamatában futó, csak olvasó webszerver
-  hud: z.object({ enabled: z.boolean().default(false), port: z.number().int().min(1024).max(65535).default(8787), host: z.string().default("0.0.0.0") }).default({ enabled: false, port: 8787, host: "0.0.0.0" }),
+  hud: z.object({ enabled: z.boolean().default(false), port: z.number().int().min(0).max(65535).default(8787), host: z.string().default("127.0.0.1"),
+    // jelszavas belépés (passkey felvétele után kikapcsolható; passkey nélkül nem kapcsol ki); passkey csak ezeken az eredeteken
+    password_login: z.boolean().default(true), origins: z.array(z.string()).default(["https://tradehud.zentopia.hu", "http://localhost:8787"]) })
+    .default({ enabled: false, port: 8787, host: "127.0.0.1", password_login: true, origins: ["https://tradehud.zentopia.hu", "http://localhost:8787"] }),
   // Solana / Pump.fun felvevő (2026-10-04): websocket-feliratkozás; tokenek, kötések (első 30 perc), pillanatképek, kimenetek – nem kereskedik
   sol: z.object({ enabled: z.boolean().default(false) }).default({ enabled: false }),
   // V2 – graduációs szakasz (PONS curve → v4): árnyék-belépés graduáláskor és +delay_min perccel később

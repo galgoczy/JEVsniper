@@ -128,7 +128,7 @@ async function main() {
   pcsRecorder?.start();
   const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
   solRecorder?.start();
-  const hud = cfg.hud.enabled ? startHud({ db, cfg, port: cfg.hud.port, host: cfg.hud.host, token: env.HUD_TOKEN || undefined }) : null;
+  const hud = cfg.hud.enabled ? startHud({ db, cfg, port: cfg.hud.port, host: cfg.hud.host, token: env.HUD_TOKEN || undefined, passwordHash: env.HUD_PASSWORD_HASH || undefined }) : null;
   // 9. lépés: napi riport (config report.daily_time_utc) + /report parancs
   // Telegram-riport (2026-10-03): időarányos + állás + visszaforgatás, telefonra; a teljes markdown riport fájlba (napi, 24 órás)
   const telegramReport = () => {
