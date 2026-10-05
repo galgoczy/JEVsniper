@@ -29,6 +29,7 @@ const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ["sol_outcomes", "ref30_price", "REAL"],
   ["sol_outcomes", "max_x30", "REAL"],
   ["sol_outcomes", "min_x30", "REAL"],
+  ["sol_grads", "quote_mint", "TEXT"],
 ];
 
 function migrate(db: DB) {

@@ -153,3 +153,16 @@ test("SOL felvevő: túlélő (görbe ≥10% 30 percnél) kötései 30 perc utá
   assert.ok(o.ref30_price > 0); assert.ok(o.max_x30 > 3.9 && o.max_x30 < 4.1, `max_x30 ${o.max_x30}`); // 40/804 → 80/402: 4x
   db.close();
 });
+
+test("PumpSwap AMM: a görbe-felvevő migrációs eseményéből is felvesz poolt (SOL quote), más quote-ot nem", async () => {
+  const { SolAmmRecorder, WSOL_MINT } = await import("../src/sol/amm.js");
+  const db = openDb(":memory:"); const now = 1_790_000_000_000;
+  db.prepare("INSERT INTO sol_grads(mint, kind, at, pool, quote_mint) VALUES ('M1','migrate',?, 'P1', ?), ('M2','migrate',?, 'P2', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'), ('M3','migrate',?, 'P3', NULL)").run(now - 1000, WSOL_MINT, now - 900, now - 800);
+  const rec = new SolAmmRecorder({ db, now: () => now });
+  (rec as unknown as { lastMigrateAt: number }).lastMigrateAt = now - 5000;
+  rec.adoptMigrations();
+  const pools = db.prepare("SELECT pool FROM sol_amm_pools ORDER BY pool").all() as Array<{ pool: string }>;
+  assert.deepEqual(pools.map((p) => p.pool), ["P1", "P3"]); // P2 USDC-quote → kimarad; P3 ismeretlen quote → SOL-nak vesszük
+  assert.equal(rec.stats.fromMigrate, 2);
+  db.close();
+});

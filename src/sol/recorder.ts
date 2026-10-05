@@ -116,7 +116,7 @@ export class SolRecorder {
         const t = this.tracks.get(e.mint); if (t) t.completeAt = e.timestamp * 1000;
       } else if (e.kind === "migrate") {
         this.stats.migrations++;
-        db.prepare("INSERT OR IGNORE INTO sol_grads(mint, kind, at, pool) VALUES (?,?,?,?)").run(e.mint, "migrate", e.timestamp * 1000, e.pool);
+        db.prepare("INSERT OR IGNORE INTO sol_grads(mint, kind, at, pool, quote_mint) VALUES (?,?,?,?,?)").run(e.mint, "migrate", e.timestamp * 1000, e.pool, e.quoteMint);
         const t = this.tracks.get(e.mint); if (t) t.migratedAt = e.timestamp * 1000;
       }
     }

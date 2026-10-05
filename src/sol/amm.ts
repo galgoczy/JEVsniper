@@ -6,7 +6,9 @@ import { PUMP_AMM_PROGRAM, SOL_DEFAULT_WS, Reader } from "./pump.js";
  * Solana / PumpSwap (graduáció utáni AMM) felvevő (2026-10-05). Forrás: pump-public-docs idl/pump_amm.json (commit cb188ce):
  * CreatePoolEvent, BuyEvent, SellEvent – a tranzakció-logban "Program data:" base64, 8 bájt diszkriminátor + Borsh.
  * Új megközelítés: nem az indulást, hanem a graduáció UTÁNI szakaszt mérjük (órás táv, ~2 000 graduáció/nap).
- *  - sol_amm_pools: a felvevő indulása óta létrejött poolok (a migráció hozza létre; csak SOL-quote-ot követünk);
+ *  - sol_amm_pools: a felvevő indulása óta létrejött poolok (CreatePoolEvent, VAGY a görbe-felvevő migrációs eseményéből – a hosszú
+ *    migrációs tranzakció logja a logsSubscribe-ban csonkolódhat, a CreatePoolEvent kimaradhat; 10-05: 5 migrációból 1 pool látszott);
+ *    csak SOL-quote-ot követünk;
  *  - sol_amm_trades: a pool első 6 órájának kötései (poolonként max. 3 000); ár = quote-tartalék / base-tartalék a kötés után;
  *  - sol_amm_snapshots: 60 / 300 / 900 / 3600 mp-nél (vételek, eladások, egyedi vevők, SOL be/ki, ár, pool SOL-tartaléka);
  *  - sol_amm_outcomes: az 5 perces árhoz mért csúcs/mélypont és a tartalék minimuma 24 órán át.
@@ -65,11 +67,12 @@ export class SolAmmRecorder {
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
   private pools = new Map<string, Pool>();
-  stats = { msgs: 0, pools: 0, trades: 0, snapshots: 0, reconnects: 0, errors: 0, tracked: 0 };
+  private lastMigrateAt = 0;
+  stats = { msgs: 0, pools: 0, fromMigrate: 0, trades: 0, snapshots: 0, reconnects: 0, errors: 0, tracked: 0 };
   constructor(private d: { db: DB; wsUrl?: string; now?: () => number }) {}
   private now() { return (this.d.now ?? Date.now)(); }
 
-  start() { this.restore(); this.connect(); this.timer = setInterval(() => { try { this.flush(); } catch (e) { this.stats.errors++; log.debug("SOL AMM flush hiba", { error: (e as Error).message.slice(0, 120) }); } }, 5_000); }
+  start() { this.restore(); this.lastMigrateAt = this.now(); this.connect(); this.timer = setInterval(() => { try { this.adoptMigrations(); this.flush(); } catch (e) { this.stats.errors++; log.debug("SOL AMM flush hiba", { error: (e as Error).message.slice(0, 120) }); } }, 5_000); }
   stop() { this.stopped = true; if (this.timer) clearInterval(this.timer); this.ws?.close(); }
 
   restore() {
@@ -88,6 +91,18 @@ export class SolAmmRecorder {
     ws.onmessage = (m) => { try { const d = JSON.parse(String(m.data)) as { params?: { result?: { value?: { logs?: string[]; err?: unknown; signature?: string } } } }; const v = d.params?.result?.value; if (!v?.logs || v.err) return; this.stats.msgs++; this.ingest(ammEventsFromLogs(v.logs), v.signature ?? null); } catch (e) { this.stats.errors++; log.debug("SOL AMM üzenet hiba", { error: (e as Error).message.slice(0, 120) }); } };
     ws.onerror = () => { this.stats.errors++; };
     ws.onclose = () => { if (this.stopped) return; this.stats.reconnects++; setTimeout(() => this.connect(), 3_000); };
+  }
+
+  /** A görbe-felvevő migrációs eseményeiből (sol_grads: pool + quote_mint) felvett poolok, ha a CreatePoolEvent nem jött át. */
+  adoptMigrations() {
+    const rows = this.d.db.prepare("SELECT mint, at, pool, quote_mint FROM sol_grads WHERE kind = 'migrate' AND at > ? AND pool IS NOT NULL ORDER BY at").all(this.lastMigrateAt) as Array<{ mint: string; at: number; pool: string; quote_mint: string | null }>;
+    for (const r of rows) {
+      this.lastMigrateAt = Math.max(this.lastMigrateAt, r.at);
+      if (this.pools.has(r.pool) || (r.quote_mint !== null && r.quote_mint !== WSOL_MINT)) continue;
+      const ins = this.d.db.prepare("INSERT OR IGNORE INTO sol_amm_pools(pool, base_mint, quote_mint, quote_sol, creator, coin_creator, created_at, init_quote, init_base, mayhem) VALUES (?,?,?,1,NULL,NULL,?,NULL,NULL,NULL)").run(r.pool, r.mint, WSOL_MINT, r.at);
+      if (ins.changes) { this.stats.pools++; this.stats.fromMigrate++; }
+      this.pools.set(r.pool, { pool: r.pool, createdAt: r.at, baseDec: 6, quoteDec: 9, buys: 0, sells: 0, buyers: new Set(), quoteIn: 0, quoteOut: 0, price: 0, poolQuote: 0, lastTradeAt: 0, tradesStored: 0, snapsDone: new Set(), refPrice: null, maxX: 1, minX: 1, minPoolQuote: Infinity });
+    }
   }
 
   ingest(events: AmmEvent[], signature: string | null) {

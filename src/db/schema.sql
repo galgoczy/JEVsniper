@@ -317,7 +317,7 @@ CREATE TABLE IF NOT EXISTS sol_outcomes (
   complete_at INTEGER, migrated_at INTEGER, done_at INTEGER,
   ref30_price REAL, max_x30 REAL, min_x30 REAL     -- a 30 perces árhoz mért csúcs/mélypont (túlélők, 2026-10-05)
 );
-CREATE TABLE IF NOT EXISTS sol_grads (mint TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL, pool TEXT, PRIMARY KEY (mint, kind));
+CREATE TABLE IF NOT EXISTS sol_grads (mint TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL, pool TEXT, quote_mint TEXT, PRIMARY KEY (mint, kind));
 
 -- BNB Chain / PancakeSwap v2 felvevő (2026-10-04): közvetlen WBNB-pár indítások. Ár = WBNB-tartalék / token-tartalék (nyers arány, csak szorzóként).
 CREATE TABLE IF NOT EXISTS bnb_pairs (
