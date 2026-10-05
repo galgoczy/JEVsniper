@@ -166,7 +166,7 @@ report:
 # összesen veszteséges = „unskilled” kontroll), és ha egy ilyen tárca legalább 0,005 ETH-ért vesz, árnyék-belépés:
 # copy_smart / copy_unskilled. Valódi vétel nincs.
 copy:
-  enabled: true
+  enabled: false   # 2026-10-05: kikapcsolva (copy_smart −0,74, rosszabb a „rossz tárcák” követésénél is); az adatok megmaradnak
   universe_hours: 6
   poll_interval_ms: 20000
   min_closed_tokens: 5

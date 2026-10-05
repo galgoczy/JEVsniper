@@ -455,3 +455,6 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Javítás: (1) határidő – ha a pillanatkép a sorban állás után a tervezett időpontnál 30 mp-nél többet késne, kimarad (`StaleSnapshotError`, számláló a /status-ban), a graduációs +30 mp / +15 perc mérésnél is; (2) Robinhood-párhuzamosság 2 → 4.
 - Adat-javítás: 277 691 ablakos és 101 graduációs Robinhood-pozíció, amelynek a belépése >60 mp-cel a tervezett pillanat után történt, `close_reason = 'invalid_snapshot_lag:<eredeti ok>'` jelölést kapott (a nettó eredmény megmaradt, a statisztikák kihagyják; a nyitottak lezárva, nettó 0).
 - Utóhatás (ugyanaznap): Robinhood 4 párhuzamos mérésnél a Base-mérések késni kezdtek (átlag 5–7 mp, csúcs 30 mp; 30 perc alatt 69-ből 4 Base-tokennek kimaradt a 60 mp-es mérése). Javítás: Robinhood 3 párhuzamos, és a Base elsőbbséget kap (ha Base-mérés vár, új Robinhood-mérés nem indul; felszabaduláskor előbb a Base-várakozó).
+
+## 2026-10-05 – Copy trading kikapcsolva
+- A felhasználó döntése: ebben a formában nem folytatjuk (`copy.enabled: false`). Eredmény 09-30 óta: copy_smart −0,74 (n≈300), copy_unskilled −0,2 – a „jó” tárcák követése rosszabb volt a „rosszaknál” is. Mellékhatás: a tárcakövetés napi ~1 millió `wallet_trades` sort és sok RPC-hívást takarít meg. A meglévő adatok (wallet_trades, wallet_lists, copy pozíciók) megmaradnak.
