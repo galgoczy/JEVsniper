@@ -69,15 +69,27 @@ export class Collector {
   private txCountCache = new Map<string, { n: number; at: number }>();
   private running: Record<ChainKey, number> = { base: 0, robinhood: 0 };
   private waiters: Record<ChainKey, Array<() => void>> = { base: [], robinhood: [] };
-  /** Láncenként max. ennyi gyűjtés fut egyszerre (RPC-kímélés). 2026-10-05: Robinhood 2 → 4 (napi ~3 800 token, a sor torlódott). */
-  static MAX_CONCURRENT: Record<ChainKey, number> = { base: 2, robinhood: 4 };
+  /**
+   * Láncenként max. ennyi gyűjtés fut egyszerre (RPC-kímélés). 2026-10-05: Robinhood 2 → 3 (napi ~3 800 token, a sor torlódott;
+   * 4-nél a Base-mérések késni kezdtek). A Base elsőbbséget kap: ha Base-mérés vár, új Robinhood-mérés nem indul.
+   */
+  static MAX_CONCURRENT: Record<ChainKey, number> = { base: 2, robinhood: 3 };
 
+  private canStart(chain: ChainKey) {
+    if (this.running[chain] >= Collector.MAX_CONCURRENT[chain]) return false;
+    return chain === "base" || this.waiters.base.length === 0;
+  }
   private async acquire(chain: ChainKey) {
-    if (this.running[chain] < Collector.MAX_CONCURRENT[chain]) { this.running[chain]++; return; }
+    if (this.canStart(chain)) { this.running[chain]++; return; }
     await new Promise<void>((r) => this.waiters[chain].push(r));
     this.running[chain]++;
   }
-  private release(chain: ChainKey) { this.running[chain]--; this.waiters[chain].shift()?.(); }
+  private release(chain: ChainKey) {
+    this.running[chain]--;
+    // először a Base-várakozók, utána a Robinhood (ha szabad a keret és nincs várakozó Base)
+    if (this.waiters.base.length && this.running.base < Collector.MAX_CONCURRENT.base) this.waiters.base.shift()!();
+    else if (this.waiters.robinhood.length && this.canStart("robinhood")) this.waiters.robinhood.shift()!();
+  }
 
   /** Utolsó tx-szám lekérési hiba (diagnosztika a verify-hez). */
   public lastTxCountError: string | null = null;
