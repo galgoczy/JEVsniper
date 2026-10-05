@@ -1,6 +1,6 @@
 import type { DB } from "../db/index.js";
 import { log } from "../logger.js";
-import { PUMP_AMM_PROGRAM, SOL_DEFAULT_WS, Reader } from "./pump.js";
+import { PUMP_AMM_PROGRAM, SOL_DEFAULT_WS, SOL_ZERO_PUBKEY, Reader } from "./pump.js";
 
 /**
  * Solana / PumpSwap (graduáció utáni AMM) felvevő (2026-10-05). Forrás: pump-public-docs idl/pump_amm.json (commit cb188ce):
@@ -98,7 +98,8 @@ export class SolAmmRecorder {
     const rows = this.d.db.prepare("SELECT mint, at, pool, quote_mint FROM sol_grads WHERE kind = 'migrate' AND at > ? AND pool IS NOT NULL ORDER BY at").all(this.lastMigrateAt) as Array<{ mint: string; at: number; pool: string; quote_mint: string | null }>;
     for (const r of rows) {
       this.lastMigrateAt = Math.max(this.lastMigrateAt, r.at);
-      if (this.pools.has(r.pool) || (r.quote_mint !== null && r.quote_mint !== WSOL_MINT)) continue;
+      // a migrációs esemény quote_mint-je SOL-párnál a nulla pubkey (PUMP_PROGRAM_README: Pubkey::default()), a pool-eseményé a WSOL mint
+      if (this.pools.has(r.pool) || (r.quote_mint !== null && r.quote_mint !== WSOL_MINT && r.quote_mint !== SOL_ZERO_PUBKEY)) continue;
       const ins = this.d.db.prepare("INSERT OR IGNORE INTO sol_amm_pools(pool, base_mint, quote_mint, quote_sol, creator, coin_creator, created_at, init_quote, init_base, mayhem) VALUES (?,?,?,1,NULL,NULL,?,NULL,NULL,NULL)").run(r.pool, r.mint, WSOL_MINT, r.at);
       if (ins.changes) { this.stats.pools++; this.stats.fromMigrate++; }
       this.pools.set(r.pool, { pool: r.pool, createdAt: r.at, baseDec: 6, quoteDec: 9, buys: 0, sells: 0, buyers: new Set(), quoteIn: 0, quoteOut: 0, price: 0, poolQuote: 0, lastTradeAt: 0, tradesStored: 0, snapsDone: new Set(), refPrice: null, maxX: 1, minX: 1, minPoolQuote: Infinity });
