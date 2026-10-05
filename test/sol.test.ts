@@ -100,3 +100,11 @@ test("SOL felvevő újraindítás: a 24 órán belüli tokenek kimenet-követés
   assert.equal(o.max_x, 3.5); assert.equal(o.min_x, 0.8);               // a korábbi csúcs/mélypont megmarad
   db.close();
 });
+
+test("SOL visszajátszás: scalp terv (tp/sl) – teljes eladás a célnál vagy a stopnál", async () => {
+  const { replayPosition } = await import("../src/sol/replay.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml"); const zero = { fee_pct: 0, mev_pct: 0, tx_sol: 0 };
+  assert.ok(Math.abs(replayPosition(1, 0, [{ at: 1, price: 1.1 }, { at: 2, price: 1.31 }, { at: 3, price: 5 }], "tp1.3_sl20", 1, cfg, zero).net - 0.31) < 1e-9);
+  assert.ok(Math.abs(replayPosition(1, 0, [{ at: 1, price: 0.85 }, { at: 2, price: 0.79 }], "tp1.3_sl20", 1, cfg, zero).net + 0.21) < 1e-9);
+});

@@ -20,6 +20,19 @@ export function replayPosition(entryPrice: number, entryAt: number, path: PriceP
   let received = 0, txs = 1;
   const st: PosState = { exit_plan: plan, phase: "pre_tp1", entry_price: entryPrice, peak_price: entryPrice, tokens_bought: tokens, tokens_remaining: tokens, opened_at: entryAt, stages_done: 0 };
   let reason = "";
+  // gyors „scalp” terv (csak visszajátszás, 2026-10-05): tp<X>_sl<Y> – teljes eladás X-szeresnél vagy Y%-os esésnél
+  const scalp = /^tp([\d.]+)_sl(\d+)$/.exec(plan);
+  if (scalp) {
+    const tp = Number(scalp[1]), sl = Number(scalp[2]) / 100;
+    for (const p of path) {
+      if (p.at <= entryAt || !(p.price > 0)) continue;
+      st.peak_price = Math.max(st.peak_price, p.price);
+      if (p.price >= entryPrice * tp || p.price <= entryPrice * (1 - sl)) {
+        received += st.tokens_remaining * p.price * (1 - sideCost); st.tokens_remaining = 0; txs++;
+        reason = p.price >= entryPrice * tp ? `tp_${tp}x` : `sl_-${Math.round(sl * 100)}%`; break;
+      }
+    }
+  } else
   for (const p of path) {
     if (p.at <= entryAt || !(p.price > 0)) continue;
     st.peak_price = Math.max(st.peak_price, p.price);

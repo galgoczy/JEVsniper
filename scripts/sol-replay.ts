@@ -18,7 +18,11 @@ const cfg = loadConfig();
 const db = openDb(cfg.db.path);
 const i = process.argv.indexOf("--size-usd"); const sizeUsd = Number(i >= 0 ? process.argv[i + 1] : 1);
 // késleltetés: a jelzés után ennyi mp-cel későbbi első kötés árán lépünk be (a valóságban nem a jelző kötés árán veszünk)
-const j = process.argv.indexOf("--latency-sec"); const latencyMs = 1000 * Number(j >= 0 ? process.argv[j + 1] : 2); // alapból 2 mp (10-04: 0 mp-nél a görbe-átlépés hamisan nyereséges volt)
+const j = process.argv.indexOf("--latency-sec"); const latArg = j >= 0 ? process.argv[j + 1]! : "2";
+// "next" = a jelzés utáni LEGELSŐ kötés ára (egy nagyon gyors bot legjobb esete; a kötések időbélyege mp-es felbontású)
+const nextTrade = latArg === "next"; const latencyMs = nextTrade ? 1 : 1000 * Number(latArg); // alapból 2 mp (10-04: 0 mp-nél a görbe-átlépés hamisan nyereséges volt)
+const pa = process.argv.indexOf("--plans"); const PLAN_LIST = pa >= 0 ? process.argv[pa + 1]!.split(",") : null;
+const oa = process.argv.indexOf("--only"); const ONLY = oa >= 0 ? process.argv[oa + 1]!.split(",") : null;
 const solUsd = Number((db.prepare("SELECT value FROM meta WHERE key='sol_usd'").get() as { value: string } | undefined)?.value ?? 0);
 if (!(solUsd > 0)) { console.log("❌ nincs SOL/USD ár a meta táblában"); process.exit(1); }
 const sizeSol = sizeUsd / solUsd;
@@ -83,14 +87,14 @@ const CANDS: Array<{ name: string; pick: (t: Tok) => Entry | null }> = [
   { name: "görbe-átlépés 50%", pick: (t) => crossing(t, 50) },
   { name: "görbe-átlépés 80%", pick: (t) => crossing(t, 80) },
 ];
-const PLANS = ["live", "C", "B"];
+const PLANS = PLAN_LIST ?? ["live", "C", "B"];
 const f = (x: number, d = 2) => (x >= 0 ? "+" : "") + x.toFixed(d);
 const L: string[] = [`# Solana / Pump.fun visszajátszás – ${new Date().toISOString().slice(0, 16)} UTC`, "",
   `Tokenek: ${toks.size} (SOL-párosítás, teljes 30 perces követés); tanító/ellenőrző határ: ${new Date(cut).toISOString().slice(5, 16)} UTC. Belépő ${sizeUsd} USD = ${sizeSol.toFixed(5)} SOL (SOL/USD ${solUsd.toFixed(2)}).`,
-  `Késleltetés a jelzés és a vétel között: ${latencyMs / 1000} mp (a jelzés utáni első, legalább ennyivel későbbi kötés árán lépünk be).`,
+  nextTrade ? "Késleltetés: a jelzés utáni LEGELSŐ kötés ára (nagyon gyors bot legjobb esete)." : `Késleltetés a jelzés és a vétel között: ${latencyMs / 1000} mp (a jelzés utáni első, legalább ennyivel későbbi kötés árán lépünk be).`,
   `Költség: Pump-díj ${SOL_COST.fee_pct}% + MEV/csúszás ${SOL_COST.mev_pct}% irányonként, ${SOL_COST.tx_sol} SOL tranzakciónként. Útvonal: első 30 perc (max. 500 kötés/token); a végén nyitva maradt rész az utolsó áron.`, "",
   "| jelölt | terv | tanító n | átlag | 90% CI | ellenőrző n | átlag | 90% CI | nyitva a végén |", "|---|---|---|---|---|---|---|---|---|"];
-for (const c of CANDS) {
+for (const c of CANDS.filter((x) => !ONLY || ONLY.some((o) => x.name.startsWith(o)))) {
   const entries = sorted.map(c.pick).filter((e): e is Entry => e !== null);
   for (const plan of PLANS) {
     const res = entries.map((e) => ({ e, r: replayPosition(e.price, e.at, paths.get(e.mint) ?? [], plan, sizeSol, cfg) }));
@@ -104,5 +108,5 @@ for (const c of CANDS) {
 L.push("", "Olvasat: nettó USD 1 USD belépőre. Egy jelölt akkor érdekes, ha a tanító ÉS az ellenőrző részen is nulla fölötti az átlag, és a véletlen/minden-token alapvonalnál jobb. Sok kombinációt nézünk egyszerre – egy-egy jó sor véletlen is lehet; csak friss adaton (árnyékban) igazolva számít.");
 const out = L.join("\n"); console.log(out);
 fs.mkdirSync(cfg.report.output_dir, { recursive: true });
-const file = `${cfg.report.output_dir}/sol_visszajatszas_${new Date().toISOString().slice(0, 10)}${latencyMs ? `_kesl${latencyMs / 1000}s` : ""}.md`; fs.writeFileSync(file, out); console.log(`\n✅ mentve: ${file}`);
+const file = `${cfg.report.output_dir}/sol_visszajatszas_${new Date().toISOString().slice(0, 10)}_${nextTrade ? "kovetkezo" : `kesl${latencyMs / 1000}s`}${PLAN_LIST ? "_scalp" : ""}.md`; fs.writeFileSync(file, out); console.log(`\n✅ mentve: ${file}`);
 db.close();
