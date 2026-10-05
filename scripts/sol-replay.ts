@@ -23,6 +23,7 @@ const j = process.argv.indexOf("--latency-sec"); const latArg = j >= 0 ? process
 const nextTrade = latArg === "next"; const latencyMs = nextTrade ? 1 : 1000 * Number(latArg); // alapból 2 mp (10-04: 0 mp-nél a görbe-átlépés hamisan nyereséges volt)
 const pa = process.argv.indexOf("--plans"); const PLAN_LIST = pa >= 0 ? process.argv[pa + 1]!.split(",") : null;
 const oa = process.argv.indexOf("--only"); const ONLY = oa >= 0 ? process.argv[oa + 1]!.split(",") : null;
+const EXTRA = process.argv.includes("--extra"); // 2026-10-05: második jelöltkör (készítő-hírnév, névmásolás, dev-vétel, csomag, okos tárcák)
 const solUsd = Number((db.prepare("SELECT value FROM meta WHERE key='sol_usd'").get() as { value: string } | undefined)?.value ?? 0);
 if (!(solUsd > 0)) { console.log("❌ nincs SOL/USD ár a meta táblában"); process.exit(1); }
 const sizeSol = sizeUsd / solUsd;
@@ -87,6 +88,52 @@ const CANDS: Array<{ name: string; pick: (t: Tok) => Entry | null }> = [
   { name: "görbe-átlépés 50%", pick: (t) => crossing(t, 50) },
   { name: "görbe-átlépés 80%", pick: (t) => crossing(t, 80) },
 ];
+// ---- második jelöltkör (előre rögzítve 2026-10-05, a futtatás előtt leírva a felhasználónak) ----
+const grads = new Map<string, number>(); // mint → görbe-teljesülés ideje
+for (const r of db.prepare("SELECT mint, at FROM sol_grads WHERE kind = 'complete'").iterate() as Iterable<{ mint: string; at: number }>) grads.set(r.mint, r.at);
+const allTok = db.prepare("SELECT mint, creator, symbol, created_at FROM sol_tokens ORDER BY created_at").all() as Array<{ mint: string; creator: string; symbol: string; created_at: number }>;
+const creatorHist = new Map<string, Array<{ at: number; mint: string }>>(); const symbolHist = new Map<string, number[]>();
+for (const t of allTok) { (creatorHist.get(t.creator) ?? creatorHist.set(t.creator, []).get(t.creator)!).push({ at: t.created_at, mint: t.mint }); const k = t.symbol.toLowerCase(); (symbolHist.get(k) ?? symbolHist.set(k, []).get(k)!).push(t.created_at); }
+const creatorPriorGrad = (t: Tok) => (creatorHist.get(t.creator) ?? []).some((x) => x.at < t.created && (grads.get(x.mint) ?? Infinity) < t.created);
+const symbolCopies24h = (t: Tok) => { const s = db.prepare("SELECT symbol FROM sol_tokens WHERE mint = ?").get(t.mint) as { symbol: string } | undefined; const arr = symbolHist.get((s?.symbol ?? "").toLowerCase()) ?? []; return arr.filter((a) => a < t.created && a > t.created - 86_400_000).length; };
+// dev első vétele és csomagolt indítás – a mentett kötésekből (első 30 perc)
+const firstBuys = new Map<string, { devSol: number; sameSecBuys: number }>();
+if (EXTRA) for (const r of db.prepare("SELECT mint, at, user, sol FROM sol_trades WHERE side = 'buy' ORDER BY mint, at").iterate() as Iterable<{ mint: string; at: number; user: string; sol: number }>) {
+  const t = toks.get(r.mint); if (!t) continue;
+  const e = firstBuys.get(r.mint) ?? { devSol: -1, sameSecBuys: 0 };
+  if (e.devSol < 0 && r.user === t.creator) e.devSol = r.sol; else if (e.devSol < 0 && r.at - t.created > 5_000) e.devSol = 0;
+  if (r.at - t.created <= 1_000) e.sameSecBuys++;
+  firstBuys.set(r.mint, e);
+}
+// okos tárcák: a tárca korábbi (a jelzés előtti) korai vételei közül hány token teljesítette a görbét a jelzés előtt
+const smartEntries = new Map<string, Entry>();
+if (EXTRA) {
+  const byWallet = new Map<string, Array<{ at: number; mint: string }>>();
+  const buys: Array<{ mint: string; at: number; user: string; price: number }> = [];
+  for (const r of db.prepare("SELECT mint, at, user, price FROM sol_trades WHERE side = 'buy' ORDER BY at").iterate() as Iterable<{ mint: string; at: number; user: string; price: number }>) {
+    const t = toks.get(r.mint); if (!t || r.user === t.creator) continue; buys.push(r);
+  }
+  for (const b of buys) {
+    const hist = byWallet.get(b.user) ?? byWallet.set(b.user, []).get(b.user)!;
+    const seen = new Set<string>(); let hits = 0;
+    for (const h of hist) { if (seen.has(h.mint) || h.mint === b.mint) continue; seen.add(h.mint); const g = grads.get(h.mint); if (g !== undefined && g < b.at) hits++; }
+    if (hits >= 2 && !smartEntries.has(b.mint)) { const t = toks.get(b.mint)!; smartEntries.set(b.mint, { mint: b.mint, at: b.at, price: b.price, created: t.created }); }
+    if (!hist.some((h) => h.mint === b.mint)) hist.push({ at: b.at, mint: b.mint });
+  }
+}
+const withLatency = (e: Entry | null): Entry | null => { if (!e || !latencyMs) return e; const p = paths.get(e.mint) ?? []; const y = p.find((z) => z.at >= e.at + latencyMs); return y ? { ...e, at: y.at, price: y.price } : null; };
+const EXTRA_CANDS: Array<{ name: string; pick: (t: Tok) => Entry | null }> = [
+  { name: "X1 készítő korábbi tokenje graduált (60s)", pick: (t) => (creatorPriorGrad(t) ? atWindow(t, 60) : null) },
+  { name: "X1b …és vevők≥3", pick: (t) => (creatorPriorGrad(t) && (t.snaps.get(60)?.ub ?? 0) >= 3 ? atWindow(t, 60) : null) },
+  { name: "X2 sorozatgyártó (3+ korábbi) – kontroll", pick: (t) => (priorTokens(t) >= 3 ? atWindow(t, 60) : null) },
+  { name: "X3 első ezzel a névvel + vevők≥3", pick: (t) => (symbolCopies24h(t) === 0 && (t.snaps.get(60)?.ub ?? 0) >= 3 ? atWindow(t, 60) : null) },
+  { name: "X3b 3+ másolat 24h-n belül", pick: (t) => (symbolCopies24h(t) >= 3 ? atWindow(t, 60) : null) },
+  { name: "X4 dev-vétel ≥1 SOL", pick: (t) => ((firstBuys.get(t.mint)?.devSol ?? 0) >= 1 ? atWindow(t, 60) : null) },
+  { name: "X4b dev-vétel <0.1 SOL + vevők≥3", pick: (t) => { const d = firstBuys.get(t.mint)?.devSol ?? 0; return d >= 0 && d < 0.1 && (t.snaps.get(60)?.ub ?? 0) >= 3 ? atWindow(t, 60) : null; } },
+  { name: "X5 nem csomagolt (≤1 vétel az 1. mp-ben) + vevők≥3", pick: (t) => ((firstBuys.get(t.mint)?.sameSecBuys ?? 0) <= 1 && (t.snaps.get(60)?.ub ?? 0) >= 3 ? atWindow(t, 60) : null) },
+  { name: "X5b csomagolt (5+ vétel az 1. mp-ben) – kontroll", pick: (t) => ((firstBuys.get(t.mint)?.sameSecBuys ?? 0) >= 5 ? atWindow(t, 60) : null) },
+  { name: "X6 okos tárca (2+ korábbi graduált korai vétel) vásárol", pick: (t) => withLatency(smartEntries.get(t.mint) ?? null) },
+];
 const PLANS = PLAN_LIST ?? ["live", "C", "B"];
 const f = (x: number, d = 2) => (x >= 0 ? "+" : "") + x.toFixed(d);
 const L: string[] = [`# Solana / Pump.fun visszajátszás – ${new Date().toISOString().slice(0, 16)} UTC`, "",
@@ -94,7 +141,7 @@ const L: string[] = [`# Solana / Pump.fun visszajátszás – ${new Date().toISO
   nextTrade ? "Késleltetés: a jelzés utáni LEGELSŐ kötés ára (nagyon gyors bot legjobb esete)." : `Késleltetés a jelzés és a vétel között: ${latencyMs / 1000} mp (a jelzés utáni első, legalább ennyivel későbbi kötés árán lépünk be).`,
   `Költség: Pump-díj ${SOL_COST.fee_pct}% + MEV/csúszás ${SOL_COST.mev_pct}% irányonként, ${SOL_COST.tx_sol} SOL tranzakciónként. Útvonal: első 30 perc (max. 500 kötés/token); a végén nyitva maradt rész az utolsó áron.`, "",
   "| jelölt | terv | tanító n | átlag | 90% CI | ellenőrző n | átlag | 90% CI | nyitva a végén |", "|---|---|---|---|---|---|---|---|---|"];
-for (const c of CANDS.filter((x) => !ONLY || ONLY.some((o) => x.name.startsWith(o)))) {
+for (const c of (EXTRA ? EXTRA_CANDS : CANDS).filter((x) => !ONLY || ONLY.some((o) => x.name.startsWith(o)))) {
   const entries = sorted.map(c.pick).filter((e): e is Entry => e !== null);
   for (const plan of PLANS) {
     const res = entries.map((e) => ({ e, r: replayPosition(e.price, e.at, paths.get(e.mint) ?? [], plan, sizeSol, cfg) }));
@@ -108,5 +155,5 @@ for (const c of CANDS.filter((x) => !ONLY || ONLY.some((o) => x.name.startsWith(
 L.push("", "Olvasat: nettó USD 1 USD belépőre. Egy jelölt akkor érdekes, ha a tanító ÉS az ellenőrző részen is nulla fölötti az átlag, és a véletlen/minden-token alapvonalnál jobb. Sok kombinációt nézünk egyszerre – egy-egy jó sor véletlen is lehet; csak friss adaton (árnyékban) igazolva számít.");
 const out = L.join("\n"); console.log(out);
 fs.mkdirSync(cfg.report.output_dir, { recursive: true });
-const file = `${cfg.report.output_dir}/sol_visszajatszas_${new Date().toISOString().slice(0, 10)}_${nextTrade ? "kovetkezo" : `kesl${latencyMs / 1000}s`}${PLAN_LIST ? "_scalp" : ""}.md`; fs.writeFileSync(file, out); console.log(`\n✅ mentve: ${file}`);
+const file = `${cfg.report.output_dir}/sol_visszajatszas_${new Date().toISOString().slice(0, 10)}_${nextTrade ? "kovetkezo" : `kesl${latencyMs / 1000}s`}${PLAN_LIST ? "_scalp" : ""}${EXTRA ? "_extra" : ""}.md`; fs.writeFileSync(file, out); console.log(`\n✅ mentve: ${file}`);
 db.close();
