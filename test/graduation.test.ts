@@ -44,6 +44,10 @@ test("graduáció: belépés graduáláskor a pool induló árán, +15 percnél 
   assert.deepEqual(opened.map((o) => o.arm), ["grad_15_all"]);
   opened.length = 0; next = snap({ price: 1.2, sellSim: "failed" }); await g.delayed(id, 1);
   assert.equal(opened.length, 0);
+  // +30 mp: a friss pillanatkép valódi pool-árán, szűrő nélkül (hibás eladás-szimuláció mellett is – mint a grad_at)
+  opened.length = 0; next = snap({ price: 1.7, sellSim: "failed" }); await g.delayed30(id);
+  assert.deepEqual(opened.map((o) => o.arm), ["grad_30s"]); assert.ok(Math.abs(opened[0]!.price - 1.7) < 1e-12);
+  opened.length = 0;
   // nem PONS token → semmi
   const other = Number(db.prepare("INSERT INTO tokens(chain, address, launchpad, discovered_at) VALUES ('base', '0x8888888888888888888888888888888888888888', 'clanker', 0)").run().lastInsertRowid);
   await g.onGraduation(other, 2n ** 96n); assert.equal(opened.length, 0); g.stop();

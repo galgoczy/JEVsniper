@@ -11,12 +11,16 @@ import { log } from "../logger.js";
 /**
  * V2 – graduációs szakasz (PONS: a bonding curve-ről Uniswap v4 poolba lépés). Árnyékkarok:
  *  grad_at      – belépés a graduáció észlelésekor, a pool induló árán (alapvonal: minden graduált token)
+ *  grad_30s     – 30 mp-cel később, friss pillanatkép VALÓDI pool-árán, szűrő nélkül (2026-10-05: a grad_at induló ára
+ *                 valószínűleg elérhetetlen – a gyors botok előbb vesznek; a kettő különbsége az ár-optimizmus mértéke)
  *  grad_15_all  – 15 perccel később, minden graduált token, amely átmegy a kemény szűrőn (azonos időzítésű alapvonal)
  *  grad_15_hold – mint az előző, de csak ha az ár a graduációs ár fölött van, van valódi ETH a poolban, és a készítő
  *                 nem adta el a kezdeti tokenjei felét → „graduált, nem omlott össze, konszolidál”
  * A pozíciók ablak-címkéje 0 (eseményvezérelt); a 15 perces pillanatkép a snapshots táblában 900-as címkével.
  */
 export const GRAD_SNAPSHOT_WINDOW = 900;
+/** a +30 mp-es graduációs pillanatkép címkéje (nem ütközik az indulási 30/60/180 mp-es ablakokkal) */
+export const GRAD30_SNAPSHOT_WINDOW = 930;
 
 export interface GraduationDeps {
   db: DB; cfg: Config;
@@ -42,7 +46,7 @@ export function gradHoldOk(snap: ParamSnapshot, gradPrice: number): { ok: boolea
 
 export class GraduationTracker {
   private timers = new Set<NodeJS.Timeout>();
-  stats = { graduations: 0, entries: 0, delayed: 0, holds: 0 };
+  stats = { graduations: 0, entries: 0, at30: 0, delayed: 0, holds: 0 };
   constructor(private d: GraduationDeps) {}
 
   /** A watcher hívja az első graduáció-észleléskor. */
@@ -59,9 +63,23 @@ export class GraduationTracker {
     const gradPrice = priceFromSqrtX96(initSqrtPriceX96, tokenIsC0, t.decimals ?? 18);
     const eth = await this.d.ethUsd();
     if (typeof eth === "number" && gradPrice > 0 && this.d.openShadow(t, "grad_at", gradPrice, eth, null) > 0) this.stats.entries++;
+    // 30 mp múlva: reális késéssel, a valódi pool-áron
+    const h30 = setTimeout(() => { this.timers.delete(h30); void this.delayed30(tokenId).catch((e) => log.warn("graduáció +30 mp hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) })); }, 30_000);
+    this.timers.add(h30);
     // 15 perc múlva: friss pillanatkép, kemény szűrő, feltétel
     const h = setTimeout(() => { this.timers.delete(h); void this.delayed(tokenId, gradPrice).catch((e) => log.warn("graduáció +15 perc hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) })); }, cfg.graduation.delay_min * 60_000);
     this.timers.add(h);
+  }
+
+  /** +30 mp: friss pillanatkép, belépés a valódi pool-áron, szűrő nélkül (a grad_at reális párja). */
+  async delayed30(tokenId: number): Promise<void> {
+    const row = tokenRow(this.d.db, tokenId);
+    if (!row) return;
+    const snap = await this.d.collect(row, GRAD30_SNAPSHOT_WINDOW);
+    this.d.saveSnapshot(row, snap);
+    const price = num(snap.dynamics.price_native), eth = num(snap.meta_snapshot.eth_usd);
+    if (price === null || !(price > 0) || eth === null) return;
+    if (this.d.openShadow(row, "grad_30s", price, eth, num(snap.contract.liquidity_native)) > 0) this.stats.at30++;
   }
 
   async delayed(tokenId: number, gradPrice: number): Promise<void> {
