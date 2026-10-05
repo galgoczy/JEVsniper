@@ -178,7 +178,7 @@ export const ConfigSchema = z.object({
     password_login: z.boolean().default(true), origins: z.array(z.string()).default(["https://tradehud.zentopia.hu", "http://localhost:8787"]) })
     .default({ enabled: false, port: 8787, host: "127.0.0.1", password_login: true, origins: ["https://tradehud.zentopia.hu", "http://localhost:8787"] }),
   // Solana / Pump.fun felvevő (2026-10-04): websocket-feliratkozás; tokenek, kötések (első 30 perc), pillanatképek, kimenetek – nem kereskedik
-  sol: z.object({ enabled: z.boolean().default(false) }).default({ enabled: false }),
+  sol: z.object({ enabled: z.boolean().default(false), amm: z.boolean().default(true) }).default({ enabled: false, amm: true }),
   // V2 – graduációs szakasz (PONS curve → v4): árnyék-belépés graduáláskor és +delay_min perccel később
   graduation: z.object({
     enabled: z.boolean().default(true),

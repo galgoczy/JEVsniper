@@ -314,7 +314,8 @@ CREATE TABLE IF NOT EXISTS sol_snapshots (
 );
 CREATE TABLE IF NOT EXISTS sol_outcomes (
   mint TEXT PRIMARY KEY, ref_price REAL NOT NULL, ref_at INTEGER NOT NULL, max_x REAL NOT NULL, min_x REAL NOT NULL,
-  complete_at INTEGER, migrated_at INTEGER, done_at INTEGER
+  complete_at INTEGER, migrated_at INTEGER, done_at INTEGER,
+  ref30_price REAL, max_x30 REAL, min_x30 REAL     -- a 30 perces árhoz mért csúcs/mélypont (túlélők, 2026-10-05)
 );
 CREATE TABLE IF NOT EXISTS sol_grads (mint TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL, pool TEXT, PRIMARY KEY (mint, kind));
 
@@ -343,3 +344,22 @@ CREATE TABLE IF NOT EXISTS bnb_pair_outcomes (
 -- HUD beléptetés (2026-10-04): munkamenetek (csak a süti SHA-256 lenyomata) és passkey-k (WebAuthn nyilvános kulcsok).
 CREATE TABLE IF NOT EXISTS hud_sessions (token_hash TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, method TEXT, ip TEXT);
 CREATE TABLE IF NOT EXISTS hud_passkeys (id TEXT PRIMARY KEY, public_key BLOB NOT NULL, counter INTEGER NOT NULL, transports TEXT, label TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER);
+
+-- Solana / PumpSwap (graduáció utáni AMM) felvevő (2026-10-05): a pump_amm program CreatePool/Buy/Sell eseményei. Ár = quote-tartalék / base-tartalék (SOL/token).
+CREATE TABLE IF NOT EXISTS sol_amm_pools (
+  pool TEXT PRIMARY KEY, base_mint TEXT NOT NULL, quote_mint TEXT NOT NULL, quote_sol INTEGER NOT NULL, creator TEXT, coin_creator TEXT,
+  created_at INTEGER NOT NULL, init_quote REAL, init_base REAL, mayhem INTEGER
+);
+CREATE TABLE IF NOT EXISTS sol_amm_trades (
+  id INTEGER PRIMARY KEY, pool TEXT NOT NULL, at INTEGER NOT NULL, side TEXT NOT NULL, user TEXT NOT NULL,
+  quote_sol REAL NOT NULL, base_amount REAL NOT NULL, price REAL NOT NULL, pool_quote REAL NOT NULL, signature TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sol_amm_trades_pool ON sol_amm_trades(pool, at);
+CREATE TABLE IF NOT EXISTS sol_amm_snapshots (
+  pool TEXT NOT NULL, window_sec INTEGER NOT NULL, at INTEGER NOT NULL,
+  buys INTEGER, sells INTEGER, unique_buyers INTEGER, quote_in REAL, quote_out REAL, price REAL, pool_quote REAL, last_trade_age_sec INTEGER,
+  PRIMARY KEY (pool, window_sec)
+);
+CREATE TABLE IF NOT EXISTS sol_amm_outcomes (
+  pool TEXT PRIMARY KEY, ref_price REAL NOT NULL, ref_at INTEGER NOT NULL, max_x REAL NOT NULL, min_x REAL NOT NULL, min_pool_quote REAL, done_at INTEGER
+);

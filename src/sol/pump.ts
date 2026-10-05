@@ -31,7 +31,7 @@ export function base58(buf: Uint8Array): string {
   return s;
 }
 
-class Reader {
+export class Reader {
   o = 8; // a diszkriminátor után
   constructor(private b: Buffer) {}
   u8() { return this.b[this.o++]!; }

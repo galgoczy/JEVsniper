@@ -199,6 +199,7 @@ hud:
 # Nem kereskedik és nem nyit árnyékpozíciót.
 sol:
   enabled: true
+  amm: true   # 10-05: graduáció utáni PumpSwap-kereskedés felvétele (sol_amm_*): új megközelítés – a túlélők/graduáltak órás távon
 
 listing:
   enabled: true

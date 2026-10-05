@@ -26,6 +26,9 @@ const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ["bnb_pairs", "pair_created_block", "INTEGER"],
   ["positions", "low_price_native", "REAL"],
   ["positions", "low_price_since", "INTEGER"],
+  ["sol_outcomes", "ref30_price", "REAL"],
+  ["sol_outcomes", "max_x30", "REAL"],
+  ["sol_outcomes", "min_x30", "REAL"],
 ];
 
 function migrate(db: DB) {

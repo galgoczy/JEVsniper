@@ -108,3 +108,48 @@ test("SOL visszajátszás: scalp terv (tp/sl) – teljes eladás a célnál vagy
   assert.ok(Math.abs(replayPosition(1, 0, [{ at: 1, price: 1.1 }, { at: 2, price: 1.31 }, { at: 3, price: 5 }], "tp1.3_sl20", 1, cfg, zero).net - 0.31) < 1e-9);
   assert.ok(Math.abs(replayPosition(1, 0, [{ at: 1, price: 0.85 }, { at: 2, price: 0.79 }], "tp1.3_sl20", 1, cfg, zero).net + 0.21) < 1e-9);
 });
+
+test("PumpSwap AMM: CreatePool/Buy/Sell dekódolás az IDL szerint; felvevő: csak SOL-quote pool, ár a tartalékokból, 5 perces referencia", async () => {
+  const { decodeAmmEvent, ammEventsFromLogs, SolAmmRecorder, WSOL_MINT } = await import("../src/sol/amm.js");
+  const POOL = pk(21), BASE = pk(22), U = pk(23);
+  const createPool = (ts: number, quote: string) => b64([177, 49, 12, 210, 160, 118, 167, 116], enc.i64(BigInt(ts)), Buffer.from([0, 0]), enc.pk(CREATOR), enc.pk(BASE), enc.pk(quote), enc.u8(6), enc.u8(9),
+    enc.u64(1n), enc.u64(1n), enc.u64(200_000_000n * 10n ** 6n), enc.u64(80n * 10n ** 9n), enc.u64(0n), enc.u64(0n), enc.u64(0n), enc.u8(0), enc.pk(POOL), enc.pk(pk(24)), enc.pk(pk(25)), enc.pk(pk(26)), enc.pk(CREATOR), enc.bool(false), enc.u64(0n));
+  const tradeEv = (buy: boolean, ts: number, base: bigint, poolBase: bigint, poolQuote: bigint, quote: bigint) => b64(buy ? [103, 244, 82, 31, 44, 245, 119, 119] : [62, 47, 55, 10, 165, 3, 220, 42],
+    enc.i64(BigInt(ts)), enc.u64(base), enc.u64(0n), enc.u64(0n), enc.u64(0n), enc.u64(poolBase), enc.u64(poolQuote), enc.u64(quote), enc.u64(0n), enc.u64(0n), enc.u64(0n), enc.u64(0n), enc.u64(0n), enc.u64(0n), enc.pk(POOL), enc.pk(U), Buffer.from("tail"));
+  const c = decodeAmmEvent(createPool(1_790_000_000, WSOL_MINT).slice(14)); assert.equal(c?.kind, "pool");
+  if (c?.kind === "pool") { assert.equal(c.pool, POOL); assert.equal(c.baseMint, BASE); assert.equal(c.quoteMint, WSOL_MINT); assert.equal(c.poolQuote, 80n * 10n ** 9n); assert.equal(c.coinCreator, CREATOR); }
+  const t = decodeAmmEvent(tradeEv(true, 1_790_000_010, 10n ** 6n, 100n * 10n ** 6n, 100n * 10n ** 9n, 10n ** 9n).slice(14)); assert.equal(t?.kind, "trade");
+  if (t?.kind === "trade") { assert.equal(t.isBuy, true); assert.equal(t.pool, POOL); assert.equal(t.user, U); assert.equal(t.quoteAmount, 10n ** 9n); }
+  const db = openDb(":memory:"); let now = 1_790_000_000_000;
+  const rec = new SolAmmRecorder({ db, now: () => now });
+  rec.ingest(ammEventsFromLogs([createPool(1_790_000_000, WSOL_MINT)]), "s1");
+  rec.ingest(ammEventsFromLogs([createPool(1_790_000_000, pk(99)).replace(POOL, pk(98))]), "s2"); // nem SOL quote → csak a tábla
+  assert.equal((db.prepare("SELECT count(*) n FROM sol_amm_pools").get() as { n: number }).n, 1); // (a második esemény base64-je a csere miatt érvénytelen → kihagyva)
+  rec.ingest(ammEventsFromLogs([tradeEv(true, 1_790_000_030, 10n ** 6n, 100n * 10n ** 6n, 100n * 10n ** 9n, 10n ** 9n)]), "s3");
+  assert.equal((db.prepare("SELECT count(*) n FROM sol_amm_trades").get() as { n: number }).n, 1);
+  const tr = db.prepare("SELECT price, quote_sol FROM sol_amm_trades").get() as { price: number; quote_sol: number };
+  assert.ok(Math.abs(tr.price - 1) < 1e-12); assert.equal(tr.quote_sol, 1); // 100 SOL / 100 token = 1 SOL/token
+  now = 1_790_000_000_000 + 301_000; rec.flush();
+  const s = db.prepare("SELECT buys, unique_buyers, price FROM sol_amm_snapshots WHERE window_sec = 300").get() as { buys: number; unique_buyers: number; price: number };
+  assert.equal(s.buys, 1); assert.equal(s.unique_buyers, 1);
+  rec.ingest(ammEventsFromLogs([tradeEv(false, 1_790_000_400, 10n ** 6n, 400n * 10n ** 6n, 100n * 10n ** 9n, 10n ** 9n)]), "s4"); // ár 0,25 → min_x 0,25
+  now = 1_790_000_000_000 + 25 * 3600_000; rec.flush();
+  const o = db.prepare("SELECT max_x, min_x, done_at FROM sol_amm_outcomes").get() as { max_x: number; min_x: number; done_at: number };
+  assert.ok(Math.abs(o.min_x - 0.25) < 1e-9); assert.ok(o.done_at > 0); assert.equal(rec.stats.tracked, 0);
+  db.close();
+});
+
+test("SOL felvevő: túlélő (görbe ≥10% 30 percnél) kötései 30 perc után is mentődnek; 30 perces referencia a kimenetben", () => {
+  const db = openDb(":memory:"); let now = 1_790_000_000_000; const T0 = 1_790_000_000;
+  const rec = new SolRecorder({ db, now: () => now, fetchFn: (async () => ({ json: async () => ({}) })) as unknown as typeof fetch });
+  rec.ingest(eventsFromLogs([create(T0)]), "a");
+  rec.ingest(eventsFromLogs([trade(T0 + 10, BUYER1, true, 10n ** 9n, 40_000_000_000n, 804_000_000_000_000n, 524_100_000_000_000n)]), "b"); // ~34% haladás
+  now = (T0 + 1801) * 1000; rec.flush();
+  assert.equal(rec.stats.survivors, 1);
+  rec.ingest(eventsFromLogs([trade(T0 + 3000, BUYER2, true, 10n ** 9n, 80_000_000_000n, 402_000_000_000_000n, 122_100_000_000_000n)]), "c"); // 50 perc: ár duplázódik
+  assert.equal((db.prepare("SELECT count(*) n FROM sol_trades WHERE at > ?").get((T0 + 1800) * 1000) as { n: number }).n, 1);
+  now = (T0 + 3300) * 1000; rec.flush(); // a kimenet 5 percenként íródik (age % 300 < 5)
+  const o = db.prepare("SELECT ref30_price, max_x30 FROM sol_outcomes").get() as { ref30_price: number; max_x30: number };
+  assert.ok(o.ref30_price > 0); assert.ok(o.max_x30 > 3.9 && o.max_x30 < 4.1, `max_x30 ${o.max_x30}`); // 40/804 → 80/402: 4x
+  db.close();
+});
