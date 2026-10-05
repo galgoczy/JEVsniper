@@ -77,3 +77,14 @@ test("holderStats: routerből/PoolManagerből kapott token nem airdrop", () => {
   const h = holderStats(tr, { pool: POOL, creator: null, totalSupply: 1000n * E, contractSenders: new Set([ROUTER]) });
   assert.ok(Math.abs(h.airdrop_received_ratio - 1 / 3) < 1e-9); // csak 0xc
 });
+
+test("pillanatkép-határidő: ha a sorban állás után már késő, a mérés kimarad (StaleSnapshotError)", async () => {
+  const { Collector, StaleSnapshotError } = await import("../src/collector/index.js");
+  const { openDb } = await import("../src/db/index.js");
+  const db = openDb(":memory:");
+  const col = new Collector(db, {} as never, {} as never);
+  const t = { id: 1, chain: "robinhood", address: "0x1", creator: null, launchpad: "pons", mechanics: "bonding_curve", pool_address: null, pair_token: null, name: null, symbol: null, discovered_at: 0, discovered_block: null, graduated_at: null } as never;
+  await assert.rejects(col.collect(t, 60, Date.now() - 1), StaleSnapshotError);
+  assert.equal(col.staleSkipped.robinhood, 1);
+  db.close();
+});

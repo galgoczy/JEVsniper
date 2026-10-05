@@ -117,7 +117,7 @@ async function main() {
     ethUsd: () => ethPrice.get(), openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, shadowSizeUsd(cfg), eth, liq) }));
   copyTrackers.forEach((c) => c.start());
   // V2: graduációs szakasz (PONS curve → v4)
-  const graduation = new GraduationTracker({ db, cfg, collect: (t, w) => collector.collect(t, w), saveSnapshot: (t, snap) => collector.saveSnapshot(t, snap, cfg.db.max_snapshot_bytes),
+  const graduation = new GraduationTracker({ db, cfg, collect: (t, w, d) => collector.collect(t, w, d), saveSnapshot: (t, snap) => collector.saveSnapshot(t, snap, cfg.db.max_snapshot_bytes),
     openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, shadowSizeUsd(cfg), eth, liq), ethUsd: () => ethPrice.get() });
   // Listázás-figyelő (Coinbase / Robinhood)
   const listing = new ListingWatcher({ db, cfg, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
@@ -200,6 +200,7 @@ async function main() {
     ...(bnbRecorder ? [`BNB felvevő: ${bnbRecorder.stats.tokens} token, ${bnbRecorder.stats.trades} kötés, ${bnbRecorder.stats.grads} graduáció (indulás óta), ${bnbRecorder.stats.errors} hiba, blokk ${bnbRecorder.stats.lastBlock}`] : []),
     ...(pcsRecorder ? [`PancakeSwap felvevő: ${pcsRecorder.stats.shells} új WBNB-pár (héj), ${pcsRecorder.stats.waiting} vár likviditásra, ${pcsRecorder.stats.pairs} valódi indítás, ${pcsRecorder.stats.trades} kötés, ${pcsRecorder.stats.snapshots} pillanatkép, követett ${pcsRecorder.stats.tracked}, hiba ${pcsRecorder.stats.errors}`] : []),
     ...(solRecorder ? [`SOL felvevő: ${solRecorder.stats.tokens} token, ${solRecorder.stats.trades} kötés mentve, ${solRecorder.stats.snapshots} pillanatkép, ${solRecorder.stats.completes} görbe-teljesülés, ${solRecorder.stats.migrations} migráció, követett ${solRecorder.stats.tracked}, újracsatlakozás ${solRecorder.stats.reconnects}, hiba ${solRecorder.stats.errors}`] : []),
+    `pillanatkép kihagyva késés miatt (indulás óta): Base ${collector.staleSkipped.base}, Robinhood ${collector.staleSkipped.robinhood}`,
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
     `Jev: ${jev.disabled ? "kikapcsolva" : jev.paused ? "szünetel" : "ok"}, rezsim: ${regime.regime}`,
     `döntések (24h): ${(db.prepare("SELECT SUM(arm='live' AND enter=1) l, SUM(arm='live_rule' AND enter=1) lr, SUM(arm='random_control' AND enter=1) rc, COUNT(DISTINCT token_id) n FROM decisions WHERE decided_at > ?").get(Date.now() - 86_400_000) as { l: number; lr: number; rc: number; n: number }).n} token címkézve`,

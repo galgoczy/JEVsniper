@@ -3,7 +3,7 @@ import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
 import { ADDRESSES, ZERO } from "../chains/addresses.js";
 import { priceFromSqrtX96 } from "../collector/stats.js";
-import { tokenRow, type TokenRow } from "../collector/index.js";
+import { tokenRow, SNAPSHOT_MAX_LAG_MS, StaleSnapshotError, type TokenRow } from "../collector/index.js";
 import type { ParamSnapshot } from "../collector/types.js";
 import { hardFilters } from "../filters/hard.js";
 import { log } from "../logger.js";
@@ -24,7 +24,7 @@ export const GRAD30_SNAPSHOT_WINDOW = 930;
 
 export interface GraduationDeps {
   db: DB; cfg: Config;
-  collect: (t: TokenRow, windowSec: number) => Promise<ParamSnapshot>;
+  collect: (t: TokenRow, windowSec: number, deadlineMs?: number) => Promise<ParamSnapshot>;
   saveSnapshot: (t: TokenRow, snap: ParamSnapshot) => void;
   openShadow: (t: TokenRow, arm: string, price: number, ethUsd: number, liquidityNative: number | null) => number;
   ethUsd: () => Promise<number | "unknown">;
@@ -64,10 +64,10 @@ export class GraduationTracker {
     const eth = await this.d.ethUsd();
     if (typeof eth === "number" && gradPrice > 0 && this.d.openShadow(t, "grad_at", gradPrice, eth, null) > 0) this.stats.entries++;
     // 30 mp múlva: reális késéssel, a valódi pool-áron
-    const h30 = setTimeout(() => { this.timers.delete(h30); void this.delayed30(tokenId).catch((e) => log.warn("graduáció +30 mp hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) })); }, 30_000);
+    const h30 = setTimeout(() => { this.timers.delete(h30); void this.delayed30(tokenId).catch((e) => e instanceof StaleSnapshotError ? undefined : log.warn("graduáció +30 mp hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) })); }, 30_000);
     this.timers.add(h30);
     // 15 perc múlva: friss pillanatkép, kemény szűrő, feltétel
-    const h = setTimeout(() => { this.timers.delete(h); void this.delayed(tokenId, gradPrice).catch((e) => log.warn("graduáció +15 perc hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) })); }, cfg.graduation.delay_min * 60_000);
+    const h = setTimeout(() => { this.timers.delete(h); void this.delayed(tokenId, gradPrice).catch((e) => e instanceof StaleSnapshotError ? undefined : log.warn("graduáció +15 perc hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) })); }, cfg.graduation.delay_min * 60_000);
     this.timers.add(h);
   }
 
@@ -75,7 +75,7 @@ export class GraduationTracker {
   async delayed30(tokenId: number): Promise<void> {
     const row = tokenRow(this.d.db, tokenId);
     if (!row) return;
-    const snap = await this.d.collect(row, GRAD30_SNAPSHOT_WINDOW);
+    const snap = await this.d.collect(row, GRAD30_SNAPSHOT_WINDOW, Date.now() + SNAPSHOT_MAX_LAG_MS);
     this.d.saveSnapshot(row, snap);
     const price = num(snap.dynamics.price_native), eth = num(snap.meta_snapshot.eth_usd);
     if (price === null || !(price > 0) || eth === null) return;
@@ -85,7 +85,7 @@ export class GraduationTracker {
   async delayed(tokenId: number, gradPrice: number): Promise<void> {
     const row = tokenRow(this.d.db, tokenId);
     if (!row) return;
-    const snap = await this.d.collect(row, GRAD_SNAPSHOT_WINDOW);
+    const snap = await this.d.collect(row, GRAD_SNAPSHOT_WINDOW, Date.now() + SNAPSHOT_MAX_LAG_MS);
     this.d.saveSnapshot(row, snap);
     this.stats.delayed++;
     if (!hardFilters(snap, this.d.cfg.hard_filters).pass) return;

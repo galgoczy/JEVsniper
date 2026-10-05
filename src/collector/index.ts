@@ -69,11 +69,11 @@ export class Collector {
   private txCountCache = new Map<string, { n: number; at: number }>();
   private running: Record<ChainKey, number> = { base: 0, robinhood: 0 };
   private waiters: Record<ChainKey, Array<() => void>> = { base: [], robinhood: [] };
-  /** Láncenként max. ennyi gyűjtés fut egyszerre (RPC-kímélés). */
-  static MAX_CONCURRENT = 2;
+  /** Láncenként max. ennyi gyűjtés fut egyszerre (RPC-kímélés). 2026-10-05: Robinhood 2 → 4 (napi ~3 800 token, a sor torlódott). */
+  static MAX_CONCURRENT: Record<ChainKey, number> = { base: 2, robinhood: 4 };
 
   private async acquire(chain: ChainKey) {
-    if (this.running[chain] < Collector.MAX_CONCURRENT) { this.running[chain]++; return; }
+    if (this.running[chain] < Collector.MAX_CONCURRENT[chain]) { this.running[chain]++; return; }
     await new Promise<void>((r) => this.waiters[chain].push(r));
     this.running[chain]++;
   }
@@ -88,10 +88,19 @@ export class Collector {
   private codeCache = new Map<string, boolean>();
   constructor(private db: DB, private clients: Record<ChainKey, PublicClient>, private ethPrice: EthPrice) {}
 
-  async collect(t: TokenRow, windowSec: number): Promise<ParamSnapshot> {
+  /**
+   * Pillanatkép. deadlineMs: ha a sorban állás után már ennél később tartunk, a mérés KIMARAD (StaleSnapshotError) – 2026-10-05:
+   * a Robinhoodon a sor torlódott, és a „30/60/180 mp-es” pillanatképek órákkal később készültek (hamis belépési pillanat).
+   */
+  async collect(t: TokenRow, windowSec: number, deadlineMs?: number): Promise<ParamSnapshot> {
     await this.acquire(t.chain);
-    try { return await this.collectInner(t, windowSec); } finally { this.release(t.chain); }
+    try {
+      if (deadlineMs !== undefined && Date.now() > deadlineMs) { this.staleSkipped[t.chain]++; throw new StaleSnapshotError(t.chain, windowSec); }
+      return await this.collectInner(t, windowSec);
+    } finally { this.release(t.chain); }
   }
+  /** kihagyott (elkésett) pillanatképek láncenként – diagnosztika */
+  staleSkipped: Record<ChainKey, number> = { base: 0, robinhood: 0 };
 
   private async collectInner(t: TokenRow, windowSec: number): Promise<ParamSnapshot> {
     const c = this.clients[t.chain];
@@ -487,6 +496,12 @@ export class Collector {
 }
 
 /** Ütemező: új tokenre a config ablakaiban (30/60/180 mp) lefuttatja a gyűjtést és menti. */
+/** A pillanatkép legfeljebb ennyivel késhet a tervezett időponthoz képest (sorban állás); különben kimarad. */
+export const SNAPSHOT_MAX_LAG_MS = 30_000;
+export class StaleSnapshotError extends Error {
+  constructor(public chain: ChainKey, public windowSec: number) { super(`elkésett pillanatkép kihagyva (${chain}, ${windowSec} mp)`); }
+}
+
 export class CollectorScheduler {
   private timers = new Set<NodeJS.Timeout>();
   constructor(private db: DB, private collector: Collector, private windows: number[], private maxBytes: number,
@@ -506,10 +521,10 @@ export class CollectorScheduler {
         this.timers.delete(h);
         try {
           const row = tokenRow(this.db, t.id) ?? t; // friss sor (pl. közben pótolt készítő, graduáció)
-          const snap = await this.collector.collect(row, w);
+          const snap = await this.collector.collect(row, w, t.discovered_at + w * 1000 + SNAPSHOT_MAX_LAG_MS);
           this.collector.saveSnapshot(row, snap, this.maxBytes);
           await this.onSnapshot?.(row, snap);
-        } catch (e) { log.warn("Paramétergyűjtés hiba", { token: t.address, window: w, error: (e as Error).message.slice(0, 200) }); }
+        } catch (e) { if (!(e instanceof StaleSnapshotError)) log.warn("Paramétergyűjtés hiba", { token: t.address, window: w, error: (e as Error).message.slice(0, 200) }); }
       }, delay);
       this.timers.add(h);
     }
