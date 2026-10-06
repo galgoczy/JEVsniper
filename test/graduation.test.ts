@@ -68,8 +68,12 @@ test("figyelő: PONS-token későbbi v4 Initialize-a = graduáció → egyszer h
   const id = Number(db.prepare("INSERT INTO tokens(chain, address, launchpad, mechanics, discovered_at, discovered_block) VALUES ('robinhood', ?, 'pons', 'bonding_curve', 0, 100)").run(tok).lastInsertRowid);
   const init = { chain: "robinhood", address: tok, creator: null, launchpad: "uniswap", mechanics: "v4_hook", pool: `0x${"ab".repeat(32)}`, pairToken: "0x0000000000000000000000000000000000000000",
     name: null, symbol: null, blockNumber: 200n, txHash: null, initSqrtPriceX96: 123n,
-    poolKey: { currency0: "0x0000000000000000000000000000000000000000", currency1: tok, fee: 0, tickSpacing: 60, hooks: "0x0000000000000000000000000000000000000000" } };
+    poolKey: { currency0: "0x0000000000000000000000000000000000000000", currency1: tok, fee: 0, tickSpacing: 200, hooks: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044" } };
   const up = (w as unknown as { upsertToken: (t: unknown) => Promise<void> }).upsertToken.bind(w);
+  // idegen (nem PONS-hookos, 79% díjú) por-pool: nem graduáció, PoolKey sem
+  await up({ ...init, blockNumber: 150n, initSqrtPriceX96: 9n, poolKey: { ...init.poolKey, fee: 790000, tickSpacing: 60, hooks: "0x0000000000000000000000000000000000000000" } });
+  assert.deepEqual(calls, []);
+  assert.deepEqual(db.prepare("SELECT graduated_at, pool_key_json FROM tokens WHERE id = ?").get(id), { graduated_at: null, pool_key_json: null });
   await up(init); await up(init);                                              // a második már nem graduáció
   assert.deepEqual(calls, [[id, 123n]]);
   const row = db.prepare("SELECT graduated_at, pool_key_json FROM tokens WHERE id = ?").get(id) as { graduated_at: number | null; pool_key_json: string | null };

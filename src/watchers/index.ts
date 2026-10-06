@@ -5,6 +5,8 @@ import type { ChainKey } from "../chains/index.js";
 import { erc20Abi } from "../abis/uniswap.js";
 import { sourcesFor, type LogSource, type NewToken } from "./sources.js";
 import { log } from "../logger.js";
+import { ADDRESSES } from "../chains/addresses.js";
+import { isAddressEqual } from "viem";
 
 export interface WatcherOptions {
   pollIntervalMs: number;
@@ -96,7 +98,15 @@ export class ChainWatcher {
     const existing = this.db.prepare("SELECT id, launchpad, discovered_block, graduated_at FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(t.chain, t.address) as { id: number; launchpad: string; discovered_block: number | null; graduated_at: number | null } | undefined;
     if (existing) {
       if (t.launchpad === "uniswap" && existing.launchpad !== "uniswap") {
-        // Launchpad-token v4 poolja: ugyanabban a blokkban (Clanker) → nem graduáció, csak a PoolKey; későbbi blokkban (PONS) → graduáció.
+        // PONS: csak a PONS saját hookjával nyitott pool a graduáció (2026-10-06 javítás: botok idegen, 79–88% díjú por-poolokat
+        // nyitnak a görbén lévő tokeneknek; ezek graduációnak számítottak, és az árfigyelő onnan olvasta az árat).
+        if (existing.launchpad === "pons" && !isOfficialPonsPool(this.chain, t)) { log.debug("PONS-token idegen v4 poolja – nem graduáció", { token: t.address, hooks: t.poolKey?.hooks }); return; }
+        if (existing.launchpad === "pons") {
+          this.db.prepare("UPDATE tokens SET graduated_at = COALESCE(graduated_at, ?), pool_key_json = ? WHERE id = ?").run(nowMs(), JSON.stringify(t.poolKey), existing.id);
+          if (existing.graduated_at === null) await this.opts.onGraduation?.(existing.id, t.initSqrtPriceX96 ?? null);
+          return;
+        }
+        // Launchpad-token v4 poolja: ugyanabban a blokkban (Clanker) → nem graduáció, csak a PoolKey.
         const sameBlock = existing.discovered_block !== null && BigInt(existing.discovered_block) === t.blockNumber;
         this.db.prepare("UPDATE tokens SET graduated_at = CASE WHEN ? THEN graduated_at ELSE COALESCE(graduated_at, ?) END, pool_key_json = COALESCE(pool_key_json, ?) WHERE id = ?")
           .run(sameBlock ? 1 : 0, nowMs(), t.poolKey ? JSON.stringify(t.poolKey) : null, existing.id);
@@ -135,4 +145,10 @@ export class ChainWatcher {
       return { name: name as string | null, symbol: symbol as string | null };
     } catch { return { name: null, symbol: null }; }
   }
+}
+
+/** A PONS graduációs poolja: a PONS v2 hook (docs.ponsfamily.com/v2#contracts) a PoolKey-ben. */
+export function isOfficialPonsPool(chain: ChainKey, t: Pick<NewToken, "poolKey">): boolean {
+  const hook = ADDRESSES[chain].ponsV2Hook;
+  return !!hook && !!t.poolKey && isAddressEqual(t.poolKey.hooks as `0x${string}`, hook);
 }
