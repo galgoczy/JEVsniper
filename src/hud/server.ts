@@ -4,6 +4,7 @@ import path from "node:path";
 import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
 import { Worker } from "node:worker_threads";
+import { SystemStats } from "./system.js";
 import { HudAuth, CSP } from "./auth.js";
 import { log } from "../logger.js";
 
@@ -41,6 +42,7 @@ class HudData_ {
 export function startHud(o: { db: DB; cfg: Config; port: number; host: string; token?: string; passwordHash?: string }): http.Server {
   const page = path.join(import.meta.dirname, "index.html");
   const data = new HudData_(path.resolve(o.cfg.db.path), o.cfg);
+  const sys = new SystemStats(path.resolve(o.cfg.db.path));
   const auth = new HudAuth({ db: o.db, passwordHash: o.passwordHash, passwordLogin: o.cfg.hud.password_login, origins: o.cfg.hud.origins, legacyToken: o.token });
   if (!o.passwordHash && !o.token) log.warn("HUD: nincs HUD_PASSWORD_HASH (npm run hud:jelszo) – belépni csak meglévő passkey-vel lehet");
   const srv = http.createServer((req, res) => {
@@ -54,7 +56,8 @@ export function startHud(o: { db: DB; cfg: Config; port: number; host: string; t
           res.writeHead(302, { location: "/login" }); res.end(); return;
         }
         const json = (x: unknown) => { res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(x)); };
-        if (url.pathname === "/api/all") return json(await data.get(url.searchParams.get("fresh") === "1"));
+        if (url.pathname === "/api/all") return json({ ...(await data.get(url.searchParams.get("fresh") === "1")), system: sys.get() });
+        if (url.pathname === "/api/system") return json(sys.get());
         const one = { "/api/summary": "summary", "/api/positions": "positions", "/api/feed": "feed", "/api/winners": "winners" }[url.pathname] as keyof HudData | undefined;
         if (one) return json((await data.get(false))[one]);
         if (url.pathname === "/" || url.pathname === "/index.html") {
@@ -65,7 +68,7 @@ export function startHud(o: { db: DB; cfg: Config; port: number; host: string; t
       } catch (e) { log.warn("HUD hiba", { error: (e as Error).message.slice(0, 160) }); if (!res.headersSent) res.writeHead(500); res.end(); }
     })();
   });
-  srv.on("close", () => data.close());
+  srv.on("close", () => { data.close(); sys.stop(); });
   srv.listen(o.port, o.host, () => log.info(`HUD fut: http://${o.host === "0.0.0.0" ? "<mini-IP>" : o.host}:${o.port}`));
   return srv;
 }

@@ -169,6 +169,11 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
     </div>
   </section>
 
+  <section class="card sec">
+    <div class="ttl"><h2>🖥 Mac mini (M4)</h2><small id="sys-note">–</small></div>
+    <div class="mini" id="sys"></div>
+  </section>
+
   <footer>Csak olvas · dry_run-ban árnyékmérés · az „élesben” értékek az élő belépővel felszorozva · <span id="foot-since">–</span></footer>
 </div>
 
@@ -257,6 +262,24 @@ function renderSummary(s) {
   );
 }
 
+function renderSystem(x) {
+  const box = $("sys"); if (!x) return; box.replaceChildren();
+  const pct = (v) => (v === null || v === undefined) ? "–" : `${Math.round(v)}%`;
+  const card = (lab, val, note, p) => {
+    const c = el("div", "card"); c.append(el("div", "kpi lab", lab), el("div", "val mono", val), el("div", "note", note));
+    if (p !== null && p !== undefined) { const pr = el("div", "prog"); const i = el("i"); i.style.width = `${Math.min(100, Math.max(0, p))}%`; if (p >= 85) i.style.background = "var(--down)"; pr.append(i); c.append(pr); }
+    return c;
+  };
+  const usedDisk = x.diskTotalGb ? (1 - x.diskFreeGb / x.diskTotalGb) * 100 : null;
+  box.append(
+    card("⚙️ CPU (gép)", pct(x.cpuPct), `${x.cores} mag · terhelés ${x.load1.toFixed(1)}`, x.cpuPct),
+    card("🤖 Bot CPU", pct(x.botCpuPct), `egy magra vetítve · ${Math.round(x.botRssMb)} MB memória`, x.botCpuPct === null ? null : x.botCpuPct / x.cores),
+    card("🧠 Memória", pct(x.memUsedPct), `használt · ${Math.round(x.memTotalGb)} GB összesen`, x.memUsedPct),
+    card("💾 Tárhely", x.diskFreeGb === null ? "–" : `${Math.round(x.diskFreeGb)} GB`, `szabad · adatbázis ${x.dbMb === null ? "–" : (x.dbMb / 1024).toFixed(1) + " GB"}`, usedDisk),
+  );
+  $("sys-note").textContent = `minta ${hhmm(x.at)}`;
+}
+
 function renderPositions(rows) {
   const box = $("pos"); box.replaceChildren();
   $("pos-n").textContent = `${rows.length} nyitott · v2 + pregrad`;
@@ -323,7 +346,7 @@ async function refresh(fresh = false) {
   try {
     const d = await fetch("/api/all" + (fresh ? "?fresh=1" : "") + (token ? `${fresh ? "&" : "?"}t=${encodeURIComponent(token)}` : ""), { cache: "no-store" })
       .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
-    renderSummary(d.summary); renderPositions(d.positions); renderFeed(d.feed); renderWinners(d.winners);
+    renderSummary(d.summary); renderPositions(d.positions); renderFeed(d.feed); renderWinners(d.winners); renderSystem(d.system);
     const age = Math.max(0, Math.round((Date.now() - d.computedAt) / 1000));
     $("upd").textContent = `adat ${hhmm(d.computedAt)}${age > 5 ? ` (${age} mp)` : ""}`; $("live-dot").classList.remove("off");
   } catch (e) {

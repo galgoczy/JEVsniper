@@ -96,6 +96,8 @@ export class DecisionEngine {
     const live = arms.find((a) => a.arm === liveArm)?.res; // live_rule címkék nélkül nincs → nincs élő döntés
     if (!live?.enter) return;
     if (cfg.live_entry.chains.length && !cfg.live_entry.chains.includes(t.chain)) return; // élő vétel csak a megadott láncokon (az árnyékmérés mindenhol fut)
+    // 2026-10-06: nincs végrehajtási útvonal (Uniswap v2/v3 pool) → se élő vétel, se „BELÉPNE” jelzés (az árnyékmérés sem nyitja meg)
+    if (!supported) { ins.run(t.id, "live", w, regime, nowMs(), 0, `no_route:${t.mechanics}`, null, callId); log.info("Élő kar belépne, de nincs útvonal (v2/v3)", { token: t.symbol, mechanics: t.mechanics }); return; }
     // a Jev szünete csak a Jev-címkés élő szabályt blokkolja; a Jev nélküli karoknak nem akadály
     const jevPaused = liveArm === "live_rule" && this.d.jev.paused;
     const block = cfg.mode === "dry_run" ? "dry_run" : riskBlock(db, cfg, t, { jevPaused, regime, consecutiveFailed: this.d.executors[t.chain]?.consecutiveFailed ?? 0 });
