@@ -102,3 +102,33 @@ test("graduáció előtti kar: csak átlépésre, sávonként egyszer, átugrott
   assert.deepEqual(await o(5, 70, false), []);             // nem natív quote
   assert.deepEqual(opened, ["1:pons_pregrad_50", "1:pons_pregrad_80", "2:pons_pregrad_80", "4:pons_pregrad_80"]);
 });
+
+test("flip95 kar: csak a 95% átlépésére, tokenenként egyszer, átugrás és nem natív quote kimarad", async () => {
+  const { FlipArm } = await import("../src/graduation/flip.js");
+  const db = openDb(":memory:");
+  const opened: number[] = [];
+  const arm = new FlipArm({ db, client: {} as never, open: async (id) => { opened.push(id); return 2; } });
+  const o = (tokenId: number, progressPct: number, nativeQuote = true) => arm.observe({ tokenId, progressPct, price: 1e-8, liquidityNative: 4, nativeQuote });
+  assert.equal(await o(1, 90), false);   // kiindulópont
+  assert.equal(await o(1, 96), true);    // átlépte a 95-öt
+  assert.equal(await o(1, 97), false);   // már belépett
+  assert.equal(await o(2, 96), false);   // első megfigyelés már fölötte → nem átlépés
+  assert.equal(await o(2, 98), false);
+  assert.equal(await o(3, 80), false);
+  assert.equal(await o(3, 100), false);  // egyben graduált (átugrotta)
+  assert.equal(await o(3, 99), false);   // utána sem
+  assert.equal(await o(4, 50, false), false);
+  assert.equal(await o(4, 96, false), false);
+  assert.deepEqual(opened, [1]);
+});
+
+test("flip kiszállási terv: 1,5x-nél (graduációs ugrás) mind el, 0,75x stop, 15 perc után zár", async () => {
+  const { planAction } = await import("../src/exit/plans.js");
+  const p = { exit_plan: "flip", phase: "pre_tp1" as const, entry_price: 1, peak_price: 1, tokens_bought: 100, tokens_remaining: 100, opened_at: 0, stages_done: 0 };
+  const ep = cfg.exit_plan;
+  assert.equal(planAction(p, 1.08, 60_000, ep), null);                                   // a görbe vége (≤ ~1,11x): tart
+  assert.deepEqual(planAction(p, 2.1, 60_000, ep)?.reason, "flip_1.5x");
+  assert.equal(planAction(p, 2.1, 60_000, ep)?.sellTokens, 100);
+  assert.equal(planAction(p, 0.7, 60_000, ep)?.reason, "flip_stop_0.75x");
+  assert.equal(planAction(p, 1.0, 15 * 60_000, ep)?.reason, "flip_timeout_15m");
+});

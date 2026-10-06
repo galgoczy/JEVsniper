@@ -28,6 +28,7 @@ import { currentPositionUsd, shadowSizeUsd } from "./decision/risk.js";
 import { getAddress, isAddressEqual, type Address } from "viem";
 import { ADDRESSES, ZERO } from "./chains/addresses.js";
 import { PreGradArms } from "./graduation/pregrad.js";
+import { FlipArm, FLIP_ARM } from "./graduation/flip.js";
 import { BnbRecorder } from "./bnb/recorder.js";
 import { PancakeRecorder } from "./bnb/pancake.js";
 import { SolRecorder } from "./sol/recorder.js";
@@ -109,9 +110,19 @@ async function main() {
     const row = tokenRow(db, tokenId); const eth = await ethPrice.get();
     return row && typeof eth === "number" ? engine.openShadowAt(row, arm, 0, price, shadowSizeUsd(cfg), eth, liq) : 0;
   });
+  // RH mérőkar: 95%-on be, graduáción ki (gyors görbe-lekérdezés 85% fölött)
+  const flip = new FlipArm({ db, client: clients.robinhood, open: async (tokenId, price, liq) => {
+    const row = tokenRow(db, tokenId); const eth = await ethPrice.get();
+    return row && typeof eth === "number" ? engine.openShadowAt(row, FLIP_ARM, 0, price, shadowSizeUsd(cfg), eth, liq, null, ["flip", "live"]) : 0;
+  } });
+  if (cfg.graduation.enabled && cfg.chains.robinhood.enabled) flip.start();
   const monitor = new PositionMonitor({ db, cfg, jev, executors, feeds, ethUsd: () => ethPrice.get(), regime: () => regime.regime,
     notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)), onLiveClosed: (p) => compoundMgr.onLiveClosed(p.net_pnl_usd),
-    onCurve: cfg.graduation.enabled ? (o) => pregrad.observe({ ...o, nativeQuote: !o.pairToken || isAddressEqual(o.pairToken as Address, ZERO) || isAddressEqual(o.pairToken as Address, ADDRESSES[o.chain].weth) }) : undefined });
+    onCurve: cfg.graduation.enabled ? async (o) => {
+      const nativeQuote = !o.pairToken || isAddressEqual(o.pairToken as Address, ZERO) || isAddressEqual(o.pairToken as Address, ADDRESSES[o.chain].weth);
+      await pregrad.observe({ ...o, nativeQuote });
+      if (o.chain === "robinhood") await flip.observe({ ...o, nativeQuote });
+    } : undefined });
   monitor.start(15_000);
   // Copy trading árnyékteszt: tárcakövetés láncenként
   const copyTrackers = (["base", "robinhood"] as ChainKey[]).filter((k) => cfg.chains[k].enabled).map((k) => new CopyTracker({ db, cfg, chain: k, client: clients[k],
@@ -251,6 +262,7 @@ async function main() {
     solAmm?.stop();
     hud?.close();
     graduation.stop();
+    flip.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);

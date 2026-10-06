@@ -14,14 +14,25 @@ export interface ExitAction { sellTokens: number; reason: string; phase: Phase; 
  *  B:      +150/+200/+300/+500% (2,5x/3x/4x/6x) lépcsőknél a vett mennyiség 25%-a, 4 lépcső után zárva
  *  C:      2x-nél 50% (tőke ki), a maradék a csúcstól -35%-nál zár
  *  run70:  2x-nél csak 30%, a maradék 70% a csúcstól -40%-nál zár (2026-10-04: „hagyjuk jobban futni” – csak előre mérve)
+ *  flip:   (pons_flip95) minden eladva, ha az ár ≥ 1,5x (a görbe 95→100% között legfeljebb ~1,11x-et emelkedik, tehát ez
+ *          csak a graduációs ugrás), vagy ≤ 0,75x (stop), vagy 15 perc után (2026-10-06, előre rögzítve)
  * A 7 napos limit és a vészfékek (-40% stb.) minden tervre érvényesek (a monitor kezeli).
  */
+export const FLIP_TP = 1.5, FLIP_STOP = 0.75, FLIP_MAX_MS = 15 * 60_000;
+
 export function planAction(p: PosState, price: number, now: number, cfg: Config["exit_plan"]): ExitAction | null {
   if (p.tokens_remaining <= 0 || p.phase === "closed" || p.phase === "unsellable") return null;
   const mult = price / p.entry_price;
   const peak = Math.max(p.peak_price, price);
   const ageDays = (now - p.opened_at) / 86_400_000;
   if (ageDays >= cfg.moon_bag_max_days) return { sellTokens: p.tokens_remaining, reason: `time_limit_${cfg.moon_bag_max_days}d`, phase: "closed", closeAll: true };
+
+  if (p.exit_plan === "flip") {
+    if (mult >= FLIP_TP) return { sellTokens: p.tokens_remaining, reason: `flip_${FLIP_TP}x`, phase: "closed", closeAll: true };
+    if (mult <= FLIP_STOP) return { sellTokens: p.tokens_remaining, reason: `flip_stop_${FLIP_STOP}x`, phase: "closed", closeAll: true };
+    if (now - p.opened_at >= FLIP_MAX_MS) return { sellTokens: p.tokens_remaining, reason: "flip_timeout_15m", phase: "closed", closeAll: true };
+    return null;
+  }
 
   if (p.exit_plan === "B") {
     const stages = [2.5, 3, 4, 6];

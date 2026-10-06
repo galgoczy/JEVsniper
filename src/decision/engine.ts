@@ -118,7 +118,7 @@ export class DecisionEngine {
    * windowSec: a pillanatkép-ablak, vagy 0 az eseményvezérelt karoknál. Visszaadja, hány új pozíció-sor jött létre.
    */
   openShadowAt(t: Pick<TokenRow, "id" | "chain" | "launchpad" | "graduated_at">, arm: string, windowSec: number, price: number, sizeUsd: number,
-    ethUsd: number, liquidityNative: number | null, creatorBal: number | null = null): number {
+    ethUsd: number, liquidityNative: number | null, creatorBal: number | null = null, plans: readonly string[] = SHADOW_EXIT_PLANS): number {
     const { cfg } = this.d;
     if (!(price > 0) || !(ethUsd > 0)) return 0;
     const sizeNative = sizeUsd / ethUsd;
@@ -128,7 +128,7 @@ export class DecisionEngine {
     const ins = this.d.db.prepare(`INSERT OR IGNORE INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, peak_price_native, gas_usd, creator_balance_at_entry, liquidity_at_entry, next_check_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,'pre_tp1',?,?,?,?,?)`);
     let n = 0;
-    for (const plan of SHADOW_EXIT_PLANS) n += ins.run(t.id, t.chain, arm, plan, windowSec, nowMs(), price, sizeUsd, sizeNative, tokens, tokens, price, c.gasUsd, creatorBal, liquidityNative, nowMs()).changes;
+    for (const plan of plans) n += ins.run(t.id, t.chain, arm, plan, windowSec, nowMs(), price, sizeUsd, sizeNative, tokens, tokens, price, c.gasUsd, creatorBal, liquidityNative, nowMs()).changes;
     return n;
   }
 
