@@ -108,6 +108,7 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
     </div>
     <div class="pills">
       <span class="pill"><span class="dot" id="live-dot"></span><b id="upd">–</b></span>
+      <button class="pill btn" id="refresh" title="Frissítés most">🔄 frissítés</button>
       <span class="pill">mód <b id="mode">–</b></span>
       <span class="pill">élő kar <b id="livearm">–</b></span>
       <span class="pill">belépő <b id="size">–</b></span>
@@ -315,16 +316,22 @@ function renderFeed(rows) {
   }
 }
 
-async function refresh() {
+let busy = false;
+async function refresh(fresh = false) {
+  if (busy) return;
+  busy = true; const btn = $("refresh"); btn.disabled = true; btn.textContent = "⏳ frissítés…";
   try {
-    const [s, p, f, w] = await Promise.all([api("/api/summary"), api("/api/positions"), api("/api/feed"), api("/api/winners")]);
-    renderSummary(s); renderPositions(p); renderFeed(f); renderWinners(w);
-    $("upd").textContent = `élő · ${hhmm(Date.now())}`; $("live-dot").classList.remove("off");
+    const d = await fetch("/api/all" + (fresh ? "?fresh=1" : "") + (token ? `${fresh ? "&" : "?"}t=${encodeURIComponent(token)}` : ""), { cache: "no-store" })
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+    renderSummary(d.summary); renderPositions(d.positions); renderFeed(d.feed); renderWinners(d.winners);
+    const age = Math.max(0, Math.round((Date.now() - d.computedAt) / 1000));
+    $("upd").textContent = `adat ${hhmm(d.computedAt)}${age > 5 ? ` (${age} mp)` : ""}`; $("live-dot").classList.remove("off");
   } catch (e) {
     if (String(e.message) === "401") { location.href = "/login"; return; }
     $("upd").textContent = "nincs kapcsolat"; $("live-dot").classList.add("off");
-  }
+  } finally { busy = false; btn.disabled = false; btn.textContent = "🔄 frissítés"; }
 }
+$("refresh").addEventListener("click", () => refresh(true));
 const post = (u, b) => fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }).then(async (r) => ({ ok: r.ok, j: await r.json().catch(() => ({})) }));
 async function authState() {
   try {
@@ -343,7 +350,7 @@ $("pk-add").onclick = async () => {
 };
 $("logout").onclick = async () => { await post("/auth/logout"); location.href = "/login"; };
 authState();
-refresh(); setInterval(refresh, 10_000);
+refresh(); setInterval(() => refresh(false), 30_000);
 </script>
 </body>
 </html>

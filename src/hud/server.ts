@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
-import { hudSummary, hudPositions, hudFeed, hudWinners } from "./data.js";
+import { Worker } from "node:worker_threads";
 import { HudAuth, CSP } from "./auth.js";
 import { log } from "../logger.js";
 
@@ -12,9 +12,35 @@ import { log } from "../logger.js";
  * Beléptetés: jelszó (HUD_PASSWORD_HASH) → passkey (lásd auth.ts). Titkot nem ad ki (a tárcának csak az egyenlegét).
  * Nyilvános elérés: Cloudflare Tunnel (tradehud.zentopia.hu) – ilyenkor `hud.host: 127.0.0.1`.
  */
+/** A HUD adatai a külön szálból, gyorsítótárazva: legfeljebb CACHE_MS-enként egy számítás, a „friss” kérés MIN_FRESH_MS után. */
+const CACHE_MS = 30_000, MIN_FRESH_MS = 5_000;
+type HudData = { summary: unknown; positions: unknown; feed: unknown; winners: unknown; computedAt: number; tookMs: number };
+class HudData_ {
+  private w: Worker; private seq = 0; private pending = new Map<number, (r: { data?: HudData; error?: string }) => void>();
+  private last: HudData | null = null; private inflight: Promise<HudData> | null = null;
+  constructor(dbPath: string, cfg: Config) {
+    const ts = import.meta.url.endsWith(".ts");
+    this.w = new Worker(new URL(ts ? "./worker.ts" : "./worker.js", import.meta.url), { workerData: { dbPath, cfg } });
+    this.w.on("message", (m: { id: number; data?: HudData; error?: string }) => { this.pending.get(m.id)?.(m); this.pending.delete(m.id); });
+    this.w.on("error", (e: Error) => log.warn("HUD-szál hiba", { error: e.message.slice(0, 160) }));
+    this.w.unref();
+  }
+  get(fresh: boolean): Promise<HudData> {
+    const age = this.last ? Date.now() - this.last.computedAt : Infinity;
+    if (this.last && (age < MIN_FRESH_MS || (!fresh && age < CACHE_MS))) return Promise.resolve(this.last);
+    if (this.inflight) return this.inflight;
+    const id = ++this.seq;
+    this.inflight = new Promise<HudData>((resolve, reject) => this.pending.set(id, (r) => (r.data ? resolve(r.data) : reject(new Error(r.error ?? "HUD-szál hiba")))))
+      .then((d) => { this.last = d; return d; }).finally(() => { this.inflight = null; });
+    this.w.postMessage({ id });
+    return this.inflight;
+  }
+  close() { void this.w.terminate(); }
+}
+
 export function startHud(o: { db: DB; cfg: Config; port: number; host: string; token?: string; passwordHash?: string }): http.Server {
   const page = path.join(import.meta.dirname, "index.html");
-  const since = () => Date.parse(`${o.cfg.alerts.since}T00:00:00Z`);
+  const data = new HudData_(path.resolve(o.cfg.db.path), o.cfg);
   const auth = new HudAuth({ db: o.db, passwordHash: o.passwordHash, passwordLogin: o.cfg.hud.password_login, origins: o.cfg.hud.origins, legacyToken: o.token });
   if (!o.passwordHash && !o.token) log.warn("HUD: nincs HUD_PASSWORD_HASH (npm run hud:jelszo) – belépni csak meglévő passkey-vel lehet");
   const srv = http.createServer((req, res) => {
@@ -28,10 +54,9 @@ export function startHud(o: { db: DB; cfg: Config; port: number; host: string; t
           res.writeHead(302, { location: "/login" }); res.end(); return;
         }
         const json = (x: unknown) => { res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(x)); };
-        if (url.pathname === "/api/summary") return json(hudSummary(o.db, o.cfg, since()));
-        if (url.pathname === "/api/positions") return json(hudPositions(o.db, o.cfg, since()));
-        if (url.pathname === "/api/feed") return json(hudFeed(o.db, o.cfg, since()));
-        if (url.pathname === "/api/winners") return json(hudWinners(o.db, o.cfg, since()));
+        if (url.pathname === "/api/all") return json(await data.get(url.searchParams.get("fresh") === "1"));
+        const one = { "/api/summary": "summary", "/api/positions": "positions", "/api/feed": "feed", "/api/winners": "winners" }[url.pathname] as keyof HudData | undefined;
+        if (one) return json((await data.get(false))[one]);
         if (url.pathname === "/" || url.pathname === "/index.html") {
           res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": CSP });
           res.end(fs.readFileSync(page)); return;
@@ -40,6 +65,7 @@ export function startHud(o: { db: DB; cfg: Config; port: number; host: string; t
       } catch (e) { log.warn("HUD hiba", { error: (e as Error).message.slice(0, 160) }); if (!res.headersSent) res.writeHead(500); res.end(); }
     })();
   });
+  srv.on("close", () => data.close());
   srv.listen(o.port, o.host, () => log.info(`HUD fut: http://${o.host === "0.0.0.0" ? "<mini-IP>" : o.host}:${o.port}`));
   return srv;
 }

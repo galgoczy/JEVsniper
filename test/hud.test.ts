@@ -7,8 +7,8 @@ import { startHud } from "../src/hud/server.js";
 
 const cfg = loadConfig("config.yaml");
 
-function seed() {
-  const db = openDb(":memory:");
+function seed(file = ":memory:") {
+  const db = openDb(file);
   const w = cfg.evaluation.live_window_sec, now = Date.parse("2026-10-04T12:00:00Z");
   const tok = db.prepare("INSERT INTO tokens(id, chain, address, creator, launchpad, mechanics, discovered_at, symbol) VALUES (?,?,?,?,?,?,?,?)");
   const pos = db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason, net_pnl_usd, last_price_native, peak_price_native)
@@ -41,9 +41,11 @@ test("HUD adatok: élő kar Base-eredménye, nyitott pozíciók tokenenként, k�
 });
 
 test("HUD szerver: belépés nélkül 401 / átirányítás; jelszóval munkamenet; hibás jelszónál korlát; passkey csak az engedélyezett eredeten", async () => {
-  const { db } = seed();
+  const fs = await import("node:fs"), os = await import("node:os"), path = await import("node:path");
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "hud-")), "t.db");
+  const { db } = seed(file);                                    // a HUD-szál ezt a fájlt olvassa (csak olvasó kapcsolattal)
   const { hashPassword } = await import("../src/hud/auth.js");
-  const c2 = { ...cfg, hud: { ...cfg.hud, origins: ["https://tradehud.zentopia.hu"] } };
+  const c2 = { ...cfg, db: { ...cfg.db, path: file }, hud: { ...cfg.hud, origins: ["https://tradehud.zentopia.hu"] } };
   const srv = startHud({ db, cfg: c2, port: 0, host: "127.0.0.1", passwordHash: hashPassword("helyes-jelszo-123") });
   await new Promise((r) => srv.once("listening", r));
   const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
@@ -60,6 +62,9 @@ test("HUD szerver: belépés nélkül 401 / átirányítás; jelszóval munkamen
   const cookie = ok.headers.get("set-cookie")!.split(";")[0]!; assert.match(ok.headers.get("set-cookie")!, /HttpOnly; SameSite=Strict/);
   assert.ok(!/helyes-jelszo/.test(JSON.stringify(db.prepare("SELECT * FROM hud_sessions").all())));    // a jelszó nem kerül a DB-be
   const s = await fetch(`${base}/api/summary`, { headers: { cookie } }); assert.equal(s.status, 200); assert.equal((await s.json() as { mode: string }).mode, cfg.mode);
+  const all = await fetch(`${base}/api/all?fresh=1`, { headers: { cookie } }); assert.equal(all.status, 200);
+  const aj = await all.json() as { summary: { mode: string }; feed: unknown[]; computedAt: number };
+  assert.equal(aj.summary.mode, cfg.mode); assert.ok(Array.isArray(aj.feed) && aj.feed.length > 0); assert.ok(aj.computedAt > 0);
   // https-eredetről (Cloudflare mögül) a passkey-kihívás belépve kérhető
   const reg = await post("/auth/passkey/register/options", {}, { cookie, "x-forwarded-proto": "https", "x-forwarded-host": "tradehud.zentopia.hu" });
   assert.equal(reg.status, 200); assert.equal(((await reg.json()) as { rp: { id: string } }).rp.id, "tradehud.zentopia.hu");

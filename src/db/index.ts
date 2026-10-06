@@ -49,6 +49,9 @@ function migrate(db: DB) {
 export function openDb(file: string): DB {
   fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   const db = new Database(file);
+  // WAL (2026-10-06): az olvasók (HUD-szál, riportok) ne blokkolják a bot írásait, és fordítva
+  if (file !== ":memory:") db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
   const schemaPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "schema.sql");
   db.exec(fs.readFileSync(schemaPath, "utf8"));
   migrate(db);

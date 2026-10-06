@@ -213,6 +213,10 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_tokens_status ON tokens(status);
 CREATE INDEX IF NOT EXISTS idx_tokens_bytecode ON tokens(bytecode_hash);
 CREATE INDEX IF NOT EXISTS idx_positions_open ON positions(phase) WHERE closed_at IS NULL;
+-- 2026-10-06: karonkénti lekérdezések (HUD, /allas, riport) a 750 ezres táblán
+CREATE INDEX IF NOT EXISTS idx_positions_arm ON positions(arm, window_sec, exit_plan, chain, opened_at);
+CREATE INDEX IF NOT EXISTS idx_positions_plan_opened ON positions(exit_plan, opened_at);
+CREATE INDEX IF NOT EXISTS idx_fills_position ON fills(position_id, kind);
 CREATE INDEX IF NOT EXISTS idx_jev_calls_at ON jev_calls(called_at);
 CREATE INDEX IF NOT EXISTS idx_decisions_token ON decisions(token_id, arm);
 
