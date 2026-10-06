@@ -267,6 +267,8 @@ async function main() {
     db.close();
     process.exit(0);
   };
+  // 2026-10-06: egy háttérfeladat kezeletlen (pl. RPC 403) hibája ne állítsa le az egész botot – naplózzuk
+  process.on("unhandledRejection", (e) => log.warn("Kezeletlen aszinkron hiba (a bot fut tovább)", { error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }));
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 

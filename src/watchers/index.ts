@@ -47,7 +47,13 @@ export class ChainWatcher {
 
   async start(): Promise<void> {
     this.stopped = false;
-    const head = await this.client.getBlockNumber();
+    // 2026-10-06: induláskor az RPC átmenetileg tilthat (Cloudflare 403) – újrapróbálás, nem leállás
+    let head: bigint | null = null;
+    while (head === null && !this.stopped) {
+      head = await this.client.getBlockNumber().catch((e) => { log.warn(`Watcher indulás: RPC hiba (${this.chain}), újrapróbálás`, { error: (e as Error).message.slice(0, 120) }); return null; });
+      if (head === null) await new Promise((r) => setTimeout(r, Math.max(this.opts.pollIntervalMs, 10_000)));
+    }
+    if (head === null) return;
     const stored = this.loadLastBlock();
     let last: bigint = stored === null || head - stored > BigInt(this.opts.maxBlockRange) * 10n ? head - 1n : stored; // ne dolgozzunk fel órákat visszamenőleg
     log.info(`Watcher indul: ${this.chain}`, { from: last.toString(), sources: this.sourceKeys });
