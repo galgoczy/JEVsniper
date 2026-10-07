@@ -24,7 +24,8 @@ const PAIR_ABI = parseAbi([
 ]);
 const SNAP_LATE_SEC = 90; // ennyivel az ablak után már nem írunk pillanatképet (az utólagos „60 mp-es” állapot hamis)
 const WINDOWS = [30, 60, 180, 600, 1800];
-const CHUNK = 100n, MAX_CATCHUP = 8000n, BLOCK_SEC = 0.45, ADDR_BATCH = 100;
+// ADDR_BATCH: a publicnode BSC-végpont 2026-10-07 óta legfeljebb 9 címet fogad egy getLogs-ban (10+ → „Invalid parameters”)
+const CHUNK = 100n, MAX_CATCHUP = 8000n, BLOCK_SEC = 0.45, ADDR_BATCH = 8, ADDR_PARALLEL = 4;
 const TRADES_UNTIL_SEC = 1800, TRADES_CAP = 500, OUTCOME_HOURS = 24, OUTCOME_EVERY_MS = 5 * 60_000;
 const SHELL_HOURS = 6, SHELL_CHECK_MS = 20_000;
 interface Shell { pair: string; token: string; wbnbIs0: boolean; createdBlock: bigint; createdAt: number; zeroAtBlock: bigint }
@@ -43,6 +44,7 @@ export class PancakeRecorder {
   private lastOutcome = 0;
   private shells = new Map<string, Shell>();
   private lastShellCheck = 0;
+  private failStreak = 0;
   stats = { lateSnaps: 0, shells: 0, pairs: 0, trades: 0, snapshots: 0, errors: 0, tracked: 0, waiting: 0, lastBlock: 0n };
   constructor(private d: { db: DB; rpcUrl?: string; pollMs?: number; client?: PublicClient; now?: () => number; onEvent?: (e: import("./shadow.js").PairEvent) => void; onStep?: () => Promise<void> }) {
     this.c = d.client ?? (createPublicClient({ chain: bsc, transport: http((d.rpcUrl ?? BNB_DEFAULT_RPC).split(",")[0]!.trim(), { timeout: 15_000, retryCount: 1 }) }) as PublicClient);
@@ -81,10 +83,13 @@ export class PancakeRecorder {
         const created = await this.c.getLogs({ address: BNB.pancakeV2Factory, event: uniswapV2FactoryAbi[0], fromBlock: f, toBlock: to });
         await this.onPairsCreated(created, head, nowMs);
         const young = [...this.pairs.values()].filter((p) => nowMs - p.createdAt <= TRADES_UNTIL_SEC * 1000 + 60_000).map((p) => p.pair as `0x${string}`);
-        for (let i = 0; i < young.length; i += ADDR_BATCH) {
-          const logs = await this.c.getLogs({ address: young.slice(i, i + ADDR_BATCH), events: PAIR_ABI.filter((x) => x.type === "event"), fromBlock: f, toBlock: to });
-          this.ingestPairLogs(logs, head, nowMs);
-        }
+        const batches: Array<`0x${string}`[]> = [];
+        for (let i = 0; i < young.length; i += ADDR_BATCH) batches.push(young.slice(i, i + ADDR_BATCH));
+        const all: Log[] = [];
+        for (let i = 0; i < batches.length; i += ADDR_PARALLEL)
+          for (const logs of await Promise.all(batches.slice(i, i + ADDR_PARALLEL).map((b) => this.c.getLogs({ address: b, events: PAIR_ABI.filter((x) => x.type === "event"), fromBlock: f, toBlock: to })))) all.push(...logs);
+        all.sort((a, b) => Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n)) || (a.logIndex ?? 0) - (b.logIndex ?? 0)); // a Sync→Swap sorrend számít
+        this.ingestPairLogs(all, head, nowMs);
         db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('pcs_last_block', ?)").run(to.toString());
         this.stats.lastBlock = to;
         // 2026-10-07: az árnyékkarok ne a (visszaolvasáskor akár 20 perces) kör végén lépjenek, hanem minden adag után – csak a láncfej közelében
@@ -94,7 +99,13 @@ export class PancakeRecorder {
       this.flush();
       if (nowMs - this.lastOutcome >= OUTCOME_EVERY_MS) { this.lastOutcome = nowMs; await this.refreshOutcomes(); }
       if (this.d.onStep) await this.d.onStep().catch((e) => log.debug("BNB árnyék hiba", { error: (e as Error).message.slice(0, 160) }));
-    } catch (e) { this.stats.errors++; log.debug("PancakeSwap felvevő hiba", { error: (e as Error).message.slice(0, 160) }); }
+      this.failStreak = 0;
+    } catch (e) {
+      this.stats.errors++; this.failStreak++;
+      // 2026-10-07: a csendes elakadás (pl. RPC-korlát) látszódjon: 12 egymás utáni hibás kör (~1 perc) után figyelmeztetés, utána 10 percenként
+      if (this.failStreak === 12 || (this.failStreak > 12 && this.failStreak % 120 === 0)) log.warn("PancakeSwap felvevő elakadt", { hibák_egymás_után: this.failStreak, error: (e as Error).message.slice(0, 160) });
+      else log.debug("PancakeSwap felvevő hiba", { error: (e as Error).message.slice(0, 160) });
+    }
     finally { this.busy = false; }
   }
 
