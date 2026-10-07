@@ -55,6 +55,7 @@ export function ammEventsFromLogs(logs: string[]): AmmEvent[] {
   return out;
 }
 
+const SNAP_LATE_SEC = 90; // ennyivel az ablak után már nem írunk pillanatképet (az utólagos „60 mp-es” állapot hamis)
 const WINDOWS = [60, 300, 900, 3600], REF_WINDOW = 300, TRADES_UNTIL_SEC = 6 * 3600, TRADES_CAP = 3000, OUTCOME_HOURS = 24;
 interface Pool {
   pool: string; createdAt: number; baseDec: number; quoteDec: number;
@@ -68,7 +69,7 @@ export class SolAmmRecorder {
   private stopped = false;
   private pools = new Map<string, Pool>();
   private lastMigrateAt = 0;
-  stats = { msgs: 0, pools: 0, fromMigrate: 0, trades: 0, snapshots: 0, reconnects: 0, errors: 0, tracked: 0 };
+  stats = { lateSnaps: 0, msgs: 0, pools: 0, fromMigrate: 0, trades: 0, snapshots: 0, reconnects: 0, errors: 0, tracked: 0 };
   constructor(private d: { db: DB; wsUrl?: string; now?: () => number }) {}
   private now() { return (this.d.now ?? Date.now)(); }
 
@@ -143,6 +144,7 @@ export class SolAmmRecorder {
         for (const w of WINDOWS) {
           if (age < w || p.snapsDone.has(w)) continue;
           p.snapsDone.add(w);
+          if (age > w + SNAP_LATE_SEC) { this.stats.lateSnaps++; continue; } // késve észlelt entitás: utólagos pillanatkép nem íródik (2026-10-07)
           insSnap.run(p.pool, w, now, p.buys, p.sells, p.buyers.size, p.quoteIn, p.quoteOut, p.price, p.poolQuote, p.lastTradeAt ? Math.round((now - p.lastTradeAt) / 1000) : null); this.stats.snapshots++;
           if (w === REF_WINDOW) { p.refPrice = p.price > 0 ? p.price : null; p.maxX = 1; p.minX = 1; p.minPoolQuote = p.poolQuote; }
         }

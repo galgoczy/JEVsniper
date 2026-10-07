@@ -22,6 +22,7 @@ const PAIR_ABI = parseAbi([
   "event Sync(uint112 reserve0, uint112 reserve1)",
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
 ]);
+const SNAP_LATE_SEC = 90; // ennyivel az ablak után már nem írunk pillanatképet (az utólagos „60 mp-es” állapot hamis)
 const WINDOWS = [30, 60, 180, 600, 1800];
 const CHUNK = 100n, MAX_CATCHUP = 8000n, BLOCK_SEC = 0.45, ADDR_BATCH = 100;
 const TRADES_UNTIL_SEC = 1800, TRADES_CAP = 500, OUTCOME_HOURS = 24, OUTCOME_EVERY_MS = 5 * 60_000;
@@ -42,7 +43,7 @@ export class PancakeRecorder {
   private lastOutcome = 0;
   private shells = new Map<string, Shell>();
   private lastShellCheck = 0;
-  stats = { shells: 0, pairs: 0, trades: 0, snapshots: 0, errors: 0, tracked: 0, waiting: 0, lastBlock: 0n };
+  stats = { lateSnaps: 0, shells: 0, pairs: 0, trades: 0, snapshots: 0, errors: 0, tracked: 0, waiting: 0, lastBlock: 0n };
   constructor(private d: { db: DB; rpcUrl?: string; pollMs?: number; client?: PublicClient; now?: () => number }) {
     this.c = d.client ?? (createPublicClient({ chain: bsc, transport: http((d.rpcUrl ?? BNB_DEFAULT_RPC).split(",")[0]!.trim(), { timeout: 15_000, retryCount: 1 }) }) as PublicClient);
   }
@@ -177,6 +178,7 @@ export class PancakeRecorder {
         for (const w of WINDOWS) {
           if (age < w || p.snapsDone.has(w)) continue;
           p.snapsDone.add(w);
+          if (age > w + SNAP_LATE_SEC) { this.stats.lateSnaps++; continue; } // késve észlelt entitás: utólagos pillanatkép nem íródik (2026-10-07)
           insSnap.run(p.pair, w, now, p.buys, p.sells, p.buyers.size, p.bnbIn, p.bnbOut, p.price, p.liq); this.stats.snapshots++;
           if (w === 60) { p.refPrice = p.price > 0 ? p.price : null; p.maxX = 1; p.minX = 1; p.minLiq = p.liq; }
         }

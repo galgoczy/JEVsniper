@@ -14,28 +14,38 @@ export const SOL_COST: SolCost = { fee_pct: 1.25, mev_pct: 0.3, tx_sol: 0.0001 }
 export interface PricePoint { at: number; price: number }
 export interface ReplayResult { net: number; reason: string; openAtEnd: boolean; peakX: number }
 
-export function replayPosition(entryPrice: number, entryAt: number, path: PricePoint[], plan: string, sizeSol: number, cfg: Config, cost: SolCost = SOL_COST): ReplayResult {
+export function replayPosition(entryPrice: number, entryAt: number, path: PricePoint[], plan: string, sizeSol: number, cfg: Config, cost: SolCost = SOL_COST, opts: { exitLatencyMs?: number } = {}): ReplayResult {
   const sideCost = (cost.fee_pct + cost.mev_pct) / 100;
   const tokens = (sizeSol * (1 - sideCost)) / entryPrice;
   let received = 0, txs = 1;
   const st: PosState = { exit_plan: plan, phase: "pre_tp1", entry_price: entryPrice, peak_price: entryPrice, tokens_bought: tokens, tokens_remaining: tokens, opened_at: entryAt, stages_done: 0 };
   let reason = "";
+  // kiszállási késés (2026-10-07): a jelző kötés után legalább `exitLatencyMs`-sel későbbi első kötés árán teljesül az eladás
+  // (ha nincs ilyen, az útvonal utolsó árán) – a tüskét átlépő kötésen eladni nem lehet
+  const lat = opts.exitLatencyMs ?? 0;
+  const fillIdx = (i: number) => { if (!lat) return i; for (let j = i + 1; j < path.length; j++) if (path[j]!.at >= path[i]!.at + lat) return j; return path.length - 1; };
+  const sellAt = (i: number, amount: number) => { const j = fillIdx(i); received += amount * path[j]!.price * (1 - sideCost); txs++; st.tokens_remaining -= amount; return j; };
   // gyors „scalp” terv (csak visszajátszás, 2026-10-05): tp<X>_sl<Y> – teljes eladás X-szeresnél vagy Y%-os esésnél
   const scalp = /^tp([\d.]+)_sl(\d+)$/.exec(plan);
-  if (scalp) {
-    const tp = Number(scalp[1]), sl = Number(scalp[2]) / 100;
-    for (const p of path) {
-      if (p.at <= entryAt || !(p.price > 0)) continue;
-      st.peak_price = Math.max(st.peak_price, p.price);
-      if (p.price >= entryPrice * tp || p.price <= entryPrice * (1 - sl)) {
-        received += st.tokens_remaining * p.price * (1 - sideCost); st.tokens_remaining = 0; txs++;
-        reason = p.price >= entryPrice * tp ? `tp_${tp}x` : `sl_-${Math.round(sl * 100)}%`; break;
-      }
-    }
-  } else
-  for (const p of path) {
+  // tiszta követő stop (2026-10-07): tr<N> – nincs cél, minden eladva, ha az ár a csúcstól N%-ot esett (a csúcs induláskor a belépési ár)
+  const trail = /^tr(\d+)$/.exec(plan);
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i]!;
     if (p.at <= entryAt || !(p.price > 0)) continue;
     st.peak_price = Math.max(st.peak_price, p.price);
+    if (trail) {
+      const tr = Number(trail[1]) / 100;
+      if (p.price <= st.peak_price * (1 - tr)) { sellAt(i, st.tokens_remaining); st.tokens_remaining = 0; reason = `trail_-${trail[1]}%`; break; }
+      continue;
+    }
+    if (scalp) {
+      const tp = Number(scalp[1]), sl = Number(scalp[2]) / 100;
+      if (p.price >= entryPrice * tp || p.price <= entryPrice * (1 - sl)) {
+        reason = p.price >= entryPrice * tp ? `tp_${tp}x` : `sl_-${Math.round(sl * 100)}%`;
+        sellAt(i, st.tokens_remaining); st.tokens_remaining = 0; break;
+      }
+      continue;
+    }
     let sell = 0, closeAll = false;
     if (p.price <= entryPrice * (1 - cfg.emergency.price_drop_pct / 100)) { sell = st.tokens_remaining; closeAll = true; reason = `emergency:price_drop_-${cfg.emergency.price_drop_pct}%`; }
     else {
@@ -43,9 +53,9 @@ export function replayPosition(entryPrice: number, entryAt: number, path: PriceP
       if (a) { sell = Math.min(a.sellTokens, st.tokens_remaining); closeAll = a.closeAll; st.phase = a.phase; reason = a.reason; }
     }
     if (sell > 0) {
-      received += sell * p.price * (1 - sideCost); txs++;
-      st.tokens_remaining -= sell; st.stages_done++;
+      const j = sellAt(i, sell); st.stages_done++;
       if (closeAll || st.tokens_remaining <= 1e-12) { st.tokens_remaining = 0; break; }
+      i = j;
     }
   }
   const last = path.length ? path[path.length - 1]!.price : entryPrice;

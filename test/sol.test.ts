@@ -144,8 +144,9 @@ test("SOL felvevő: túlélő (görbe ≥10% 30 percnél) kötései 30 perc utá
   const rec = new SolRecorder({ db, now: () => now, fetchFn: (async () => ({ json: async () => ({}) })) as unknown as typeof fetch });
   rec.ingest(eventsFromLogs([create(T0)]), "a");
   rec.ingest(eventsFromLogs([trade(T0 + 10, BUYER1, true, 10n ** 9n, 40_000_000_000n, 804_000_000_000_000n, 524_100_000_000_000n)]), "b"); // ~34% haladás
+  now = (T0 + 61) * 1000; rec.flush();   // 60 mp-es referencia időben (a késve észlelt tokennek nem lenne; 2026-10-07)
   now = (T0 + 1801) * 1000; rec.flush();
-  assert.equal(rec.stats.survivors, 1);
+  assert.equal(rec.stats.survivors, 1); assert.ok(rec.stats.lateSnaps >= 2); // a 180/600 mp-es ablak már késő: nem íródik
   rec.ingest(eventsFromLogs([trade(T0 + 3000, BUYER2, true, 10n ** 9n, 80_000_000_000n, 402_000_000_000_000n, 122_100_000_000_000n)]), "c"); // 50 perc: ár duplázódik
   assert.equal((db.prepare("SELECT count(*) n FROM sol_trades WHERE at > ?").get((T0 + 1800) * 1000) as { n: number }).n, 1);
   now = (T0 + 3300) * 1000; rec.flush(); // a kimenet 5 percenként íródik (age % 300 < 5)
@@ -165,4 +166,26 @@ test("PumpSwap AMM: a görbe-felvevő migrációs eseményéből is felvesz pool
   assert.deepEqual(pools.map((p) => p.pool), ["P1", "P3", "P4"]); // P2 USDC-quote → kimarad; P3 ismeretlen, P4 nulla pubkey (= SOL-pár) → felvéve
   assert.equal(rec.stats.fromMigrate, 3);
   db.close();
+});
+
+test("visszajátszás: tr40 tiszta követő stop – a csúcstól −40%-nál ad el, cél nélkül", async () => {
+  const { replayPosition } = await import("../src/sol/replay.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml");
+  const path = [{ at: 1, price: 2 }, { at: 2, price: 5 }, { at: 3, price: 3.1 }, { at: 4, price: 2.9 }, { at: 5, price: 1 }];
+  const r = replayPosition(1, 0, path, "tr40", 1, cfg, { fee_pct: 0, mev_pct: 0, tx_sol: 0 });
+  assert.equal(r.reason, "trail_-40%");
+  assert.ok(Math.abs(r.net - 1.9) < 1e-9, `net ${r.net}`); // 2,9-en adott el (5 × 0,6 = 3 alatt az első kötés)
+  assert.equal(r.peakX, 5);
+});
+
+test("visszajátszás: kiszállási késés – a jelző kötés után legalább 2 mp-cel későbbi kötés árán teljesül", async () => {
+  const { replayPosition } = await import("../src/sol/replay.js");
+  const { loadConfig } = await import("../src/config.js");
+  const cfg = loadConfig("config.yaml");
+  const path = [{ at: 1000, price: 1.2 }, { at: 2000, price: 2.5 }, { at: 2500, price: 2.4 }, { at: 4000, price: 1.3 }, { at: 9000, price: 1.3 }];
+  const noLat = replayPosition(1, 0, path, "tp2_sl40", 1, cfg, { fee_pct: 0, mev_pct: 0, tx_sol: 0 });
+  assert.ok(Math.abs(noLat.net - 1.5) < 1e-9);                       // a tüskén (2,5) adott el
+  const lat = replayPosition(1, 0, path, "tp2_sl40", 1, cfg, { fee_pct: 0, mev_pct: 0, tx_sol: 0 }, { exitLatencyMs: 2000 });
+  assert.ok(Math.abs(lat.net - 0.3) < 1e-9, `net ${lat.net}`);        // 2 mp-cel később az ár már 1,3
 });

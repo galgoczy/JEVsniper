@@ -13,6 +13,7 @@ import { PUMP_PROGRAM, SOL_DEFAULT_WS, SOL_ZERO_PUBKEY, curvePrice, curveProgres
  */
 export interface SolRecorderDeps { db: DB; wsUrl?: string; now?: () => number; fetchFn?: typeof fetch }
 
+const SNAP_LATE_SEC = 90; // ennyivel az ablak után már nem írunk pillanatképet (az utólagos „60 mp-es” állapot hamis)
 const WINDOWS = [30, 60, 180, 600, 1800];
 const TRADES_UNTIL_SEC = 1800, TRADES_CAP = 500, OUTCOME_HOURS = 24;
 // Túlélők (2026-10-05): ha a 30 perces pillanatképnél a görbe-haladás ≥ SURVIVOR_MIN_PROGRESS, a kötéseket 6 óráig (vagy a
@@ -35,7 +36,7 @@ export class SolRecorder {
   private stopped = false;
   private tracks = new Map<string, Track>();
   private lastPx = 0;
-  stats = { msgs: 0, tokens: 0, trades: 0, snapshots: 0, completes: 0, migrations: 0, reconnects: 0, errors: 0, tracked: 0, survivors: 0 };
+  stats = { lateSnaps: 0, msgs: 0, tokens: 0, trades: 0, snapshots: 0, completes: 0, migrations: 0, reconnects: 0, errors: 0, tracked: 0, survivors: 0 };
   constructor(private d: SolRecorderDeps) {}
   private now() { return (this.d.now ?? Date.now)(); }
 
@@ -135,6 +136,7 @@ export class SolRecorder {
         for (const w of WINDOWS) {
           if (age < w || t.snapsDone.has(w)) continue;
           t.snapsDone.add(w);
+          if (age > w + SNAP_LATE_SEC) { this.stats.lateSnaps++; continue; } // késve észlelt entitás: utólagos pillanatkép nem íródik (2026-10-07)
           insSnap.run(t.mint, w, now, t.buys, t.sells, t.buyers.size, t.solIn, t.solOut, t.largestBuySol, t.price, t.progress, t.creatorSold ? 1 : 0, t.creatorBought ? 1 : 0, t.lastTradeAt ? Math.round((now - t.lastTradeAt) / 1000) : null);
           this.stats.snapshots++;
           if (w === REF_WINDOW) { t.refPrice = t.price > 0 ? t.price : null; t.maxX = 1; t.minX = 1; }
