@@ -381,3 +381,19 @@ CREATE TABLE IF NOT EXISTS bnb_shadow_positions (
 CREATE INDEX IF NOT EXISTS idx_bnb_shadow_open ON bnb_shadow_positions(closed_at);
 -- jelzések, amelyeknél NEM nyílt pozíció (honeypot-próba, hiba) – a szűrés hatásának méréséhez
 CREATE TABLE IF NOT EXISTS bnb_shadow_skips (pair TEXT NOT NULL, arm TEXT NOT NULL, at INTEGER NOT NULL, reason TEXT NOT NULL, PRIMARY KEY (pair, arm));
+
+-- 2026-10-07: BNB / PancakeSwap ÉLŐ pozíciók és tranzakciók (külön a positions-tól: ott a token a tokens táblához kötött)
+CREATE TABLE IF NOT EXISTS bnb_live_positions (
+  id INTEGER PRIMARY KEY,
+  pair TEXT NOT NULL, token TEXT NOT NULL, arm TEXT NOT NULL,
+  signal_at INTEGER NOT NULL, opened_at INTEGER NOT NULL,
+  spent_bnb REAL NOT NULL, spent_usd REAL NOT NULL, tokens REAL NOT NULL, tokens_left REAL NOT NULL,
+  entry_price REAL NOT NULL, quoted_price REAL, liq_at_entry REAL, approved INTEGER NOT NULL DEFAULT 0,
+  received_bnb REAL NOT NULL DEFAULT 0, gas_bnb REAL NOT NULL DEFAULT 0, peak_price REAL, last_price REAL,
+  phase TEXT NOT NULL DEFAULT 'open', closed_at INTEGER, close_reason TEXT, net_usd REAL, sell_attempts INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS bnb_live_fills (
+  id INTEGER PRIMARY KEY,
+  position_id INTEGER REFERENCES bnb_live_positions(id),
+  kind TEXT NOT NULL, at INTEGER NOT NULL, tx_hash TEXT, status TEXT NOT NULL, gas_bnb REAL, bnb REAL, tokens REAL, price REAL, latency_ms INTEGER, error TEXT
+);

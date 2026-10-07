@@ -187,6 +187,23 @@ export const ConfigSchema = z.object({
     enabled: z.boolean().default(true),
     delay_min: z.number().positive().default(15),
   }).default({ enabled: true, delay_min: 15 }),
+  // BNB / PancakeSwap ÉLŐ kereskedés (2026-10-07): a BNB árnyékkarok egyikének jelzéseire valódi vétel/eladás BSC-n, ugyanazzal a tárcával.
+  // Csak `mode: live` ÉS `bnb_live.enabled: true` mellett küld tranzakciót; dry_run-ban csak „BELÉPNE” jelzés. Élesítésről csak a felhasználó dönt.
+  bnb_live: z.object({
+    enabled: z.boolean().default(false),
+    arm: z.enum(["bnb_whale", "bnb_all60"]).default("bnb_whale"),
+    position_usd: z.number().positive().default(1.5),
+    max_open: z.number().int().positive().default(4),
+    daily_loss_limit_usd: z.number().positive().default(5),
+    max_consecutive_failed: z.number().int().positive().default(3),
+    buy_slippage_pct: z.number().positive().default(12),      // az indítási pumpa gyors – a minOut ennyivel a jegyzett alatt
+    sell_slippage_pct: z.number().positive().default(15),
+    panic_slippage_pct: z.number().positive().default(40),
+    gas_gwei: z.number().positive().default(0.2),              // BSC: a 0,05 gwei-s alap fölött → előrébb a blokkban (~0,03 USD/tx)
+    max_gas_usd_per_tx: z.number().positive().default(0.15),
+    gas_reserve_bnb: z.number().positive().default(0.003),     // ennyi BNB mindig maradjon gázra
+    min_liq_bnb: z.number().positive().default(3),             // sekély pár: nincs vétel
+  }).default({ enabled: false, arm: "bnb_whale", position_usd: 1.5, max_open: 4, daily_loss_limit_usd: 5, max_consecutive_failed: 3, buy_slippage_pct: 12, sell_slippage_pct: 15, panic_slippage_pct: 40, gas_gwei: 0.2, max_gas_usd_per_tx: 0.15, gas_reserve_bnb: 0.003, min_liq_bnb: 3 }),
   // Futás közbeni figyelő: állapotváltás-riasztások (csak jelez, a szabályokon nem változtat)
   alerts: z.object({
     enabled: z.boolean().default(true),
