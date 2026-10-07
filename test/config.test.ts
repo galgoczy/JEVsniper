@@ -54,3 +54,21 @@ test("Telegram parancs-felismerés", () => {
   assert.equal(parseCommand("/panic@jevbot"), "panic");
   assert.equal(parseCommand("hello"), null);
 });
+
+test("értékelési időszakok: az aktuális a legutolsó elkezdődött; a HUD lezárt időszaka csak a vége után jelenik meg", async () => {
+  const { currentPeriod, periods } = await import("../src/analysis/periods.js");
+  const { loadConfig } = await import("../src/config.js");
+  const base = loadConfig("config.yaml");
+  const cfg = { ...base, evaluation: { ...base.evaluation, periods: [{ name: "1", from: "2026-09-30T00:00:00Z", to: "2026-10-07T22:00:00Z" }, { name: "2", from: "2026-10-07T22:00:00Z" }] } };
+  assert.equal(periods(cfg).length, 2);
+  assert.equal(currentPeriod(cfg, Date.parse("2026-10-07T21:59:59Z")).name, "1");
+  assert.equal(currentPeriod(cfg, Date.parse("2026-10-07T22:00:00Z")).name, "2");
+  assert.equal(currentPeriod({ ...cfg, evaluation: { ...cfg.evaluation, periods: [] } }).from, Date.parse(`${base.alerts.since}T00:00:00Z`));
+  const { openDb } = await import("../src/db/index.js");
+  const { hudPeriods } = await import("../src/hud/data.js");
+  const db = openDb(":memory:");
+  assert.equal(hudPeriods(db, cfg, Date.parse("2026-10-07T21:00:00Z")).length, 0);
+  const p = hudPeriods(db, cfg, Date.parse("2026-10-08T06:00:00Z"));
+  assert.equal(p.length, 1); assert.ok(p[0]!.rows.some((r) => r.group === "BNB" && r.arm === "bnb_all60_d5"));
+  db.close();
+});

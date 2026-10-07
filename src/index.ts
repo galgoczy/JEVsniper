@@ -32,6 +32,7 @@ import { FlipArm, FLIP_ARM } from "./graduation/flip.js";
 import { BnbRecorder } from "./bnb/recorder.js";
 import { PancakeRecorder } from "./bnb/pancake.js";
 import { BnbShadow } from "./bnb/shadow.js";
+import { currentSince } from "./analysis/periods.js";
 import { BNB_RECEIPT_RPC } from "./bnb/addresses.js";
 import { createPublicClient, http, type PublicClient } from "viem";
 import { bsc } from "viem/chains";
@@ -156,7 +157,7 @@ async function main() {
   // Telegram-riport (2026-10-03): időarányos + állás + visszaforgatás, telefonra; a teljes markdown riport fájlba (napi, 24 órás)
   const telegramReport = () => {
     const file = writeReport(db, cfg).file;
-    return reportCompact(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg) + `\nTeljes: ${file}`;
+    return reportCompact(db, currentSince(cfg), cfg) + `\nTeljes: ${file}`;
   };
   const [rh, rm] = cfg.report.daily_time_utc.split(":").map(Number) as [number, number];
   const reportTimer = setInterval(() => {
@@ -175,11 +176,10 @@ async function main() {
   const walletTimer = setInterval(() => void saveWallet().catch((e) => log.debug("tárca-egyenleg hiba", { error: (e as Error).message.slice(0, 100) })), 10 * 60_000);
   const regimeTimer = setInterval(() => void regime.refresh().catch(() => undefined), 60_000);
   // Futás közbeni figyelő: állapotváltáskor Telegram-üzenet (legfeljebb 6 sor egyszerre)
-  const alertsSince = Date.parse(`${cfg.alerts.since}T00:00:00Z`);
   const alertTimer = setInterval(() => {
     if (!cfg.alerts.enabled) return;
     try {
-      const msgs = checkArms(db, alertsSince);
+      const msgs = checkArms(db, currentSince(cfg)); // az aktuális értékelési időszak (éjfélkor vált)
       if (msgs.length) void tg.send(["📈 Árnyékstratégia-figyelő", ...msgs.slice(0, 6), ...(msgs.length > 6 ? [`…és még ${msgs.length - 6} változás (npm run report -- --since ${cfg.alerts.since})`] : [])].join("\n"));
     } catch (e) { log.warn("figyelő hiba", { error: (e as Error).message.slice(0, 160) }); }
   }, cfg.alerts.interval_min * 60_000);
@@ -246,8 +246,8 @@ async function main() {
         return "🚨 PANIC eredmény:\n" + (await panicSellAll());
       }
       case "report": { try { return telegramReport(); } catch (e) { return `riport hiba: ${(e as Error).message.slice(0, 120)}`; } }
-      case "allas": { try { return standingsCompact(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
-      case "allas_reszletes": { try { return standings(db, Date.parse(`${cfg.alerts.since}T00:00:00Z`), cfg.evaluation.live_window_sec, Date.now(), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "allas": { try { return standingsCompact(db, currentSince(cfg), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "allas_reszletes": { try { return standings(db, currentSince(cfg), cfg.evaluation.live_window_sec, Date.now(), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
       case "help": return "/status /allas /report /allas_reszletes /stop /resume /panic";
     }
   });

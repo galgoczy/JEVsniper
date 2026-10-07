@@ -184,6 +184,11 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
     </div>
   </section>
 
+  <section class="card sec" id="periods-card" hidden>
+    <div class="ttl"><h2>🗂 Lezárt időszakok</h2><small>a nyitás szerinti időszak · átlag · n · 90% CI · Σ</small></div>
+    <div id="periods"></div>
+  </section>
+
   <section class="card sec">
     <div class="ttl"><h2>🖥 Mac mini (M4)</h2><small id="sys-note">–</small></div>
     <div class="mini" id="sys"></div>
@@ -212,7 +217,7 @@ function renderSummary(s) {
   $("livearm").textContent = s.live.label;
   $("size").textContent = `${L.toFixed(2)}$`;
   $("sub").textContent = `${new Date(s.since).toLocaleDateString("hu-HU")} óta · ${s.live.chains.length ? s.live.chains.join(", ") : "minden lánc"} · ablak ${s.live.window}s · terv ${s.live.plan}`;
-  $("foot-since").textContent = `mérés kezdete: ${new Date(s.since).toLocaleDateString("hu-HU")}`;
+  $("foot-since").textContent = `aktuális időszak kezdete: ${new Date(s.since).toLocaleString("hu-HU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
   const p = s.pnl;
   setVal("k-total", usd(p.realized * L), cls(p.realized));
   $("k-total-n").textContent = `${p.n} lezárt · átlag ${sgn(p.mean)}$/1$ · nyitva ${p.openPositions} (${usd(p.unrealized * L)})`;
@@ -302,6 +307,27 @@ function armTip(r, size) {
   return tip;
 }
 
+function renderPeriods(ps) {
+  const card = $("periods-card"), box = $("periods"); if (!ps || !ps.length) { card.hidden = true; return; }
+  card.hidden = false; box.replaceChildren();
+  const d = (ms) => new Date(ms).toLocaleString("hu-HU", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  for (const p of ps) {
+    box.append(el("div", "ttl", ""), el("div", "note", `${p.name}: ${d(p.from)} → ${d(p.to)}`));
+    for (const g of ["Base", "Robinhood", "BNB"]) {
+      const rows = p.rows.filter((r) => r.group === g); if (!rows.length) continue;
+      const list = el("div", "arms"); list.style.marginTop = "8px";
+      const head = el("div", "arm head"); head.append(el("div", "", g), el("div", "", "átlag · n"), el("div", "hide-s", "90% CI"), el("div", "", "Σ")); list.append(head);
+      for (const r of rows) {
+        const row = el("div", "arm"); const ok = r.ciLow !== null && r.ciLow > 0;
+        const nm = el("div", "nm"); nm.append(el("span", "", r.label)); if (ok && r.n >= 100) nm.append(el("span", "tag star", "✅ ≥100, CI>0")); else if (ok) nm.append(el("span", "tag", "CI>0"));
+        row.append(nm, el("div", "v mono " + cls(r.mean), r.n ? `${sgn(r.mean)} · ${r.n}` : "–"), el("div", "v mono hide-s", r.ciLow === null ? "–" : `${sgn(r.ciLow)} … ${sgn(r.ciHigh)}`), el("div", "v mono " + cls(r.sum), r.n ? sgn(r.sum, 1) : "–"));
+        list.append(row);
+      }
+      box.append(list);
+    }
+  }
+}
+
 function renderSystem(x) {
   const box = $("sys"); if (!x) return; box.replaceChildren();
   const pct = (v) => (v === null || v === undefined) ? "–" : `${Math.round(v)}%`;
@@ -386,7 +412,7 @@ async function refresh(fresh = false) {
   try {
     const d = await fetch("/api/all" + (fresh ? "?fresh=1" : "") + (token ? `${fresh ? "&" : "?"}t=${encodeURIComponent(token)}` : ""), { cache: "no-store" })
       .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
-    renderSummary(d.summary); renderPositions(d.positions); renderFeed(d.feed); renderWinners(d.winners); renderSystem(d.system);
+    renderSummary(d.summary); renderPositions(d.positions); renderFeed(d.feed); renderWinners(d.winners); renderSystem(d.system); renderPeriods(d.periods);
     const age = Math.max(0, Math.round((Date.now() - d.computedAt) / 1000));
     $("upd").textContent = `adat ${hhmm(d.computedAt)}${age > 5 ? ` (${age} mp)` : ""}`; $("live-dot").classList.remove("off");
   } catch (e) {

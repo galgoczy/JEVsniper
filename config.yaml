@@ -68,6 +68,11 @@ evaluation:
   late_scope: ["base/uniswap"]
   # Árnyékpozíciók fix mérete – NE változtasd menet közben (az átlagok USD/pozícióban összevethetők maradjanak)
   shadow_size_usd: 1
+  # Értékelési időszakok (2026-10-07, a felhasználó döntése): az 1. időszak 09-30-tól 10-08 00:00-ig (Budapest), a 2. onnan.
+  # A 2. időszakban a szabályokon NEM változtatunk – ez a döntési szabály „második független időszaka”.
+  periods:
+    - { name: "1. időszak", from: "2026-09-30T00:00:00Z", to: "2026-10-07T22:00:00Z" }
+    - { name: "2. időszak", from: "2026-10-07T22:00:00Z" }
 
 jev:
   # false = a bot egyáltalán nem hívja a Jev-et (címkézés, rezsim, tartás); csak on-chain szabályok döntenek.

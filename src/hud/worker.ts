@@ -2,7 +2,8 @@ import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
-import { hudSummary, hudPositions, hudFeed, hudWinners } from "./data.js";
+import { hudSummary, hudPositions, hudFeed, hudWinners, hudPeriods } from "./data.js";
+import { currentSince } from "../analysis/periods.js";
 
 /**
  * HUD adat-szál (2026-10-06): a HUD lekérdezései (750 ezer soros pozíció-tábla, ~20 mp) a bot fő szálát akasztották meg.
@@ -11,12 +12,12 @@ import { hudSummary, hudPositions, hudFeed, hudWinners } from "./data.js";
 const { dbPath, cfg } = workerData as { dbPath: string; cfg: Config };
 const db = new Database(dbPath, { readonly: true, fileMustExist: true }) as unknown as DB;
 db.pragma("busy_timeout = 5000");
-const since = () => Date.parse(`${cfg.alerts.since}T00:00:00Z`);
+const since = () => currentSince(cfg);
 
 parentPort!.on("message", (msg: { id: number }) => {
   try {
     const s = since(), t = Date.now();
-    const data = { summary: hudSummary(db, cfg, s), positions: hudPositions(db, cfg, s), feed: hudFeed(db, cfg, s), winners: hudWinners(db, cfg, s), computedAt: Date.now(), tookMs: 0 };
+    const data = { summary: hudSummary(db, cfg, s), positions: hudPositions(db, cfg, s), feed: hudFeed(db, cfg, s), winners: hudWinners(db, cfg, s), periods: hudPeriods(db, cfg), computedAt: Date.now(), tookMs: 0 };
     data.tookMs = Date.now() - t;
     parentPort!.postMessage({ id: msg.id, data });
   } catch (e) {

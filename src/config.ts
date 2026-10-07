@@ -74,6 +74,9 @@ export const ConfigSchema = z.object({
     late_scope: z.array(z.string()).default([]),
     // Árnyékpozíciók fix mérete (USD) – az élő pozícióméret (risk.base_position_usd, compound) változása nem érinti
     shadow_size_usd: z.number().positive().default(1),
+    // Értékelési időszakok (2026-10-07): a döntési szabály második, független időszakához. A pozíció a NYITÁSA szerinti időszakba
+    // tartozik. Az „aktuális” időszak a legutolsó, amelyik már elkezdődött; a jelentések és a HUD alapból azt mutatják.
+    periods: z.array(z.object({ name: z.string(), from: z.string().datetime(), to: z.string().datetime().optional() })).default([]),
   }),
   jev: z.object({
     enabled: z.boolean().default(true),

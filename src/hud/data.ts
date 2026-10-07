@@ -7,6 +7,8 @@ import { activeDays, compoundSim } from "../analysis/standings.js";
 import { walletNeed, savedWalletBalance } from "../analysis/wallet.js";
 import { currentPositionUsd } from "../decision/risk.js";
 import { taxedNet } from "../bnb/tax.js";
+import { periods as allPeriods } from "../analysis/periods.js";
+import { bootstrapCI } from "../report/index.js";
 
 /**
  * HUD adat-réteg (2026-10-04): a webes áttekintő JSON-jai – ugyanazokból a számításokból, mint a /report és az /allas.
@@ -191,4 +193,27 @@ export function hudWinners(db: DB, cfg: Config, sinceMs: number, limit = 15) {
   const total = liveRows.reduce((a, b) => a + b, 0), top5 = liveRows.slice(0, 5).reduce((a, b) => a + b, 0);
   const wins = liveRows.filter((x) => x > 0).length;
   return { list, live: { n: liveRows.length, total, top5, wins, withoutTop5: total - top5 } };
+}
+
+/**
+ * Lezárt értékelési időszakok (2026-10-07): a kulcskarok eredménye a NYITÁS szerinti időszakban (a később záruló pozíciók
+ * eredménye is ide számít), 90% bootstrap CI-vel. Base: 60 mp / élő terv; Robinhood: a HUD RH-karjai; BNB: fő terv, adóval.
+ */
+export function hudPeriods(db: DB, cfg: Config, now = Date.now()) {
+  const w = cfg.evaluation.live_window_sec;
+  const stat = (vals: number[]) => { const n = vals.length, sum = vals.reduce((a, b) => a + b, 0); const ci = n >= 3 ? bootstrapCI(vals) : null; return { n, mean: n ? sum / n : null, sum, ciLow: ci?.[0] ?? null, ciHigh: ci?.[1] ?? null }; };
+  const pos = (chain: string, arm: string, win: number, from: number, to: number) => (db.prepare(`SELECT net_pnl_usd v FROM positions WHERE chain = ? AND arm = ? AND window_sec = ? AND exit_plan = 'live'
+    AND opened_at >= ? AND opened_at < ? AND closed_at IS NOT NULL AND (close_reason IS NULL OR close_reason NOT LIKE 'invalid%')`).all(chain, arm, win, from, to) as Array<{ v: number }>).map((r) => r.v);
+  let bnbOk = true; try { db.prepare("SELECT 1 FROM bnb_shadow_positions LIMIT 1").get(); } catch { bnbOk = false; }
+  const bnb = (arm: string, from: number, to: number) => !bnbOk ? [] : (db.prepare(`SELECT net_usd v, size_usd s, txs, buy_tax b, sell_tax t FROM bnb_shadow_positions WHERE arm = ? AND plan = 'tp2_sl40' AND opened_at >= ? AND opened_at < ? AND closed_at IS NOT NULL`)
+    .all(arm, from, to) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null }>).map((r) => taxedNet(r.v, r.s, r.txs, 0.006, r.b ?? 0, r.t ?? 0)!);
+  return allPeriods(cfg).filter((p) => p.to !== null && p.to <= now).map((p) => {
+    const to = p.to!;
+    const rows = [
+      ...[...BASE_ARMS, "random_control", "base_uni_all"].map((a) => ({ group: "Base", arm: a, label: LABEL[a] ?? a, ...stat(pos("base", a, w, p.from, to)) })),
+      ...RH_ARMS.map(([a, win]) => ({ group: "Robinhood", arm: a, label: LABEL[a] ?? a, ...stat(pos("robinhood", a, win === "live" ? w : win, p.from, to)) })),
+      ...["bnb_all60", "bnb_all60_d5", "bnb_all60_d10", "bnb_whale", "bnb_whale_d5", "bnb_whale_d10"].map((a) => ({ group: "BNB", arm: a, label: a.replace("bnb_all60", "minden +60s").replace("bnb_whale", "bálna").replace("_d5", " (+5 mp)").replace("_d10", " (+10 mp)"), ...stat(bnb(a, p.from, to)) })),
+    ];
+    return { name: p.name, from: p.from, to, rows };
+  });
 }
