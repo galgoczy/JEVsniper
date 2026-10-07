@@ -117,6 +117,7 @@ export class BnbShadow {
 
   private evaluate(p: Pos, now: number) {
     const s = this.st.get(p.pair); if (!s) return;
+    if (p.openedAt >= now) return; // 2026-10-07: a belépés körében a kör eleji (belépés ELŐTTI) csúcs/mélypont még nem számít
     const price = s.price, hi = s.hi, lo = s.lo;
     p.peak = Math.max(p.peak, hi);
     const sell = (amount: number, reason: string, fillPrice: number, close: boolean) => {

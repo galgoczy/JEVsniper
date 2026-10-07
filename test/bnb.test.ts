@@ -110,10 +110,11 @@ test("BNB árnyék: +60 mp és bálna jelzés, eladhatósági próba (honeypot k
   now = T0 + 61_000; await sh.step(); await sh.step();
   assert.equal((db.prepare("SELECT count(*) n FROM bnb_shadow_positions WHERE arm = 'bnb_all60'").get() as { n: number }).n, 3); // P1, 3 terv
   assert.equal((db.prepare("SELECT reason FROM bnb_shadow_skips WHERE pair = ?").get(P2) as { reason: string }).reason, "honeypot");
-  // bálna-vétel P1-en → második kar
-  ev(P1, T1, T0 + 70_000, 1.2, { bnb: 2 });
+  // bálna-vétel P1-en → második kar; ugyanebben a körben előtte 0,7 volt (a bálna-ár 1,2 −40%-a alatt, a +60s-belépés stopja fölött) – ez nem válthat ki stopot
+  ev(P1, T1, T0 + 69_000, 0.7, { side: "sell" }); ev(P1, T1, T0 + 70_000, 1.2, { bnb: 2 });
   now = T0 + 72_000; await sh.step(); await sh.step();
   assert.equal((db.prepare("SELECT count(*) n FROM bnb_shadow_positions WHERE arm = 'bnb_whale'").get() as { n: number }).n, 3);
+  assert.equal((db.prepare("SELECT count(*) n FROM bnb_shadow_positions WHERE arm = 'bnb_whale' AND closed_at IS NOT NULL").get() as { n: number }).n, 0); // nem zárt azonnal
   // ár a belépés (1) 2,1-szerese → tp2_sl40 zár, C fele elad; az aktuális (kör végi) ár 2,0
   ev(P1, T1, T0 + 80_000, 2.1); ev(P1, T1, T0 + 81_000, 2.0, { side: "sell" });
   now = T0 + 82_000; await sh.step();
