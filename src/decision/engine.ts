@@ -4,6 +4,8 @@ import { nowMs, todayUtc } from "../db/index.js";
 import { capPositionUsd, type Config } from "../config.js";
 import type { ParamSnapshot } from "../collector/types.js";
 import type { TokenRow } from "../collector/index.js";
+import { simRoundTripV4, FRESH_ADDRESS_BASE } from "../exec/simV4.js";
+import type { PoolKey } from "../exec/routes.js";
 import type { ChainKey } from "../chains/index.js";
 import { JevClient, JevPausedError } from "../jev/client.js";
 import { entryQuestions } from "../jev/questions.js";
@@ -90,6 +92,9 @@ export class DecisionEngine {
       }
     }
 
+    // 2026-10-08: Base honeypot-teszt (mérés): az élő ablakban, ha bármelyik kar belépett, vétel+eladás szimuláció a saját és egy friss címről
+    if (t.chain === "base" && w === cfg.evaluation.live_window_sec && supported && t.pool_key_json && arms.some((a) => a.res.enter)) void this.simBase(t).catch(() => undefined);
+
     // 3) élő belépés csak az élő ablakban: a config live_entry.arm kar dönt (2026-10-01-ig fixen a Jev-címkés live_rule volt)
     if (w !== cfg.evaluation.live_window_sec) return;
     const liveArm = cfg.live_entry.arm;
@@ -108,6 +113,16 @@ export class DecisionEngine {
       return;
     }
     await this.enterLive(t, snap, labels, capPositionUsd(cfg.risk, posUsd * live.sizeMultiplier), w);
+  }
+
+  /** Base honeypot-teszt: saját cím + friss cím, ~2 USD, az élő útvonalon (Universal Router + Permit2); eredmény a base_sim_checks-be. */
+  private async simBase(t: TokenRow) {
+    const ex = this.d.executors.base; if (!ex) return;
+    const eth = await this.d.ethUsd(); if (typeof eth !== "number" || !(eth > 0)) return;
+    const value = BigInt(Math.floor(2 / eth * 1e18)), key = JSON.parse(t.pool_key_json!) as PoolKey, tk = getAddress(t.address), t0 = Date.now();
+    const [me, fr] = await Promise.all([simRoundTripV4(ex.client, "base", ex.address, tk, key, value), simRoundTripV4(ex.client, "base", FRESH_ADDRESS_BASE, tk, key, value)]);
+    this.d.db.prepare("INSERT OR IGNORE INTO base_sim_checks(token_id, at, me_stage, me_ratio, fresh_stage, fresh_ratio, ms, error) VALUES (?,?,?,?,?,?,?,?)")
+      .run(t.id, nowMs(), me.stage, me.ratio, fr.stage, fr.ratio, Date.now() - t0, me.error ?? fr.error ?? null);
   }
 
   private openShadow(t: TokenRow, arm: string, w: number, price: number, sizeUsd: number, snap: ParamSnapshot) {

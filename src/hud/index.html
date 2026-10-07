@@ -314,6 +314,7 @@ function armTip(r, size) {
   const b = (t) => el("b", "", t);
   tip.append(line(["Nyitva most: ", b(String(r.open ?? 0)), ` → élesben ${usd(r.open ?? 0)} (${size.toFixed(2)} $/pozíció)`]));
   if (r.peak) tip.append(line(["Legtöbb egyszerre: ", b(String(r.peak.n)), ` (${when(r.peak.at)}) → max tőkeigény ≈ `, b(usd(r.peak.n)), " + gáz"]));
+  if (r.sim && !r.plans) tip.append(line(["Honeypot-teszt (vétel+eladás, mérés): saját cím átment ", b(`${r.sim.meOk}/${r.sim.n}`), `, friss cím ${r.sim.freshOk}/${r.sim.n} · szűrővel: ${r.sim.filteredN ? sgn(r.sim.filteredMean) + " (n" + r.sim.filteredN + ")" : "–"}`]));
   if (r.plans) {
     const m = r.plans[0];
     if (m && m.rawN) tip.append(line(["Honeypot-szűrővel (fő érték): ", b(m.n ? sgn(m.mean) + " (n" + m.n + ")" : "–"), ` · szűretlen ${sgn(m.rawMean)} (n${m.rawN}; szimulált ${m.simmed}) · adó mérve ${m.measured}, adózó ${m.taxed}`]));

@@ -42,7 +42,17 @@ function armExtra(db: DB, chain: string, arm: string, win: number, plan: string,
   const open = db.prepare(`SELECT t.symbol s, p.opened_at o, p.entry_price_native e, p.last_price_native l FROM positions p JOIN tokens t ON t.id = p.token_id
     WHERE p.chain = ? AND p.arm = ? AND p.window_sec = ? AND p.exit_plan = ? AND p.closed_at IS NULL AND p.opened_at > ? ORDER BY p.opened_at DESC LIMIT 12`).all(chain, arm, win, plan, sinceMs) as Array<{ s: string | null; o: number; e: number; l: number | null }>;
   const all = db.prepare(`SELECT opened_at o, closed_at c FROM positions WHERE chain = ? AND arm = ? AND window_sec = ? AND exit_plan = ? AND opened_at > ? AND (close_reason IS NULL OR close_reason NOT LIKE 'invalid%')`).all(chain, arm, win, plan, sinceMs) as Array<{ o: number; c: number | null }>;
-  return { openList: open.map((r) => ({ symbol: r.s ?? "?", x: r.l && r.e ? r.l / r.e : null, ageMin: (now - r.o) / 60_000 })), peak: peakConcurrent(all, now) };
+  // Base honeypot-teszt (2026-10-08, mérés): a kar lezárt pozícióinál hány tokenen futott, hány ment át a saját / friss címről, és a szűrt eredmény
+  let sim: { n: number; meOk: number; freshOk: number; filteredN: number; filteredMean: number | null } | null = null;
+  if (chain === "base") {
+    try {
+      const r = db.prepare(`SELECT COUNT(*) n, SUM(c.me_stage = 5) me, SUM(c.fresh_stage = 5) fr, SUM(CASE WHEN c.me_stage = 5 THEN 1 ELSE 0 END) fn, AVG(CASE WHEN c.me_stage = 5 THEN p.net_pnl_usd END) fm
+        FROM positions p JOIN base_sim_checks c ON c.token_id = p.token_id WHERE p.chain = 'base' AND p.arm = ? AND p.window_sec = ? AND p.exit_plan = ? AND p.closed_at IS NOT NULL
+        AND p.opened_at > ? AND (p.close_reason IS NULL OR p.close_reason NOT LIKE 'invalid%')`).get(arm, win, plan, sinceMs) as { n: number; me: number | null; fr: number | null; fn: number | null; fm: number | null };
+      if (r.n) sim = { n: r.n, meOk: r.me ?? 0, freshOk: r.fr ?? 0, filteredN: r.fn ?? 0, filteredMean: r.fm };
+    } catch { /* nincs tábla */ }
+  }
+  return { openList: open.map((r) => ({ symbol: r.s ?? "?", x: r.l && r.e ? r.l / r.e : null, ageMin: (now - r.o) / 60_000 })), peak: peakConcurrent(all, now), sim };
 }
 
 /** BNB árnyékkarok (2026-10-07): karonként a fő terv (tp2_sl40) eredménye, a többi terv, nyitott pozíciók, legtöbb egyidejű. */

@@ -411,3 +411,9 @@ CREATE TABLE IF NOT EXISTS bnb_sim_checks (
   me_hi_stage INTEGER, me_hi_ratio REAL, me_lo_stage INTEGER, me_lo_ratio REAL, fresh_stage INTEGER, fresh_ratio REAL, ms INTEGER, error TEXT,
   PRIMARY KEY (pair, arm)
 );
+
+-- 2026-10-08: Base honeypot-teszt (v4 vétel+eladás szimuláció az élő útvonalon; src/exec/simV4.ts) – a 60 mp-es döntéskor, ha volt belépés
+CREATE TABLE IF NOT EXISTS base_sim_checks (
+  token_id INTEGER PRIMARY KEY REFERENCES tokens(id), at INTEGER NOT NULL,
+  me_stage INTEGER, me_ratio REAL, fresh_stage INTEGER, fresh_ratio REAL, ms INTEGER, error TEXT
+);
