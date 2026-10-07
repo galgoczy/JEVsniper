@@ -63,7 +63,13 @@ export class BnbLive {
   private failed(): number { return (this.d.db.prepare("SELECT value FROM meta WHERE key = 'bnb_live_failed'").get() as { value: string } | undefined)?.value ? Number((this.d.db.prepare("SELECT value FROM meta WHERE key = 'bnb_live_failed'").get() as { value: string }).value) : 0; }
   private setFailed(n: number) { this.d.db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('bnb_live_failed', ?)").run(String(n)); }
   resetFailed() { this.setFailed(0); }
-  private todayPnl(): number { return (this.d.db.prepare("SELECT COALESCE(SUM(net_usd),0) s FROM bnb_live_positions WHERE closed_at IS NOT NULL AND date(closed_at/1000,'unixepoch') = ?").get(todayUtc()) as { s: number }).s; }
+  /** A „nap” eredménye: a visszaforgatás utolsó újraszámolása (03:01 helyi idő, ill. kézi újraindítás) óta zárt élő pozíciók – 2026-10-08:
+   *  az UTC-nap helyett, mert különben egy előző, már lezárt szakasz vesztesége (10-07 este) is blokkolt. Ha nincs állapot: UTC-nap. */
+  private todayPnl(): number {
+    const st = (() => { try { return this.d.db.prepare("SELECT last_recalc_at a FROM bnb_compound_state WHERE id = 1").get() as { a: number } | undefined; } catch { return undefined; } })();
+    if (st) return (this.d.db.prepare("SELECT COALESCE(SUM(net_usd),0) s FROM bnb_live_positions WHERE closed_at IS NOT NULL AND closed_at > ? AND arm <> 'fustproba'").get(st.a) as { s: number }).s;
+    return (this.d.db.prepare("SELECT COALESCE(SUM(net_usd),0) s FROM bnb_live_positions WHERE closed_at IS NOT NULL AND date(closed_at/1000,'unixepoch') = ? AND arm <> 'fustproba'").get(todayUtc()) as { s: number }).s;
+  }
 
   /** Miért nem léphetünk be most (null = léphetünk). A dry_run külön ág: ott csak jelzés. */
   private block(liq: number, balBnb: number | null): string | null {

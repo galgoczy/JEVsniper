@@ -226,3 +226,18 @@ test("BNB élő végrehajtó: dry_run-ban nincs tx; élőben vétel+approve, 2×
   assert.equal((db.prepare("SELECT count(*) n FROM bnb_live_fills WHERE status = 'success'").get() as { n: number }).n, 3);
   db.close();
 });
+
+test("BNB élő napi veszteségkorlát: a visszaforgatás utolsó újraszámolása óta számol (egy korábbi szakasz vesztesége nem blokkol)", async () => {
+  const { BnbLive } = await import("../src/bnb/live.js");
+  const { loadConfig } = await import("../src/config.js"); const cfg = loadConfig("config.yaml");
+  const db = openDb(":memory:"); const now = 1_790_000_000_000;
+  const ins = db.prepare("INSERT INTO bnb_live_positions(pair, token, arm, signal_at, opened_at, spent_bnb, spent_usd, tokens, tokens_left, entry_price, closed_at, net_usd, phase) VALUES ('p','t','bnb_all60',?,?,0.001,0.8,1,0,1,?,?,'closed')");
+  ins.run(now - 7200_000, now - 7200_000, now - 7000_000, -10);                     // régi szakasz: −10 USD
+  db.prepare("INSERT INTO bnb_compound_state(id, initial_capital_usd, capital_usd, reserve_usd, position_usd, last_recalc_at, updated_at) VALUES (1, 12, 12, 0, 0.8, ?, ?)").run(now - 3600_000, now);
+  const client = { getBalance: async () => 10n ** 17n, getGasPrice: async () => 50_000_000n } as never;
+  const live = new BnbLive({ db, cfg: { ...cfg, bnb_live: { ...cfg.bnb_live, enabled: true, mode: "live", daily_loss_limit_usd: 7, sim_filter: false } }, privateKey: ("0x" + "11".repeat(32)) as `0x${string}`, bnbUsd: () => 750, notify: async () => undefined, client, wallet: {} as never, receiptClient: client, now: () => now });
+  assert.equal((live as unknown as { block: (l: number, b: number | null) => string | null }).block(10, 0.1), null);   // a régi −10 nem számít
+  ins.run(now - 600_000, now - 600_000, now - 500_000, -7.5);                        // az új szakaszban −7,5 → blokk
+  assert.equal((live as unknown as { block: (l: number, b: number | null) => string | null }).block(10, 0.1), "daily_loss_limit");
+  db.close();
+});
