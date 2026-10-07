@@ -15,13 +15,54 @@ const V2_ARMS = ["rule_v2", "rule_v2_strict", "rule_v2_nofactory"];
 const PREGRAD_ARMS = ["pons_pregrad_50", "pons_pregrad_80"];
 const BASE_ARMS = ["rule_v2_strict", "rule_v2", "rule_v2_nofactory", "base_uni_hold", "base_uni_hold_nofactory"];
 const RH_ARMS: Array<[string, number | "live"]> = [["rule_v2_strict", "live"], ["pons_pregrad_50", 0], ["pons_pregrad_80", 0], ["grad_at", 0], ["grad_30s", 0], ["grad_15_all", 0]];
+// a pons_flip95 a saját („flip”) tervével számít – külön sorban (lásd hudSummary)
 const BASELINES: Array<[string, string, number | "live"]> = [["random_control", "base", "live"], ["base_uni_all", "base", "live"], ["copy_smart", "base", 0], ["pons_all", "robinhood", "live"]];
 const LABEL: Record<string, string> = {
   rule_v2: "v2", rule_v2_strict: "v2 strict", rule_v2_nofactory: "v2 nofactory", base_uni_hold: "uni hold", base_uni_hold_nofactory: "hold nofactory",
-  pons_pregrad_50: "pregrad 50", pons_pregrad_80: "pregrad 80", grad_at: "grad at", grad_30s: "grad +30s", grad_15_all: "grad +15", random_control: "véletlen",
+  pons_pregrad_50: "pregrad 50", pons_pregrad_80: "pregrad 80", pons_flip95: "flip 95", grad_at: "grad at", grad_30s: "grad +30s", grad_15_all: "grad +15", random_control: "véletlen",
   base_uni_all: "minden Base", copy_smart: "copy smart", pons_all: "minden PONS",
 };
 const dayKey = (ms: number) => new Date(ms).toLocaleDateString("sv-SE"); // helyi nap, ÉÉÉÉ-HH-NN
+
+/** Legtöbb egyszerre nyitott pozíció (időpontokból söprés) – a tőkeigény becsléséhez. */
+export function peakConcurrent(rows: Array<{ o: number; c: number | null }>, now: number): { n: number; at: number | null } {
+  const ev: Array<[number, number]> = [];
+  for (const r of rows) { ev.push([r.o, 1]); ev.push([r.c ?? now, -1]); }
+  ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let cur = 0, best = 0, at: number | null = null;
+  for (const [t, d] of ev) { cur += d; if (cur > best) { best = cur; at = t; } }
+  return { n: best, at };
+}
+
+/** Egy kar nyitott pozíciói (a legfrissebb 12) és a valaha volt legtöbb egyidejű nyitott pozíció. */
+function armExtra(db: DB, chain: string, arm: string, win: number, plan: string, sinceMs: number, now: number) {
+  const open = db.prepare(`SELECT t.symbol s, p.opened_at o, p.entry_price_native e, p.last_price_native l FROM positions p JOIN tokens t ON t.id = p.token_id
+    WHERE p.chain = ? AND p.arm = ? AND p.window_sec = ? AND p.exit_plan = ? AND p.closed_at IS NULL AND p.opened_at > ? ORDER BY p.opened_at DESC LIMIT 12`).all(chain, arm, win, plan, sinceMs) as Array<{ s: string | null; o: number; e: number; l: number | null }>;
+  const all = db.prepare(`SELECT opened_at o, closed_at c FROM positions WHERE chain = ? AND arm = ? AND window_sec = ? AND exit_plan = ? AND opened_at > ? AND (close_reason IS NULL OR close_reason NOT LIKE 'invalid%')`).all(chain, arm, win, plan, sinceMs) as Array<{ o: number; c: number | null }>;
+  return { openList: open.map((r) => ({ symbol: r.s ?? "?", x: r.l && r.e ? r.l / r.e : null, ageMin: (now - r.o) / 60_000 })), peak: peakConcurrent(all, now) };
+}
+
+/** BNB árnyékkarok (2026-10-07): karonként a fő terv (tp2_sl40) eredménye, a többi terv, nyitott pozíciók, legtöbb egyidejű. */
+export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
+  const ARMS: Array<[string, string]> = [["bnb_all60", "minden +60s"], ["bnb_whale", "bálna-vétel"]];
+  const PLANS = ["tp2_sl40", "tp1.5_sl30", "C"];
+  let has = false; try { db.prepare("SELECT 1 FROM bnb_shadow_positions LIMIT 1").get(); has = true; } catch { /* nincs tábla */ }
+  if (!has) return { arms: [], skips: {} as Record<string, number> };
+  const arms = ARMS.map(([arm, label]) => {
+    const plans = PLANS.map((plan) => {
+      const r = db.prepare(`SELECT count(*) n, avg(net_usd) mean, sum(net_usd) sum, min(opened_at) first FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND closed_at IS NOT NULL AND opened_at > ?`).get(arm, plan, sinceMs) as { n: number; mean: number | null; sum: number | null; first: number | null };
+      return { plan, n: r.n, mean: r.mean, sum: r.sum ?? 0, first: r.first };
+    });
+    const main = plans[0]!;
+    const openRows = db.prepare(`SELECT token, opened_at o, entry_price e, last_price l FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND closed_at IS NULL ORDER BY opened_at DESC`).all(arm, PLANS[0]) as Array<{ token: string; o: number; e: number; l: number | null }>;
+    const all = db.prepare(`SELECT opened_at o, closed_at c FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND opened_at > ?`).all(arm, PLANS[0], sinceMs) as Array<{ o: number; c: number | null }>;
+    const d = main.first ? activeDays(main.first, now) : 0;
+    return { arm, label, chain: "bnb", window: 0, n: main.n, mean: main.mean, sum: main.sum, perDay: d >= 0.25 ? main.sum / d : null, open: openRows.length,
+      plans, openList: openRows.slice(0, 12).map((r) => ({ symbol: `${r.token.slice(0, 6)}…${r.token.slice(-4)}`, x: r.l && r.e ? r.l / r.e : null, ageMin: (now - r.o) / 60_000 })), peak: peakConcurrent(all, now) };
+  });
+  const skips = Object.fromEntries((db.prepare("SELECT reason, count(*) n FROM bnb_shadow_skips WHERE at > ? GROUP BY reason").all(sinceMs) as Array<{ reason: string; n: number }>).map((r) => [r.reason, r.n]));
+  return { arms, skips };
+}
 
 export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now()) {
   const w = cfg.evaluation.live_window_sec, live = cfg.live_entry.arm, plan = cfg.live_entry.exit_plan, liveSize = currentPositionUsd(db, cfg);
@@ -29,9 +70,10 @@ export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now(
     WHERE exit_plan = 'live' AND opened_at > ? AND closed_at IS NOT NULL AND close_reason NOT LIKE 'invalid%' AND arm NOT IN ('live','day1_test')`).all(sinceMs) as Array<{ chain: string; arm: string; w: number; o: number; c: number; v: number }>;
   const group = (chain: string, arm: string, win: number) => closed.filter((r) => r.chain === chain && r.arm === arm && r.w === win);
   const armRow = (chain: string, arm: string, win: number) => {
-    const rs = group(chain, arm, win); if (!rs.length) return { arm, label: LABEL[arm] ?? arm, chain, window: win, n: 0, mean: null, sum: 0, perDay: null, open: openCount(chain, arm, win) };
+    const rs = group(chain, arm, win), x = armExtra(db, chain, arm, win, "live", sinceMs, now);
+    if (!rs.length) return { arm, label: LABEL[arm] ?? arm, chain, window: win, n: 0, mean: null, sum: 0, perDay: null, open: openCount(chain, arm, win), ...x };
     const sum = rs.reduce((a, r) => a + r.v, 0), first = Math.min(...rs.map((r) => r.o)), d = activeDays(first, now);
-    return { arm, label: LABEL[arm] ?? arm, chain, window: win, n: rs.length, mean: sum / rs.length, sum, perDay: d >= 0.25 ? sum / d : null, open: openCount(chain, arm, win) };
+    return { arm, label: LABEL[arm] ?? arm, chain, window: win, n: rs.length, mean: sum / rs.length, sum, perDay: d >= 0.25 ? sum / d : null, open: openCount(chain, arm, win), ...x };
   };
   const openCount = (chain: string, arm: string, win: number) => (db.prepare("SELECT count(*) n FROM positions WHERE chain = ? AND arm = ? AND window_sec = ? AND exit_plan = 'live' AND closed_at IS NULL AND opened_at > ?").get(chain, arm, win, sinceMs) as { n: number }).n;
 
@@ -68,6 +110,7 @@ export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now(
     base: BASE_ARMS.map((a) => armRow("base", a, w)),
     rh: RH_ARMS.map(([a, win]) => armRow("robinhood", a, win === "live" ? w : win)),
     baselines: BASELINES.map(([a, chain, win]) => armRow(chain, a, win === "live" ? w : win)),
+    bnb: hudBnb(db, sinceMs, now),
     wallet: { usd: bal?.usd ?? null, at: bal?.at ?? null, needUsd: wn.needUsd, peakOpen: wn.peakOpen, ok: bal ? bal.usd >= wn.needUsd : null },
     compound: { sizeNow: liveSize, poolNow: cs?.growth_pool_usd ?? 0, simSize: sim.size, simPool: sim.pool },
     recorders: {

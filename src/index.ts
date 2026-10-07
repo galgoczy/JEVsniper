@@ -31,6 +31,7 @@ import { PreGradArms } from "./graduation/pregrad.js";
 import { FlipArm, FLIP_ARM } from "./graduation/flip.js";
 import { BnbRecorder } from "./bnb/recorder.js";
 import { PancakeRecorder } from "./bnb/pancake.js";
+import { BnbShadow } from "./bnb/shadow.js";
 import { SolRecorder } from "./sol/recorder.js";
 import { SolAmmRecorder } from "./sol/amm.js";
 import { startHud } from "./hud/server.js";
@@ -136,7 +137,12 @@ async function main() {
   listing.start();
   const bnbRecorder = cfg.bnb.enabled ? new BnbRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms }) : null;
   bnbRecorder?.start();
-  const pcsRecorder = cfg.bnb.enabled && cfg.bnb.pancake ? new PancakeRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms }) : null;
+  // BNB árnyékkarok (bnb_all60, bnb_whale) – a PancakeSwap-felvevő eseményeiből (2026-10-07)
+  let bnbShadow: BnbShadow | null = null;
+  const bnbUsd = () => { const r = db.prepare("SELECT value FROM meta WHERE key = 'bnb_usd'").get() as { value: string } | undefined; const v = Number(r?.value); return v > 0 ? v : null; };
+  const pcsRecorder = cfg.bnb.enabled && cfg.bnb.pancake ? new PancakeRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms,
+    onEvent: (e) => bnbShadow?.onEvent(e), onStep: async () => { await bnbShadow?.step(); } }) : null;
+  if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg) });
   pcsRecorder?.start();
   const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
   solRecorder?.start();
@@ -212,6 +218,7 @@ async function main() {
     `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
     ...(bnbRecorder ? [`BNB felvevő: ${bnbRecorder.stats.tokens} token, ${bnbRecorder.stats.trades} kötés, ${bnbRecorder.stats.grads} graduáció (indulás óta), ${bnbRecorder.stats.errors} hiba, blokk ${bnbRecorder.stats.lastBlock}`] : []),
+    ...(bnbShadow ? [`BNB árnyék: ${bnbShadow.stats.signals} jelzés, ${bnbShadow.stats.opened} belépés, ${bnbShadow.stats.closed} zárás; kiszűrve: honeypot ${bnbShadow.stats.honeypot}, nincs tulajdonos ${bnbShadow.stats.noHolder}, hiba ${bnbShadow.stats.checkErr}, késő ${bnbShadow.stats.late}`] : []),
     ...(pcsRecorder ? [`PancakeSwap felvevő: ${pcsRecorder.stats.shells} új WBNB-pár (héj), ${pcsRecorder.stats.waiting} vár likviditásra, ${pcsRecorder.stats.pairs} valódi indítás, ${pcsRecorder.stats.trades} kötés, ${pcsRecorder.stats.snapshots} pillanatkép, követett ${pcsRecorder.stats.tracked}, hiba ${pcsRecorder.stats.errors}`] : []),
     ...(solRecorder ? [`SOL felvevő: ${solRecorder.stats.tokens} token, ${solRecorder.stats.trades} kötés mentve, ${solRecorder.stats.snapshots} pillanatkép, ${solRecorder.stats.completes} görbe-teljesülés, ${solRecorder.stats.migrations} migráció, követett ${solRecorder.stats.tracked}, túlélő ${solRecorder.stats.survivors}, újracsatlakozás ${solRecorder.stats.reconnects}, hiba ${solRecorder.stats.errors}`] : []),
     ...(solAmm ? [`SOL PumpSwap felvevő: ${solAmm.stats.pools} pool (${solAmm.stats.fromMigrate} a migrációból), ${solAmm.stats.trades} kötés, ${solAmm.stats.snapshots} pillanatkép, követett ${solAmm.stats.tracked}, hiba ${solAmm.stats.errors}`] : []),

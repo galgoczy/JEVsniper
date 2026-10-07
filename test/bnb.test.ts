@@ -88,3 +88,44 @@ test("PancakeSwap felvevő: üres héj nem indítás; az első likviditás az in
   await rec.checkShells(400n, now); assert.equal(rec.stats.waiting, 0);                    // 6 óránál régebbi héj kikerül
   db.close();
 });
+
+test("BNB árnyék: +60 mp és bálna jelzés, eladhatósági próba (honeypot kiszűrve), tp2_sl40 / C kiszállás, kiürülés = 0", async () => {
+  const { BnbShadow } = await import("../src/bnb/shadow.js");
+  const db = openDb(":memory:");
+  let now = 1_790_000_000_000; const T0 = now;
+  const honeypot = new Set<string>();
+  const client = {
+    readContract: async () => 10n ** 21n,
+    call: async (a: { to: string }) => { if (honeypot.has(a.to.toLowerCase())) throw new Error("revert"); return { data: "0x" }; },
+  } as never;
+  const sh = new BnbShadow({ db, client, bnbUsd: () => 500, sizeUsd: () => 1, now: () => now });
+  const P1 = "0x00000000000000000000000000000000000000a1", T1 = "0x00000000000000000000000000000000000000b1";
+  const P2 = "0x00000000000000000000000000000000000000a2", T2 = "0x00000000000000000000000000000000000000b2";
+  const BUYER = "0x00000000000000000000000000000000000000c1";
+  honeypot.add(T2);
+  const ev = (pair: string, token: string, at: number, price: number, extra: Record<string, unknown> = {}) => sh.onEvent({ pair, token, createdAt: T0, at, kind: "trade", side: "buy", bnb: 0.1, to: BUYER, price, liq: 10, ...extra } as never);
+  ev(P1, T1, T0 + 5_000, 1); ev(P2, T2, T0 + 5_000, 1);
+  now = T0 + 30_000; await sh.step();
+  assert.equal((db.prepare("SELECT count(*) n FROM bnb_shadow_positions").get() as { n: number }).n, 0);           // még nincs 60 mp
+  now = T0 + 61_000; await sh.step(); await sh.step();
+  assert.equal((db.prepare("SELECT count(*) n FROM bnb_shadow_positions WHERE arm = 'bnb_all60'").get() as { n: number }).n, 3); // P1, 3 terv
+  assert.equal((db.prepare("SELECT reason FROM bnb_shadow_skips WHERE pair = ?").get(P2) as { reason: string }).reason, "honeypot");
+  // bálna-vétel P1-en → második kar
+  ev(P1, T1, T0 + 70_000, 1.2, { bnb: 2 });
+  now = T0 + 72_000; await sh.step(); await sh.step();
+  assert.equal((db.prepare("SELECT count(*) n FROM bnb_shadow_positions WHERE arm = 'bnb_whale'").get() as { n: number }).n, 3);
+  // ár a belépés (1) 2,1-szerese → tp2_sl40 zár, C fele elad; az aktuális (kör végi) ár 2,0
+  ev(P1, T1, T0 + 80_000, 2.1); ev(P1, T1, T0 + 81_000, 2.0, { side: "sell" });
+  now = T0 + 82_000; await sh.step();
+  const tp = db.prepare("SELECT close_reason, net_usd FROM bnb_shadow_positions WHERE arm = 'bnb_all60' AND plan = 'tp2_sl40'").get() as { close_reason: string; net_usd: number };
+  assert.equal(tp.close_reason, "tp_2x"); assert.ok(tp.net_usd > 0.9 && tp.net_usd < 1.0, `net ${tp.net_usd}`); // 2× a díjakkal és gázzal
+  const c = db.prepare("SELECT phase, closed_at FROM bnb_shadow_positions WHERE arm = 'bnb_all60' AND plan = 'C'").get() as { phase: string; closed_at: number | null };
+  assert.equal(c.phase, "post_tp1"); assert.equal(c.closed_at, null);
+  // kiürülés → a maradék 0
+  ev(P1, T1, T0 + 90_000, 0.01, { side: "sell", liq: 0.01 });
+  now = T0 + 92_000; await sh.step();
+  const open = (db.prepare("SELECT count(*) n FROM bnb_shadow_positions WHERE closed_at IS NULL").get() as { n: number }).n;
+  assert.equal(open, 0);
+  assert.equal((db.prepare("SELECT close_reason FROM bnb_shadow_positions WHERE arm = 'bnb_all60' AND plan = 'C'").get() as { close_reason: string }).close_reason, "drained");
+  db.close();
+});

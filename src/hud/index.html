@@ -60,6 +60,14 @@ h1 span { background: var(--grad); -webkit-background-clip: text; background-cli
 .arm .nm span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .arm .k { color: var(--dim); font-size: 10px; display: block; }
 .arm .v { font-size: 14px; }
+.arm { position: relative; cursor: default; }
+.arm .tip { display: none; position: absolute; left: 8px; right: 8px; top: calc(100% + 6px); z-index: 20; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; color: var(--text); box-shadow: 0 10px 30px rgba(0,0,0,.35); font-weight: 400; }
+.arm:hover .tip, .arm:focus .tip, .arm:focus-within .tip { display: block; }
+.card:hover, .card:focus-within { position: relative; z-index: 30; } /* a buborék a következő kártya fölé kerüljön */
+.arm .tip .tl { color: var(--muted); margin-top: 6px; }
+.arm .tip .tl:first-child { margin-top: 0; }
+.arm .tip .op { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; }
+.arm .tip b { color: var(--text); }
 .arm.head { background: none; padding-top: 0; padding-bottom: 0; color: var(--dim); font-size: 11px; }
 .tag { font-size: 10px; padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,0.08); color: var(--muted); }
 .tag.star { background: var(--grad); color: #0b0d1a; font-weight: 700; }
@@ -140,10 +148,12 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
 
   <section class="grid row2 sec">
     <div class="card">
-      <div class="ttl"><h2>🔵 Base stratégiák</h2><small>1$ mérés · átlag · n · Σ · /nap</small></div>
+      <div class="ttl"><h2>🔵 Base stratégiák</h2><small>1$ mérés · átlag · n · Σ · /nap · vidd rá az egeret a részletekhez</small></div>
       <div class="arms" id="arms-base"></div>
       <div class="ttl" style="margin-top:16px"><h2>🟣 Robinhood</h2><small>pregrad és graduáció</small></div>
       <div class="arms" id="arms-rh"></div>
+      <div class="ttl" style="margin-top:16px"><h2>🟡 BNB árnyék</h2><small id="bnb-note">PancakeSwap · ki 2×/−40%</small></div>
+      <div class="arms" id="arms-bnb"></div>
       <div class="ttl" style="margin-top:16px"><h2>📉 Alapvonalak</h2><small>viszonyítás</small></div>
       <div class="arms" id="arms-bl"></div>
     </div>
@@ -243,12 +253,15 @@ function renderSummary(s) {
       const m = el("div", "v mono " + cls(r.mean), r.n ? `${sgn(r.mean)} · ${r.n}` : "–");
       const sm = el("div", "v mono hide-s " + cls(r.sum), r.n ? sgn(r.sum, 1) : "–");
       const pd = el("div", "v mono " + cls(r.perDay), r.perDay === null ? "–" : sgn(r.perDay, 1));
-      row.append(nm, m, sm, pd); box.append(row);
+      row.append(nm, m, sm, pd, armTip(r, s.live.sizeUsd)); row.tabIndex = 0; box.append(row);
     }
   };
   armList("arms-base", [...s.base].sort((a, b) => (b.perDay ?? -1e9) - (a.perDay ?? -1e9)), s.live.arm, "base");
   armList("arms-rh", s.rh, null, null);
   armList("arms-bl", s.baselines, null, null);
+  armList("arms-bnb", s.bnb?.arms ?? [], null, null);
+  const sk = s.bnb?.skips ?? {}, skN = Object.values(sk).reduce((a, b) => a + b, 0);
+  $("bnb-note").textContent = `PancakeSwap · ki 2×/−40% · kiszűrve ${skN} (honeypot ${sk.honeypot ?? 0})`;
 
   // felvevők
   const rec = $("rec"); rec.replaceChildren();
@@ -260,6 +273,24 @@ function renderSummary(s) {
     mini("🥞 PancakeSwap", n(s.recorders.pancake.launches), "valódi indítás"),
     mini("📣 Listázás", n(s.recorders.listings), "esemény"),
   );
+}
+
+/** Egér-ráhúzásra: a kar nyitott pozíciói és a tőkeigény (most / valaha egyszerre a legtöbb), élő belépő-mérettel. */
+function armTip(r, size) {
+  const tip = el("div", "tip");
+  const usd = (n) => `${(n * size).toFixed(2)} $`;
+  const when = (ms) => ms ? new Date(ms).toLocaleString("hu-HU", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–";
+  const line = (html) => { const d = el("div", "tl"); d.append(...html); return d; };
+  const b = (t) => el("b", "", t);
+  tip.append(line(["Nyitva most: ", b(String(r.open ?? 0)), ` → élesben ${usd(r.open ?? 0)} (${size.toFixed(2)} $/pozíció)`]));
+  if (r.peak) tip.append(line(["Legtöbb egyszerre: ", b(String(r.peak.n)), ` (${when(r.peak.at)}) → max tőkeigény ≈ `, b(usd(r.peak.n)), " + gáz"]));
+  if (r.plans) tip.append(line(["Tervek: ", ...r.plans.map((p) => `${p.plan} ${p.n ? sgn(p.mean) + " (n" + p.n + ")" : "–"}  `)]));
+  const list = r.openList ?? [];
+  if (list.length) {
+    tip.append(line([`Nyitott pozíciók${(r.open ?? 0) > list.length ? ` (a legfrissebb ${list.length})` : ""}:`]));
+    for (const o of list) { const d = el("div", "op mono"); d.append(el("span", "", o.symbol), el("span", cls(o.x === null ? null : o.x - 1), o.x === null ? "–" : `${o.x.toFixed(2)}x`), el("span", "", o.ageMin < 120 ? `${Math.round(o.ageMin)} p` : `${(o.ageMin / 60).toFixed(1)} ó`)); tip.append(d); }
+  } else tip.append(line(["Nincs nyitott pozíció."]));
+  return tip;
 }
 
 function renderSystem(x) {

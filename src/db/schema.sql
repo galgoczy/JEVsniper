@@ -367,3 +367,17 @@ CREATE TABLE IF NOT EXISTS sol_amm_snapshots (
 CREATE TABLE IF NOT EXISTS sol_amm_outcomes (
   pool TEXT PRIMARY KEY, ref_price REAL NOT NULL, ref_at INTEGER NOT NULL, max_x REAL NOT NULL, min_x REAL NOT NULL, min_pool_quote REAL, done_at INTEGER
 );
+
+-- 2026-10-07: BNB / PancakeSwap árnyékkarok (bnb_all60, bnb_whale) – saját tábla (a positions tábla a tokens-hez kötött, Base/Robinhood)
+CREATE TABLE IF NOT EXISTS bnb_shadow_positions (
+  id INTEGER PRIMARY KEY,
+  pair TEXT NOT NULL, token TEXT NOT NULL, arm TEXT NOT NULL, plan TEXT NOT NULL,
+  signal_at INTEGER NOT NULL, opened_at INTEGER NOT NULL, entry_price REAL NOT NULL, size_usd REAL NOT NULL, size_bnb REAL NOT NULL,
+  tokens REAL NOT NULL, tokens_left REAL NOT NULL, received_bnb REAL NOT NULL DEFAULT 0, txs INTEGER NOT NULL DEFAULT 1,
+  liq_at_entry REAL, phase TEXT NOT NULL DEFAULT 'open', peak_price REAL, last_price REAL, last_at INTEGER,
+  closed_at INTEGER, close_reason TEXT, net_usd REAL,
+  UNIQUE(pair, arm, plan)
+);
+CREATE INDEX IF NOT EXISTS idx_bnb_shadow_open ON bnb_shadow_positions(closed_at);
+-- jelzések, amelyeknél NEM nyílt pozíció (honeypot-próba, hiba) – a szűrés hatásának méréséhez
+CREATE TABLE IF NOT EXISTS bnb_shadow_skips (pair TEXT NOT NULL, arm TEXT NOT NULL, at INTEGER NOT NULL, reason TEXT NOT NULL, PRIMARY KEY (pair, arm));

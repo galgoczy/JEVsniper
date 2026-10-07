@@ -44,10 +44,11 @@ export class PancakeRecorder {
   private shells = new Map<string, Shell>();
   private lastShellCheck = 0;
   stats = { lateSnaps: 0, shells: 0, pairs: 0, trades: 0, snapshots: 0, errors: 0, tracked: 0, waiting: 0, lastBlock: 0n };
-  constructor(private d: { db: DB; rpcUrl?: string; pollMs?: number; client?: PublicClient; now?: () => number }) {
+  constructor(private d: { db: DB; rpcUrl?: string; pollMs?: number; client?: PublicClient; now?: () => number; onEvent?: (e: import("./shadow.js").PairEvent) => void; onStep?: () => Promise<void> }) {
     this.c = d.client ?? (createPublicClient({ chain: bsc, transport: http((d.rpcUrl ?? BNB_DEFAULT_RPC).split(",")[0]!.trim(), { timeout: 15_000, retryCount: 1 }) }) as PublicClient);
   }
   private now() { return (this.d.now ?? Date.now)(); }
+  get client() { return this.c; }
   start() { this.restore(); this.timer = setInterval(() => void this.tick(), this.d.pollMs ?? 5_000); void this.tick(); }
 
   /** Újraindítás után a 24 órán belüli indítások kimenet-követésének visszatöltése (a pillanatkép-ablakok késznek számítanak; a csúcs/mélypont/likviditás az 5 perces getReserves-ből folytatódik). */
@@ -90,6 +91,7 @@ export class PancakeRecorder {
       if (nowMs - this.lastShellCheck >= SHELL_CHECK_MS) { this.lastShellCheck = nowMs; await this.checkShells(head, nowMs); }
       this.flush();
       if (nowMs - this.lastOutcome >= OUTCOME_EVERY_MS) { this.lastOutcome = nowMs; await this.refreshOutcomes(); }
+      if (this.d.onStep) await this.d.onStep().catch((e) => log.debug("BNB árnyék hiba", { error: (e as Error).message.slice(0, 160) }));
     } catch (e) { this.stats.errors++; log.debug("PancakeSwap felvevő hiba", { error: (e as Error).message.slice(0, 160) }); }
     finally { this.busy = false; }
   }
@@ -162,6 +164,7 @@ export class PancakeRecorder {
         const wIn = Number(p.wbnbIs0 ? a.amount0In : a.amount1In) / 1e18, wOut = Number(p.wbnbIs0 ? a.amount0Out : a.amount1Out) / 1e18;
         const isBuy = wIn > 0 && wOut === 0, at = this.atOf(head, nowMs, l.blockNumber ?? head);
         if (isBuy) { p.buys++; p.bnbIn += wIn; p.buyers.add(String(a.to).toLowerCase()); } else { p.sells++; p.bnbOut += wOut; }
+        this.d.onEvent?.({ pair: p.pair, token: p.token, createdAt: p.createdAt, at, kind: "trade", side: isBuy ? "buy" : "sell", bnb: isBuy ? wIn : wOut, to: String(a.to), price: p.price, liq: p.liq });
         if (at - p.createdAt <= TRADES_UNTIL_SEC * 1000 && p.tradesStored < TRADES_CAP) {
           if (ins.run(p.pair, l.transactionHash, l.logIndex ?? 0, Number(l.blockNumber ?? 0n), at, isBuy ? "buy" : "sell", String(a.to).toLowerCase(), isBuy ? wIn : wOut, p.price).changes) { p.tradesStored++; this.stats.trades++; }
         }
@@ -208,6 +211,7 @@ export class PancakeRecorder {
         const rW = Number(p.wbnbIs0 ? r0 : r1), rT = Number(p.wbnbIs0 ? r1 : r0);
         p.liq = rW / 1e18; p.minLiq = Math.min(p.minLiq, p.liq); p.peakLiq = Math.max(p.peakLiq, p.liq);
         if (rT > 0 && p.refPrice) { p.price = rW / rT; const x = p.price / p.refPrice; p.maxX = Math.max(p.maxX, x); p.minX = Math.min(p.minX, x); }
+        if (rT > 0) this.d.onEvent?.({ pair: p.pair, token: p.token, createdAt: p.createdAt, at: this.now(), kind: "reserve", price: rW / rT, liq: p.liq });
         this.writeOutcome(p, this.now(), false);
       });
     }
