@@ -317,6 +317,7 @@ function armTip(r, size) {
   if (r.plans) {
     const m = r.plans[0];
     if (m && m.n) tip.append(line(["Adóval (mért): ", b(sgn(m.mean)), ` · adó nélkül ${sgn(m.rawMean)} · adó mérve ${m.measured}/${m.n}, adózó token ${m.taxed}`]));
+    if (r.sim) tip.append(line(["Szimuláció (vétel+eladás): saját cím átment ", b(`${r.sim.meOk}/${r.sim.n}`), `, friss cím ${r.sim.freshOk}/${r.sim.n} · szűrővel: ${r.sim.filteredN ? sgn(r.sim.filteredMean) + " (n" + r.sim.filteredN + ")" : "–"}`]));
     tip.append(line(["Tervek (adóval): ", ...r.plans.map((p) => `${p.plan} ${p.n ? sgn(p.mean) + " (n" + p.n + ")" : "–"}  `)]));
   }
   const list = r.openList ?? [];

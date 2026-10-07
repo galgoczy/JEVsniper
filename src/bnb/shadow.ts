@@ -2,6 +2,7 @@ import { parseAbi, getAddress, type PublicClient } from "viem";
 import type { DB } from "../db/index.js";
 import { log } from "../logger.js";
 import { measureTax } from "./tax.js";
+import { simRoundTrip, FRESH_ADDRESS } from "./simtrade.js";
 
 /**
  * BNB / PancakeSwap árnyékkarok (2026-10-07) – a harmadik visszajátszási kör két jelöltje, ELŐRE rögzítve (docs/FELTETELEZESEK.md):
@@ -36,8 +37,9 @@ export class BnbShadow {
   private pending = new Map<string, { pair: string; arm: string; signalAt: number }>();
   private checking = new Set<string>();
   private delayed: Array<{ pair: string; arm: string; signalAt: number; dueAt: number }> = [];
-  stats = { signals: 0, opened: 0, closed: 0, honeypot: 0, checkErr: 0, noHolder: 0, late: 0, taxMeasured: 0 };
+  stats = { signals: 0, opened: 0, closed: 0, honeypot: 0, checkErr: 0, noHolder: 0, late: 0, taxMeasured: 0, simulated: 0 };
   constructor(private d: { db: DB; client: PublicClient; receiptClient?: PublicClient; bnbUsd: () => number | null; sizeUsd: () => number; now?: () => number;
+    /** Vétel+eladás szimuláció (2026-10-08): a saját cím (élő tárca); ha nincs, nem fut. */ simAddress?: `0x${string}`;
     /** ÉLŐ kar (2026-10-07): az eladhatósági próba után ide fut a jelzés; a kör végén a kiszállási döntés az árnyék állapotával. */
     live?: { onSignal: (pair: string, token: string, arm: string, price: number, liq: number, signalAt: number) => Promise<void>; step: (state: (pair: string) => { price: number; liq: number; hi: number; lo: number } | undefined) => Promise<void> } }) { this.restore(); }
   private now() { return (this.d.now ?? Date.now)(); }
@@ -98,6 +100,7 @@ export class BnbShadow {
       const res = await this.sellable(pair, s);
       if (res !== "ok") { this.skip(pair, arm, this.now(), res); if (res === "honeypot") this.stats.honeypot++; else if (res === "no_holder") this.stats.noHolder++; else this.stats.checkErr++; return; }
       const usd = this.d.bnbUsd(); if (!usd) { this.skip(pair, arm, this.now(), "no_bnb_usd"); return; }
+      if (this.d.simAddress) await this.simulate(pair, s.token, arm, usd).catch(() => undefined); // mérés: az élő vétel ELŐTT, hogy szűrőként is használható legyen
       this.openPos(pair, s, arm, BNB_PLANS, signalAt, usd);
       if (this.d.live) void this.d.live.onSignal(pair, s.token, arm, s.price, s.liq, signalAt).catch((e) => log.warn("BNB élő jelzés hiba", { error: (e as Error).message.slice(0, 160) }));
       const now = this.now();
@@ -173,6 +176,15 @@ export class BnbShadow {
     }
     if (!this.open.has(p.id)) return;
     this.d.db.prepare("UPDATE bnb_shadow_positions SET peak_price = ?, last_price = ?, last_at = ? WHERE id = ?").run(p.peak, price, now, p.id);
+  }
+
+  /** Vétel+eladás szimuláció három változatban (saját cím 0,2 / 0,05 gwei, friss cím 0,05 gwei), párhuzamosan; eredmény a bnb_sim_checks-be. */
+  private async simulate(pair: string, token: string, arm: string, usd: number) {
+    const t0 = Date.now(), value = BigInt(Math.floor(2 / usd * 1e18)), tk = getAddress(token), me = getAddress(this.d.simAddress!);
+    const [hi, lo, fr] = await Promise.all([simRoundTrip(this.d.client, me, tk, value, 200_000_000n), simRoundTrip(this.d.client, me, tk, value, 50_000_000n), simRoundTrip(this.d.client, FRESH_ADDRESS, tk, value, 50_000_000n)]);
+    this.d.db.prepare(`INSERT OR IGNORE INTO bnb_sim_checks(pair, arm, at, token, me_hi_stage, me_hi_ratio, me_lo_stage, me_lo_ratio, fresh_stage, fresh_ratio, ms, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(pair, arm, this.now(), token, hi.stage, hi.ratio, lo.stage, lo.ratio, fr.stage, fr.ratio, Date.now() - t0, hi.error ?? lo.error ?? fr.error ?? null);
+    this.stats.simulated++;
   }
 
   /** Token-adó mérése a pár felvett kötéseinek nyugtáiból; az eredmény a pár összes pozíciójára íródik (ahol még nincs meg). */

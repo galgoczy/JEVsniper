@@ -404,3 +404,10 @@ CREATE TABLE IF NOT EXISTS bnb_compound_state (
   initial_capital_usd REAL NOT NULL, capital_usd REAL NOT NULL, reserve_usd REAL NOT NULL DEFAULT 0,
   position_usd REAL NOT NULL, last_recalc_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
+
+-- 2026-10-08: vétel+eladás szimuláció minden BNB-jelzésnél (honeypot-mérés; src/bnb/simtrade.ts). stage 5 = siker, 4 = eladás bukott.
+CREATE TABLE IF NOT EXISTS bnb_sim_checks (
+  pair TEXT NOT NULL, arm TEXT NOT NULL, at INTEGER NOT NULL, token TEXT NOT NULL,
+  me_hi_stage INTEGER, me_hi_ratio REAL, me_lo_stage INTEGER, me_lo_ratio REAL, fresh_stage INTEGER, fresh_ratio REAL, ms INTEGER, error TEXT,
+  PRIMARY KEY (pair, arm)
+);

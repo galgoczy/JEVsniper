@@ -66,7 +66,17 @@ export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
     const openRows = db.prepare(`SELECT token, opened_at o, entry_price e, last_price l FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND closed_at IS NULL ORDER BY opened_at DESC`).all(arm, PLANS[0]) as Array<{ token: string; o: number; e: number; l: number | null }>;
     const all = db.prepare(`SELECT opened_at o, closed_at c FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND opened_at > ?`).all(arm, PLANS[0], sinceMs) as Array<{ o: number; c: number | null }>;
     const d = main.first ? activeDays(main.first, now) : 0;
-    return { arm, label, chain: "bnb", window: 0, n: main.n, mean: main.mean, sum: main.sum, perDay: d >= 0.25 ? main.sum / d : null, open: openRows.length,
+    // vétel+eladás szimuláció (2026-10-08): hány jelzés ment át a saját címről; a szimuláción átment pozíciók eredménye (= a szűrő hatása)
+    let sim: { n: number; meOk: number; freshOk: number; filteredN: number; filteredMean: number | null } | null = null;
+    try {
+      const base = arm.replace(/_d(5|10)$/, "");
+      const r = db.prepare("SELECT COUNT(*) n, SUM(me_hi_stage = 5) me, SUM(fresh_stage = 5) fr FROM bnb_sim_checks WHERE arm = ? AND at > ?").get(base, sinceMs) as { n: number; me: number | null; fr: number | null };
+      const f = db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t FROM bnb_shadow_positions p JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ?
+        WHERE p.arm = ? AND p.plan = 'tp2_sl40' AND p.closed_at IS NOT NULL AND c.me_hi_stage = 5`).all(base, arm) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null }>;
+      const fv = f.map((x) => taxedNet(x.v, x.s, x.txs, 0.006, x.b ?? 0, x.t ?? 0)!);
+      if (r.n) sim = { n: r.n, meOk: r.me ?? 0, freshOk: r.fr ?? 0, filteredN: fv.length, filteredMean: fv.length ? fv.reduce((a, b) => a + b, 0) / fv.length : null };
+    } catch { /* nincs tábla */ }
+    return { arm, label, chain: "bnb", window: 0, n: main.n, mean: main.mean, sum: main.sum, perDay: d >= 0.25 ? main.sum / d : null, open: openRows.length, sim,
       plans, openList: openRows.slice(0, 12).map((r) => ({ symbol: `${r.token.slice(0, 6)}…${r.token.slice(-4)}`, x: r.l && r.e ? r.l / r.e : null, ageMin: (now - r.o) / 60_000 })), peak: peakConcurrent(all, now) };
   });
   const skips = Object.fromEntries((db.prepare("SELECT reason, count(*) n FROM bnb_shadow_skips WHERE at > ? GROUP BY reason").all(sinceMs) as Array<{ reason: string; n: number }>).map((r) => [r.reason, r.n]));
