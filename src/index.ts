@@ -32,6 +32,7 @@ import { FlipArm, FLIP_ARM } from "./graduation/flip.js";
 import { BnbRecorder } from "./bnb/recorder.js";
 import { PancakeRecorder } from "./bnb/pancake.js";
 import { BnbShadow } from "./bnb/shadow.js";
+import { BnbLive } from "./bnb/live.js";
 import { currentSince } from "./analysis/periods.js";
 import { BNB_RECEIPT_RPC } from "./bnb/addresses.js";
 import { createPublicClient, http, type PublicClient } from "viem";
@@ -78,6 +79,7 @@ async function main() {
         out.push(`${r.symbol ?? r.address}: ${res.unsellable ? "NEM ELADHATÓ" : "eladva"} ${res.hash ?? ""}`);
       } catch (e) { out.push(`${r.symbol ?? r.address}: hiba ${(e as Error).message.slice(0, 80)}`); }
     }
+    if (bnbLive) out.push(await bnbLive.panic().catch((e) => `BNB pánik hiba: ${(e as Error).message.slice(0, 80)}`)); // BNB élő pozíciók is (2026-10-07)
     return out.length ? out.join("\n") : "nincs nyitott élő pozíció";
   };
   const tg = new Telegram(env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, cfg.telegram.poll_interval_ms);
@@ -146,7 +148,11 @@ async function main() {
   const bnbUsd = () => { const r = db.prepare("SELECT value FROM meta WHERE key = 'bnb_usd'").get() as { value: string } | undefined; const v = Number(r?.value); return v > 0 ? v : null; };
   const pcsRecorder = cfg.bnb.enabled && cfg.bnb.pancake ? new PancakeRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms,
     onEvent: (e) => bnbShadow?.onEvent(e), onStep: async () => { await bnbShadow?.step(); } }) : null;
-  if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, receiptClient: createPublicClient({ chain: bsc, transport: http(BNB_RECEIPT_RPC, { timeout: 15_000, retryCount: 1 }) }) as PublicClient, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg) });
+  // BNB ÉLŐ végrehajtó (2026-10-07, a felhasználó kérésére): csak bnb_live.enabled ÉS bnb_live.mode = live mellett küld tranzakciót; ugyanaz a tárca
+  const bnbLive = pcsRecorder ? new BnbLive({ db, cfg, privateKey: env.WALLET_PRIVATE_KEY as `0x${string}`, rpcUrl: env.BNB_RPC_URL || undefined, bnbUsd, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) }) : null;
+  if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, receiptClient: createPublicClient({ chain: bsc, transport: http(BNB_RECEIPT_RPC, { timeout: 15_000, retryCount: 1 }) }) as PublicClient, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg),
+    live: bnbLive && cfg.bnb_live.enabled ? { onSignal: (pair, token, arm, price, liq, at) => bnbLive.onSignal(pair, token, arm, price, liq, at), step: (st) => bnbLive.step(st) } : undefined });
+  if (bnbLive && cfg.bnb_live.enabled) log.info(`BNB élő kar: ${cfg.bnb_live.arm}, ${cfg.bnb_live.position_usd} USD, max ${cfg.bnb_live.max_open} nyitott, mód: ${cfg.bnb_live.mode}`);
   pcsRecorder?.start();
   const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
   solRecorder?.start();
@@ -221,6 +227,7 @@ async function main() {
     `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
     ...(bnbRecorder ? [`BNB felvevő: ${bnbRecorder.stats.tokens} token, ${bnbRecorder.stats.trades} kötés, ${bnbRecorder.stats.grads} graduáció (indulás óta), ${bnbRecorder.stats.errors} hiba, blokk ${bnbRecorder.stats.lastBlock}`] : []),
+    ...(bnbLive && cfg.bnb_live.enabled ? [`BNB ÉLŐ (${cfg.bnb_live.arm}, ${cfg.bnb_live.mode}): ${bnbLive.stats.signals} jelzés, ${bnbLive.stats.buys} vétel, ${bnbLive.stats.sells} eladás, ${bnbLive.openCount} nyitott, hiba ${bnbLive.stats.failed}, blokkolt ${bnbLive.stats.blocked}`] : []),
     ...(bnbShadow ? [`BNB árnyék: ${bnbShadow.stats.signals} jelzés, ${bnbShadow.stats.opened} belépés, ${bnbShadow.stats.closed} zárás; kiszűrve: honeypot ${bnbShadow.stats.honeypot}, nincs tulajdonos ${bnbShadow.stats.noHolder}, hiba ${bnbShadow.stats.checkErr}, késő ${bnbShadow.stats.late}`] : []),
     ...(pcsRecorder ? [`PancakeSwap felvevő: ${pcsRecorder.stats.shells} új WBNB-pár (héj), ${pcsRecorder.stats.waiting} vár likviditásra, ${pcsRecorder.stats.pairs} valódi indítás, ${pcsRecorder.stats.trades} kötés, ${pcsRecorder.stats.snapshots} pillanatkép, követett ${pcsRecorder.stats.tracked}, hiba ${pcsRecorder.stats.errors}`] : []),
     ...(solRecorder ? [`SOL felvevő: ${solRecorder.stats.tokens} token, ${solRecorder.stats.trades} kötés mentve, ${solRecorder.stats.snapshots} pillanatkép, ${solRecorder.stats.completes} görbe-teljesülés, ${solRecorder.stats.migrations} migráció, követett ${solRecorder.stats.tracked}, túlélő ${solRecorder.stats.survivors}, újracsatlakozás ${solRecorder.stats.reconnects}, hiba ${solRecorder.stats.errors}`] : []),
@@ -239,7 +246,7 @@ async function main() {
     switch (cmd) {
       case "status": return status();
       case "stop": createStopFile("telegram /stop"); logEvent(db, "stop", "telegram"); return "⛔ STOP: nincs új belépés. /resume old fel.";
-      case "resume": removeStopFile(); logEvent(db, "resume", "telegram"); return "▶️ STOP feloldva.";
+      case "resume": removeStopFile(); bnbLive?.resetFailed(); logEvent(db, "resume", "telegram"); return "▶️ STOP feloldva.";
       case "panic": {
         logEvent(db, "panic", "telegram"); createStopFile("telegram /panic");
         await tg.send("🚨 PANIC: STOP beállítva, minden nyitott élő pozíció eladása indul…");

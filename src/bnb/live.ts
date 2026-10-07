@@ -18,7 +18,7 @@ import { log } from "../logger.js";
  *  - Védelmek: csak mode=live ÉS enabled; STOP-fájl; egymást követő hibák (max_consecutive_failed → szünet, /resume);
  *    max_open; napi veszteségkorlát (USD); BNB-egyenleg ≥ pozíció + gáz-tartalék; gázplafon USD-ben; sekély pár (min_liq_bnb).
  *  - Gáz: legacy gasPrice = max(lánc, gas_gwei) – a BSC-n az ár szerinti sorrend számít, ez ~0,03 USD/tx.
- * dry_run-ban csak „BELÉPNE” Telegram-jelzés; tranzakció nem megy ki.
+ * bnb_live.mode = dry_run: csak „BELÉPNE” Telegram-jelzés; tranzakció nem megy ki. (Külön kapcsoló a globális `mode`-tól, hogy a Base árnyékban maradhasson.)
  */
 const ROUTER_ABI = parseAbi([
   "function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)",
@@ -78,7 +78,7 @@ export class BnbLive {
     const { cfg, db } = this.d;
     if (!this.L.enabled || arm !== this.L.arm) return;
     this.stats.signals++;
-    if (cfg.mode === "dry_run") { await this.d.notify(`🧪 dry_run: a BNB élő kar (${arm}) BELÉPNE ${token} ${this.L.position_usd.toFixed(2)} USD-vel (likviditás ${liq.toFixed(1)} BNB)`); return; }
+    if (this.L.mode !== "live") { await this.d.notify(`🧪 dry_run: a BNB élő kar (${arm}) BELÉPNE ${token} ${this.L.position_usd.toFixed(2)} USD-vel (likviditás ${liq.toFixed(1)} BNB)`); return; }
     if ([...this.open.values()].some((p) => p.pair === pair)) return;
     const bal = await this.c.getBalance({ address: this.address }).then((b) => Number(formatEther(b))).catch(() => null);
     const why = this.block(liq, bal);
@@ -171,6 +171,46 @@ export class BnbLive {
     } finally { this.busy.delete(p.id); }
   }
 
+  /**
+   * Füstpróba (2026-10-07): ismert, likvid tokenből `usd` értékű vétel → approve → azonnali visszaeladás, ugyanazon az útvonalon,
+   * mint az élő kar. Bizonyítja, hogy a vétel, a jóváhagyás és az eladás tényleg működik, és megméri a késést/gázt. `arm = 'fustproba'`.
+   */
+  async smokeTest(token: Address, usd: number): Promise<string> {
+    const u = this.d.bnbUsd(); if (!u) throw new Error("nincs BNB/USD ár");
+    const L: string[] = []; const t0 = this.now();
+    const amountIn = BigInt(Math.floor(usd / u * 1e18)), path = [BNB.wbnb, token] as const;
+    const quoted = (await this.c.readContract({ address: BNB.pancakeV2Router, abi: ROUTER_ABI, functionName: "getAmountsOut", args: [amountIn, [...path]] }))[1]!;
+    const minOut = quoted * BigInt(Math.round((100 - this.L.buy_slippage_pct) * 100)) / 10000n;
+    const deadline = () => BigInt(Math.floor(this.now() / 1000) + this.d.cfg.execution.deadline_sec);
+    const before = await this.c.readContract({ address: token, abi: ERC20, functionName: "balanceOf", args: [this.address] });
+    const buy = await this.send({ to: BNB.pancakeV2Router, value: amountIn, abi: ROUTER_ABI, fn: "swapExactETHForTokensSupportingFeeOnTransferTokens", args: [minOut, [...path], this.address, deadline()] }, "fustproba_buy");
+    if (!buy.ok) throw new Error(`vétel sikertelen: ${buy.error}`);
+    const got = (await this.balanceAfter(token, before)) - before;
+    const dec = Number(await this.c.readContract({ address: token, abi: ERC20, functionName: "decimals" }).catch(() => 18));
+    L.push(`vétel: ${formatEther(amountIn)} BNB → ${(Number(got) / 10 ** dec).toFixed(6)} token (jegyzett ${(Number(quoted) / 10 ** dec).toFixed(6)}), ${buy.latencyMs} ms, gáz ${buy.gasBnb.toFixed(6)} BNB, ${buy.hash}`);
+    const id = Number(this.d.db.prepare(`INSERT INTO bnb_live_positions(pair, token, arm, signal_at, opened_at, spent_bnb, spent_usd, tokens, tokens_left, entry_price, liq_at_entry, gas_bnb, approved)
+      VALUES ('fustproba', ?, 'fustproba', ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0)`).run(token, t0, this.now(), Number(formatEther(amountIn)), usd, Number(got), Number(got), Number(formatEther(amountIn)) / (Number(got) / 10 ** dec), buy.gasBnb).lastInsertRowid);
+    this.fill(id, "buy", buy, Number(formatEther(amountIn)), Number(got) / 10 ** dec, null);
+    const pos: Pos = { id, pair: "fustproba", token, arm: "fustproba", openedAt: this.now(), spentBnb: Number(formatEther(amountIn)), spentUsd: usd, tokens: got, entry: 0, peak: 0, phase: "open", approved: false, sellAttempts: 0, decimals: dec };
+    await this.approve(pos);
+    L.push(`approve: ${pos.approved ? "ok" : "HIBA"}`);
+    const bal = await this.c.readContract({ address: token, abi: ERC20, functionName: "balanceOf", args: [this.address] });
+    const quotedOut = (await this.c.readContract({ address: BNB.pancakeV2Router, abi: ROUTER_ABI, functionName: "getAmountsOut", args: [bal, [token, BNB.wbnb]] }))[1]!;
+    const minOutSell = quotedOut * BigInt(Math.round((100 - this.L.sell_slippage_pct) * 100)) / 10000n;
+    const b0 = await this.c.getBalance({ address: this.address });
+    const sell = await this.send({ to: BNB.pancakeV2Router, value: 0n, abi: ROUTER_ABI, fn: "swapExactTokensForETHSupportingFeeOnTransferTokens", args: [bal, minOutSell, [token, BNB.wbnb], this.address, deadline()] }, "fustproba_sell");
+    if (!sell.ok) { this.fill(id, "sell", sell, 0, 0, null); throw new Error(`eladás sikertelen: ${sell.error} – a token a tárcában maradt`); }
+    const b1 = await this.c.getBalance({ address: this.address });
+    const received = Number(formatEther(b1 - b0)) + sell.gasBnb;
+    this.fill(id, "sell", sell, received, Number(bal) / 10 ** dec, null);
+    const gas = buy.gasBnb + sell.gasBnb + ((this.d.db.prepare("SELECT gas_bnb g FROM bnb_live_positions WHERE id = ?").get(id) as { g: number }).g - buy.gasBnb);
+    const net = (received - Number(formatEther(amountIn)) - gas) * u;
+    this.d.db.prepare("UPDATE bnb_live_positions SET tokens_left = 0, received_bnb = ?, gas_bnb = ?, phase = 'closed', closed_at = ?, close_reason = 'fustproba', net_usd = ? WHERE id = ?").run(received, gas, this.now(), net, id);
+    L.push(`eladás: ${(Number(bal) / 10 ** dec).toFixed(6)} token → ${received.toFixed(6)} BNB, ${sell.latencyMs} ms, gáz ${sell.gasBnb.toFixed(6)} BNB, ${sell.hash}`);
+    L.push(`összesen: ${this.now() - t0} ms; gáz ${gas.toFixed(6)} BNB (${(gas * u).toFixed(3)} USD); nettó ${net >= 0 ? "+" : ""}${net.toFixed(3)} USD (díjak+gáz)`);
+    return L.join("\n");
+  }
+
   /** /panic: minden nyitott élő BNB-pozíció eladása pánik-csúszással. */
   async panic(): Promise<string> {
     const list = [...this.open.values()]; let n = 0;
@@ -206,7 +246,7 @@ export class BnbLive {
   /** Egy tranzakció: becslés → gázplafon → küldés (legacy gasPrice) → nyugta. A kulcsot csak a viem account használja. */
   private async send(tx: { to: Address; value: bigint; abi: readonly unknown[]; fn: string; args: readonly unknown[] }, label: string): Promise<Sent> {
     const t0 = this.now();
-    if (this.d.cfg.mode === "dry_run") return { ok: false, hash: null, gasBnb: 0, error: "dry_run", latencyMs: 0 };
+    if (this.L.mode !== "live") return { ok: false, hash: null, gasBnb: 0, error: "dry_run", latencyMs: 0 };
     const data = encodeFunctionData({ abi: tx.abi, functionName: tx.fn, args: tx.args } as never);
     let gas: bigint;
     try { gas = await this.c.estimateGas({ account: this.account, to: tx.to, data, value: tx.value }); }

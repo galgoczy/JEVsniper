@@ -37,7 +37,9 @@ export class BnbShadow {
   private checking = new Set<string>();
   private delayed: Array<{ pair: string; arm: string; signalAt: number; dueAt: number }> = [];
   stats = { signals: 0, opened: 0, closed: 0, honeypot: 0, checkErr: 0, noHolder: 0, late: 0, taxMeasured: 0 };
-  constructor(private d: { db: DB; client: PublicClient; receiptClient?: PublicClient; bnbUsd: () => number | null; sizeUsd: () => number; now?: () => number }) { this.restore(); }
+  constructor(private d: { db: DB; client: PublicClient; receiptClient?: PublicClient; bnbUsd: () => number | null; sizeUsd: () => number; now?: () => number;
+    /** ÉLŐ kar (2026-10-07): az eladhatósági próba után ide fut a jelzés; a kör végén a kiszállási döntés az árnyék állapotával. */
+    live?: { onSignal: (pair: string, token: string, arm: string, price: number, liq: number, signalAt: number) => Promise<void>; step: (state: (pair: string) => { price: number; liq: number; hi: number; lo: number } | undefined) => Promise<void> } }) { this.restore(); }
   private now() { return (this.d.now ?? Date.now)(); }
 
   restore() {
@@ -74,6 +76,7 @@ export class BnbShadow {
     this.fillDelayed(now);
     // kiszállások
     for (const p of [...this.open.values()]) this.evaluate(p, now);
+    if (this.d.live) await this.d.live.step((pair) => { const s = this.st.get(pair); return s ? { price: s.price, liq: s.liq, hi: s.hi, lo: s.lo } : undefined; }).catch((e) => log.warn("BNB élő kör hiba", { error: (e as Error).message.slice(0, 160) }));
     for (const s of this.st.values()) { s.hi = s.price; s.lo = s.price; }
   }
 
@@ -96,6 +99,7 @@ export class BnbShadow {
       if (res !== "ok") { this.skip(pair, arm, this.now(), res); if (res === "honeypot") this.stats.honeypot++; else if (res === "no_holder") this.stats.noHolder++; else this.stats.checkErr++; return; }
       const usd = this.d.bnbUsd(); if (!usd) { this.skip(pair, arm, this.now(), "no_bnb_usd"); return; }
       this.openPos(pair, s, arm, BNB_PLANS, signalAt, usd);
+      if (this.d.live) void this.d.live.onSignal(pair, s.token, arm, s.price, s.liq, signalAt).catch((e) => log.warn("BNB élő jelzés hiba", { error: (e as Error).message.slice(0, 160) }));
       const now = this.now();
       for (const d of BNB_DELAYS_MS) this.delayed.push({ pair, arm: `${arm}_d${d / 1000}`, signalAt, dueAt: now + d });
       this.stats.opened++;

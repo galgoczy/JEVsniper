@@ -168,3 +168,53 @@ test("BNB árnyék késés-érzékenység: _d5 / _d10 az akkori áron; közben k
   assert.equal(d10.close_reason, "drained_before_fill"); assert.ok(d10.net_usd <= -1);
   db.close();
 });
+
+test("BNB élő végrehajtó: dry_run-ban nincs tx; élőben vétel+approve, 2×-nél eladás nettóval; blokkolások", async () => {
+  const { BnbLive } = await import("../src/bnb/live.js");
+  const { loadConfig } = await import("../src/config.js"); const cfg = loadConfig("config.yaml");
+  const db = openDb(":memory:");
+  let now = 1_790_000_000_000; const sent: Array<{ to: string; value: bigint; data: string }> = [];
+  let tokenBal = 0n, allowance = 0n, bnbBal = 20n * 10n ** 15n; // 0,02 BNB
+  const client = {
+    getBalance: async () => bnbBal,
+    getGasPrice: async () => 50_000_000n,
+    estimateGas: async () => 150_000n,
+    readContract: async (a: { functionName: string; args?: unknown[] }) => {
+      if (a.functionName === "getAmountsOut") { const amt = (a.args![0] as bigint); return [amt, amt * 1000n]; }
+      if (a.functionName === "balanceOf") return tokenBal;
+      if (a.functionName === "allowance") return allowance;
+      if (a.functionName === "decimals") return 18;
+      throw new Error("ismeretlen " + a.functionName);
+    },
+    waitForTransactionReceipt: async () => ({ status: "success", gasUsed: 150_000n, effectiveGasPrice: 200_000_000n }),
+  } as never;
+  const wallet = { sendTransaction: async (tx: { to: string; value: bigint; data: string }) => { sent.push(tx); const sel = tx.data.slice(0, 10);
+    if (sel === "0xb6f9de95") tokenBal += tx.value * 1000n;                 // swapExactETHForTokensSupportingFeeOnTransferTokens
+    else if (sel === "0x095ea7b3") allowance = (1n << 256n) - 1n;           // approve
+    else if (sel === "0x791ac947") { bnbBal += tokenBal * 2n / 1000n; tokenBal = 0n; } // swapExactTokensForETHSupportingFeeOnTransferTokens – 2× áron
+    return "0x" + "ab".repeat(32); } } as never;
+  const msgs: string[] = [];
+  const mk = (mode: "live" | "dry_run", extra: Record<string, unknown> = {}) => new BnbLive({ db, cfg: { ...cfg, bnb_live: { ...cfg.bnb_live, enabled: true, mode, arm: "bnb_whale", position_usd: 1.5, ...extra } }, privateKey: ("0x" + "11".repeat(32)) as `0x${string}`,
+    bnbUsd: () => 750, notify: async (m) => { msgs.push(m); }, client, wallet, receiptClient: client, now: () => now });
+  const dry = mk("dry_run");
+  await dry.onSignal("0xp1", "0x00000000000000000000000000000000000000b1", "bnb_whale", 1, 10, now);
+  assert.equal(sent.length, 0); assert.match(msgs[0]!, /BELÉPNE/);
+  const live = mk("live");
+  await live.onSignal("0xp1", "0x00000000000000000000000000000000000000b1", "bnb_all60", 1, 10, now); // más kar → semmi
+  await live.onSignal("0xp1", "0x00000000000000000000000000000000000000b1", "bnb_whale", 1, 1, now);   // sekély pár → blokk
+  assert.equal(sent.length, 0); assert.equal(live.stats.blocked, 1);
+  await live.onSignal("0xp1", "0x00000000000000000000000000000000000000b1", "bnb_whale", 1, 10, now);
+  await new Promise((r) => setTimeout(r, 20));                                                            // approve a háttérben
+  assert.equal(sent.length, 2); assert.equal(sent[0]!.value, BigInt(Math.floor(1.5 / 750 * 1e18)));
+  assert.equal(live.openCount, 1); assert.match(msgs[msgs.length - 1]!, /ÉLŐ VÉTEL/);
+  const row = db.prepare("SELECT approved, tokens FROM bnb_live_positions").get() as { approved: number; tokens: number };
+  assert.equal(row.approved, 1); assert.ok(row.tokens > 0);
+  // kör: a kör alatti csúcs 2,1× → eladás; a hamis lánc 2× áron fizet
+  now += 10_000;
+  await live.step(() => ({ price: 2.0, liq: 10, hi: 2.1, lo: 1.9 }));
+  assert.equal(sent.length, 3); assert.equal(live.openCount, 0);
+  const closed = db.prepare("SELECT close_reason, net_usd, received_bnb FROM bnb_live_positions").get() as { close_reason: string; net_usd: number; received_bnb: number };
+  assert.equal(closed.close_reason, "tp_2x"); assert.ok(closed.net_usd > 1.3 && closed.net_usd < 1.6, `net ${closed.net_usd}`); // ~+1,5 USD − gáz
+  assert.equal((db.prepare("SELECT count(*) n FROM bnb_live_fills WHERE status = 'success'").get() as { n: number }).n, 3);
+  db.close();
+});
