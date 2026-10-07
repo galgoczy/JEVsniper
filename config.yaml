@@ -223,7 +223,7 @@ bnb_live:
   enabled: true        # 2026-10-07 23:05: ÉLES – a felhasználó kérésére, a sikeres füstpróba után (~14 USD BNB a tárcán)
   mode: live           # KÜLÖN kapcsoló (a globális mode a Base-t vezérli, az marad dry_run): live = valódi BNB-tranzakciók
   arm: bnb_whale
-  position_usd: 1.5
+  position_usd: 2             # 2026-10-08: 1,5 → 2 USD (mint a Base alapméret); 2 × 4 = 8 USD lekötés a ~14 USD-ből
   max_open: 4
   daily_loss_limit_usd: 5
   max_consecutive_failed: 3
