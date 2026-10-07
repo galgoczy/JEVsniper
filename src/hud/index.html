@@ -504,6 +504,16 @@ $("pk-add").onclick = async () => {
 $("logout").onclick = async () => { await post("/auth/logout"); location.href = "/login"; };
 authState();
 refresh(); setInterval(() => refresh(false), 30_000);
+// 2026-10-08: az élő BNB-blokk és a gép-állapot 5 mp-enként (olcsó lekérdezés, külön a 30 mp-es teljes frissítéstől)
+let liveBusy = false;
+async function refreshLive() {
+  if (liveBusy || document.hidden) return; liveBusy = true;
+  try {
+    const d = await fetch("/api/live" + (token ? `?t=${encodeURIComponent(token)}` : ""), { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+    renderLive(d.bnbLive); renderSystem(d.system);
+  } catch { /* a teljes frissítés kezeli a hibát */ } finally { liveBusy = false; }
+}
+setInterval(refreshLive, 5_000);
 </script>
 </body>
 </html>

@@ -2,7 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
-import { hudSummary, hudPositions, hudFeed, hudWinners, hudPeriods } from "./data.js";
+import { hudSummary, hudPositions, hudFeed, hudWinners, hudPeriods, hudBnbLive } from "./data.js";
 import { currentSince } from "../analysis/periods.js";
 
 /**
@@ -14,7 +14,13 @@ const db = new Database(dbPath, { readonly: true, fileMustExist: true }) as unkn
 db.pragma("busy_timeout = 5000");
 const since = () => currentSince(cfg);
 
-parentPort!.on("message", (msg: { id: number }) => {
+parentPort!.on("message", (msg: { id: number; kind?: "all" | "live" }) => {
+  // 2026-10-08: a gyors (5 mp-es) élő-blokk csak az olcsó BNB-élő lekérdezést futtatja
+  if (msg.kind === "live") {
+    try { parentPort!.postMessage({ id: msg.id, data: { bnbLive: hudBnbLive(db, cfg), computedAt: Date.now() } }); }
+    catch (e) { parentPort!.postMessage({ id: msg.id, error: (e as Error).message.slice(0, 200) }); }
+    return;
+  }
   try {
     const s = since(), t = Date.now();
     const data = { summary: hudSummary(db, cfg, s), positions: hudPositions(db, cfg, s), feed: hudFeed(db, cfg, s), winners: hudWinners(db, cfg, s), periods: hudPeriods(db, cfg), computedAt: Date.now(), tookMs: 0 };

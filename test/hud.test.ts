@@ -66,6 +66,9 @@ test("HUD szerver: belépés nélkül 401 / átirányítás; jelszóval munkamen
   const all = await fetch(`${base}/api/all?fresh=1`, { headers: { cookie } }); assert.equal(all.status, 200);
   const aj = await all.json() as { summary: { mode: string }; feed: unknown[]; computedAt: number };
   assert.equal(aj.summary.mode, cfg.mode); assert.ok(Array.isArray(aj.feed) && aj.feed.length > 0); assert.ok(aj.computedAt > 0);
+  const lv = await fetch(`${base}/api/live`, { headers: { cookie } }); assert.equal(lv.status, 200);                 // gyors élő-blokk (5 mp)
+  const lj = await lv.json() as { bnbLive: { closed: unknown }; system: { cores: number } }; assert.ok(lj.bnbLive.closed); assert.ok(lj.system.cores > 0);
+  assert.equal((await fetch(`${base}/api/live`)).status, 401);
   // https-eredetről (Cloudflare mögül) a passkey-kihívás belépve kérhető
   const reg = await post("/auth/passkey/register/options", {}, { cookie, "x-forwarded-proto": "https", "x-forwarded-host": "tradehud.zentopia.hu" });
   assert.equal(reg.status, 200); assert.equal(((await reg.json()) as { rp: { id: string } }).rp.id, "tradehud.zentopia.hu");

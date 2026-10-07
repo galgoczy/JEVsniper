@@ -17,7 +17,7 @@ import { log } from "../logger.js";
 const CACHE_MS = 30_000, MIN_FRESH_MS = 5_000;
 type HudData = { summary: unknown; positions: unknown; feed: unknown; winners: unknown; computedAt: number; tookMs: number };
 class HudData_ {
-  private w: Worker; private seq = 0; private pending = new Map<number, (r: { data?: HudData; error?: string }) => void>();
+  private w: Worker; private seq = 0; private pending = new Map<number, (r: { data?: any; error?: string }) => void>(); // eslint-disable-line @typescript-eslint/no-explicit-any
   private last: HudData | null = null; private inflight: Promise<HudData> | null = null;
   constructor(dbPath: string, cfg: Config) {
     const ts = import.meta.url.endsWith(".ts");
@@ -35,6 +35,17 @@ class HudData_ {
       .then((d) => { this.last = d; return d; }).finally(() => { this.inflight = null; });
     this.w.postMessage({ id });
     return this.inflight;
+  }
+  /** Gyors élő-blokk (2026-10-08): 3 mp-es gyorsítótár, külön a nehéz összesítőtől. */
+  private lastLive: { data: unknown; at: number } | null = null; private liveInflight: Promise<unknown> | null = null;
+  getLive(): Promise<unknown> {
+    if (this.lastLive && Date.now() - this.lastLive.at < 3_000) return Promise.resolve(this.lastLive.data);
+    if (this.liveInflight) return this.liveInflight;
+    const id = ++this.seq;
+    this.liveInflight = new Promise((resolve, reject) => this.pending.set(id, (r) => (r.data ? resolve(r.data) : reject(new Error(r.error ?? "HUD-szál hiba")))))
+      .then((d) => { this.lastLive = { data: d, at: Date.now() }; return d; }).finally(() => { this.liveInflight = null; });
+    this.w.postMessage({ id, kind: "live" });
+    return this.liveInflight;
   }
   close() { void this.w.terminate(); }
 }
@@ -58,6 +69,7 @@ export function startHud(o: { db: DB; cfg: Config; port: number; host: string; t
         const json = (x: unknown) => { res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(x)); };
         if (url.pathname === "/api/all") return json({ ...(await data.get(url.searchParams.get("fresh") === "1")), system: sys.get() });
         if (url.pathname === "/api/system") return json(sys.get());
+        if (url.pathname === "/api/live") return json({ ...((await data.getLive()) as object), system: sys.get() });
         const one = { "/api/summary": "summary", "/api/positions": "positions", "/api/feed": "feed", "/api/winners": "winners" }[url.pathname] as keyof HudData | undefined;
         if (one) return json((await data.get(false))[one]);
         if (url.pathname === "/" || url.pathname === "/index.html") {
