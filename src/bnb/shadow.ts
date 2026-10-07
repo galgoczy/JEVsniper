@@ -74,7 +74,9 @@ export class BnbShadow {
   private signal(pair: string, arm: string, signalAt: number, now: number) {
     const key = `${pair}|${arm}`; if (this.done.has(key)) return;
     this.done.add(key); this.stats.signals++;
-    if (now - signalAt > ENTRY_MAX_LATE_MS) { this.skip(pair, arm, now, "late"); this.stats.late++; return; } // késve látott jelzés (pl. újraindítás): nem vesszük fel
+    if (now - signalAt > ENTRY_MAX_LATE_MS) { // késve látott jelzés (pl. újraindítás utáni visszaolvasás): nincs belépés
+      this.stats.late++; if (now - signalAt < 5 * 60_000) this.skip(pair, arm, now, "late"); return; // a régi (visszaolvasott) párokat nem naplózzuk
+    }
     this.pending.set(key, { pair, arm, signalAt });
   }
   private skip(pair: string, arm: string, at: number, reason: string) { this.d.db.prepare("INSERT OR IGNORE INTO bnb_shadow_skips(pair, arm, at, reason) VALUES (?,?,?,?)").run(pair, arm, at, reason); }

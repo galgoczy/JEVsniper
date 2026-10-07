@@ -87,6 +87,8 @@ export class PancakeRecorder {
         }
         db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('pcs_last_block', ?)").run(to.toString());
         this.stats.lastBlock = to;
+        // 2026-10-07: az árnyékkarok ne a (visszaolvasáskor akár 20 perces) kör végén lépjenek, hanem minden adag után – csak a láncfej közelében
+        if (this.d.onStep && head - to < 20n) await this.d.onStep().catch((e) => log.debug("BNB árnyék hiba", { error: (e as Error).message.slice(0, 160) }));
       }
       if (nowMs - this.lastShellCheck >= SHELL_CHECK_MS) { this.lastShellCheck = nowMs; await this.checkShells(head, nowMs); }
       this.flush();
