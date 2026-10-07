@@ -222,10 +222,10 @@ listing:
 bnb_live:
   enabled: true        # 2026-10-07 23:05: ÉLES – a felhasználó kérésére, a sikeres füstpróba után (~14 USD BNB a tárcán)
   mode: live           # KÜLÖN kapcsoló (a globális mode a Base-t vezérli, az marad dry_run): live = valódi BNB-tranzakciók
-  arm: bnb_whale
+  arm: bnb_all60              # 2026-10-08 00:45: bálna → minden indítás +60 mp (a felhasználó döntése: honeypot-szűrővel ez jobb, és nagy volumen → gyorsabb élő tapasztalat)
   position_usd: 0.8           # 2026-10-08 reggel: 0,8 USD (a felhasználó: újraindítás kisebb belépővel, élő tapasztalatért; ~3,8 USD a tárcán)
   max_open: 4
-  daily_loss_limit_usd: 5
+  daily_loss_limit_usd: 2      # 2026-10-08: 5 → 2 USD (sok kötés/óra; egy rossz óra se vigye el a tárcát)
   max_consecutive_failed: 3
   buy_slippage_pct: 12
   sell_slippage_pct: 15
