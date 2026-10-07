@@ -63,6 +63,11 @@ h1 span { background: var(--grad); -webkit-background-clip: text; background-cli
 .arm { position: relative; cursor: default; }
 .arm .tip { display: none; position: absolute; left: 8px; right: 8px; top: calc(100% + 6px); z-index: 20; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; color: var(--text); box-shadow: 0 10px 30px rgba(0,0,0,.35); font-weight: 400; }
 .arm:hover .tip, .arm:focus .tip, .arm:focus-within .tip { display: block; }
+details.fold > summary { cursor: pointer; list-style: none; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary h2::before { content: "▸ "; color: var(--muted); }
+details.fold[open] > summary h2::before { content: "▾ "; }
+details.fold:not([open]) > summary { margin-bottom: 0; }
 .card:hover, .card:focus-within { position: relative; z-index: 30; } /* a buborék a következő kártya fölé kerüljön */
 .arm .tip .tl { color: var(--muted); margin-top: 6px; }
 .arm .tip .tl:first-child { margin-top: 0; }
@@ -163,10 +168,10 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
     </div>
   </section>
 
-  <section class="card sec">
-    <div class="ttl"><h2>🏆 Nagy nyerők · mi hozza a pénzt</h2><small id="win-note">–</small></div>
+  <details class="card sec fold">
+    <summary class="ttl"><h2>🏆 Nagy nyerők · mi hozza a pénzt</h2><small id="win-note">–</small></summary>
     <div class="wins" id="wins"></div>
-  </section>
+  </details>
 
   <section class="grid row2 sec">
     <div class="card">

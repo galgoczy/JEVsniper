@@ -19,7 +19,7 @@ const RH_ARMS: Array<[string, number | "live"]> = [["rule_v2_strict", "live"], [
 const BASELINES: Array<[string, string, number | "live"]> = [["random_control", "base", "live"], ["base_uni_all", "base", "live"], ["copy_smart", "base", 0], ["pons_all", "robinhood", "live"]];
 const LABEL: Record<string, string> = {
   rule_v2: "v2", rule_v2_strict: "v2 strict", rule_v2_nofactory: "v2 nofactory", base_uni_hold: "uni hold", base_uni_hold_nofactory: "hold nofactory",
-  pons_pregrad_50: "pregrad 50", pons_pregrad_80: "pregrad 80", pons_flip95: "flip 95", grad_at: "grad at", grad_30s: "grad +30s", grad_15_all: "grad +15", random_control: "véletlen",
+  pons_pregrad_50: "pregrad 50", pons_pregrad_80: "pregrad 80", pons_flip95: "flip 95", grad_at: "grad at (optimista ár)", grad_30s: "grad +30s", grad_15_all: "grad +15", random_control: "véletlen",
   base_uni_all: "minden Base", copy_smart: "copy smart", pons_all: "minden PONS",
 };
 const dayKey = (ms: number) => new Date(ms).toLocaleDateString("sv-SE"); // helyi nap, ÉÉÉÉ-HH-NN
