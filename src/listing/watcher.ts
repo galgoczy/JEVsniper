@@ -12,11 +12,14 @@ import { simulate, LISTING_PLANS, type Sample } from "./sim.js";
  *    (az első 2 órában minden körben, utána 10 percenként). Az eredményt a sim.ts tervei számolják.
  *  - Valódi vétel nincs: a legtöbb listázott token nem v4 poolban kereskedik, arra még nincs végrehajtási útvonal.
  */
+/** Késleltetett belépéshez a pár minimális likviditása (USD) – a hivatalos címen nyitott porszem-poolok kiszűrésére. */
+export const LATE_MIN_LIQ_USD = 1000;
 export interface ListingDeps { db: DB; cfg: Config; fetch?: Fetch; notify: (m: string) => Promise<unknown> }
 
 export class ListingWatcher {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
+  private lastLateCheck = 0;
   stats = { polls: 0, events: 0, samples: 0, errors: 0 };
   constructor(private d: ListingDeps) {}
   private get f(): Fetch { return this.d.fetch ?? fetch; }
@@ -88,13 +91,38 @@ export class ListingWatcher {
     this.stats.events++;
     if (price !== null) db.prepare("INSERT OR IGNORE INTO listing_prices(event_id, at, price_usd, liq_usd) VALUES (?,?,?,?)").run(Number(r.lastInsertRowid), nowMs(), price, liq);
     const where = address ? `${chain ?? "?"} ${address}` : "cím nélkül";
-    await this.d.notify(`📣 Listázás (${source}, ${kind}): ${symbol} – ${where}\n${note}\n${price !== null ? `árnyék-belépés ${price.toPrecision(4)} USD, likviditás ${liq !== null ? Math.round(liq) + " USD" : "?"} (${dex})` : "ár nem elérhető – nincs belépés"}`);
+    await this.d.notify(`📣 Listázás (${source}, ${kind}): ${symbol} – ${where}\n${note}\n${price !== null ? `árnyék-belépés ${price.toPrecision(4)} USD, likviditás ${liq !== null ? Math.round(liq) + " USD" : "?"} (${dex})` : "ár nem elérhető (nincs DEX-pool a hivatalos címen) – 7 napig 5 percenként figyelem, és amint lesz pool, belépés"}`);
+  }
+
+  /**
+   * Késleltetett belépés (2026-10-07, WHUF-eset): ha az eseménykor még nem volt ár (nincs DEX-pool a token HIVATALOS címén –
+   * pl. a Coinbase előbb listáz, a lánc-likviditás később jön), 7 napig 5 percenként újranézzük; az első ≥ LATE_MIN_LIQ_USD
+   * likviditású pár áránál lépünk be (entry_at = akkor). A szimuláció ettől az időponttól számol.
+   */
+  private async lateEntries(now: number) {
+    const { db, cfg } = this.d;
+    if (now - this.lastLateCheck < 5 * 60_000) return; this.lastLateCheck = now;
+    const evs = db.prepare(`SELECT id, symbol, source, kind, chain, address, detected_at FROM listing_events WHERE address IS NOT NULL AND entry_price_usd IS NULL AND detected_at > ?`)
+      .all(now - cfg.listing.track_days * 86_400_000) as Array<{ id: number; symbol: string; source: string; kind: string; chain: string | null; address: string; detected_at: number }>;
+    if (!evs.length) return;
+    const m = await dexTokens(this.f, [...new Set(evs.map((e) => e.address))]);
+    for (const e of evs) {
+      const p = m.get(e.address.toLowerCase());
+      if (!p?.priceUsd || (p.liqUsd ?? 0) < LATE_MIN_LIQ_USD) continue;
+      const mins = Math.round((now - e.detected_at) / 60_000);
+      db.prepare("UPDATE listing_events SET entry_price_usd = ?, entry_liq_usd = ?, dex_id = ?, entry_at = ?, note = note || ? WHERE id = ? AND entry_price_usd IS NULL")
+        .run(p.priceUsd, p.liqUsd, `${p.chainId}/${p.dexId}`, now, ` · késleltetett belépés ${mins} perccel az esemény után (ekkor jelent meg DEX-pool)`, e.id);
+      db.prepare("INSERT OR IGNORE INTO listing_prices(event_id, at, price_usd, liq_usd) VALUES (?,?,?,?)").run(e.id, now, p.priceUsd, p.liqUsd);
+      await this.d.notify(`📣 Listázás – késleltetett árnyék-belépés: ${e.symbol} (${e.source}, ${e.kind}), ${mins} perccel az esemény után
+ár ${p.priceUsd.toPrecision(4)} USD, likviditás ${Math.round(p.liqUsd ?? 0)} USD (${p.chainId}/${p.dexId})`);
+    }
   }
 
   /** Ár-mintavétel az aktív eseményekre (DexScreener, 30-as kötegekben). */
   private async sample() {
     const { db, cfg } = this.d;
     const now = nowMs();
+    await this.lateEntries(now).catch((e) => log.debug("listázás késleltetett belépés hiba", { error: (e as Error).message.slice(0, 120) }));
     const evs = db.prepare(`SELECT e.id, e.address, e.detected_at, (SELECT MAX(at) FROM listing_prices p WHERE p.event_id = e.id) last
       FROM listing_events e WHERE e.address IS NOT NULL AND e.entry_price_usd IS NOT NULL AND e.detected_at > ?`).all(now - cfg.listing.track_days * 86_400_000) as Array<{ id: number; address: string; detected_at: number; last: number | null }>;
     const due = evs.filter((e) => now - e.detected_at < 2 * 3_600_000 || !e.last || now - e.last >= 10 * 60_000);
@@ -107,7 +135,7 @@ export class ListingWatcher {
 
 /** Összesítés tervenként (riport, /allas): esemény-szám, átlagos érték 1 USD-re, lezártak száma. */
 export function listingSummary(db: DB, cfg: Config, sinceMs: number): { events: number; plans: Array<{ name: string; n: number; mean: number; closed: number }>; rows: Array<{ symbol: string; source: string; kind: string; detected_at: number; values: Record<string, number> }> } {
-  const evs = db.prepare("SELECT id, source, kind, symbol, chain, detected_at, entry_price_usd, entry_liq_usd FROM listing_events WHERE detected_at > ? AND entry_price_usd IS NOT NULL ORDER BY detected_at").all(sinceMs) as Array<{ id: number; source: string; kind: string; symbol: string; chain: string | null; detected_at: number; entry_price_usd: number; entry_liq_usd: number | null }>;
+  const evs = db.prepare("SELECT id, source, kind, symbol, chain, COALESCE(entry_at, detected_at) detected_at, entry_price_usd, entry_liq_usd FROM listing_events WHERE detected_at > ? AND entry_price_usd IS NOT NULL ORDER BY detected_at").all(sinceMs) as Array<{ id: number; source: string; kind: string; symbol: string; chain: string | null; detected_at: number; entry_price_usd: number; entry_liq_usd: number | null }>;
   const acc = new Map(LISTING_PLANS.map((p) => [p.name, { name: p.name, n: 0, sum: 0, closed: 0 }]));
   const rows: Array<{ symbol: string; source: string; kind: string; detected_at: number; values: Record<string, number> }> = [];
   for (const e of evs) {

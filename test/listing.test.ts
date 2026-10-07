@@ -56,3 +56,29 @@ test("listázás-figyelő: első kör alapállapot, utána új Coinbase- és Rob
   const sum = listingSummary(db, cfg, 0);
   assert.equal(sum.events, 3); assert.equal(sum.plans.length, LISTING_PLANS.length);
 });
+
+test("listázás: ár nélküli esemény (még nincs DEX-pool) → később, ≥1000 USD likviditású pár megjelenésekor késleltetett belépés", async () => {
+  const db = openDb(":memory:");
+  const A = "0xeeee77bc7e82c0d4166d52f58239d4c5bf41eeee";
+  let round = 0, poolLiq = 0;
+  const cur = () => [{ id: "OLD", supported_networks: [{ id: "base", contract_address: "0x0000000000000000000000000000000000000001" }] },
+    ...(round > 0 ? [{ id: "WHUF", name: "Whuffie", status: "online", supported_networks: [{ id: "base", contract_address: A }] }] : [])];
+  const fake = (async (url: string) => {
+    const body = url.endsWith("/currencies") ? cur() : url.endsWith("/products") ? [] : url.includes("currency_pairs") ? { results: [] }
+      : url.includes("/tokens/") ? { pairs: poolLiq ? [{ chainId: "base", dexId: "uniswap", pairAddress: "0xp", baseToken: { address: A, symbol: "WHUF" }, priceUsd: "0.02", liquidity: { usd: poolLiq } }] : [] } : {};
+    return { ok: true, status: 200, json: async () => body } as Response;
+  }) as typeof fetch;
+  const msgs: string[] = [];
+  const w = new ListingWatcher({ db, cfg, fetch: fake, notify: async (m) => { msgs.push(m); } });
+  (w as unknown as { lastLateCheck: number }).lastLateCheck = 0;
+  await w.tick(); round = 1; await w.tick();
+  assert.equal((db.prepare("SELECT entry_price_usd FROM listing_events").get() as { entry_price_usd: number | null }).entry_price_usd, null);
+  assert.match(msgs[0]!, /7 napig 5 percenként/);
+  poolLiq = 300; (w as unknown as { lastLateCheck: number }).lastLateCheck = 0; await w.tick();   // porszem-pool: nem belépés
+  assert.equal((db.prepare("SELECT entry_price_usd FROM listing_events").get() as { entry_price_usd: number | null }).entry_price_usd, null);
+  poolLiq = 50_000; (w as unknown as { lastLateCheck: number }).lastLateCheck = 0; await w.tick();
+  const e = db.prepare("SELECT entry_price_usd, entry_at, note FROM listing_events").get() as { entry_price_usd: number; entry_at: number; note: string };
+  assert.equal(e.entry_price_usd, 0.02); assert.ok(e.entry_at > 0); assert.match(e.note, /késleltetett belépés/);
+  assert.match(msgs[msgs.length - 1]!, /késleltetett árnyék-belépés: WHUF/);
+  assert.equal(listingSummary(db, cfg, 0).events, 1);
+});
