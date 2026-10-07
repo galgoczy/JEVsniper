@@ -155,6 +155,8 @@ async function main() {
   const bnbLive = pcsRecorder ? new BnbLive({ db, cfg, privateKey: env.WALLET_PRIVATE_KEY as `0x${string}`, rpcUrl: env.BNB_RPC_URL || undefined, bnbUsd, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)), positionUsd: () => bnbCompound!.positionUsd() }) : null;
   if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, receiptClient: createPublicClient({ chain: bsc, transport: http(BNB_RECEIPT_RPC, { timeout: 15_000, retryCount: 1 }) }) as PublicClient, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg), simAddress: account.address,
     live: bnbLive && cfg.bnb_live.enabled ? { onSignal: (pair, token, arm, price, liq, at) => bnbLive.onSignal(pair, token, arm, price, liq, at), step: (st) => bnbLive.step(st) } : undefined });
+  // 2026-10-08: az árnyék (és az élő kar) saját 2 mp-es ütemben is lép – a felvevő köre (héjak, kimenetek) időnként 15–30 mp, ez késleltette a belépést
+  const bnbStepTimer = bnbShadow ? setInterval(() => void bnbShadow!.step().catch((e) => log.debug("BNB árnyék ütem hiba", { error: (e as Error).message.slice(0, 120) })), 2_000) : null;
   if (bnbLive && cfg.bnb_live.enabled) log.info(`BNB élő kar: ${cfg.bnb_live.arm}, ${bnbLive.posUsd().toFixed(2)} USD (alap ${cfg.bnb_live.position_usd}), max ${cfg.bnb_live.max_open} nyitott, mód: ${cfg.bnb_live.mode}`);
   pcsRecorder?.start();
   const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
@@ -279,6 +281,7 @@ async function main() {
     bnbRecorder?.stop();
     pcsRecorder?.stop();
     if (bnbCompoundTimer) clearInterval(bnbCompoundTimer);
+    if (bnbStepTimer) clearInterval(bnbStepTimer);
     solRecorder?.stop();
     solAmm?.stop();
     hud?.close();

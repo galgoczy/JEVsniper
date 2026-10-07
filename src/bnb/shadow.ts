@@ -64,7 +64,14 @@ export class BnbShadow {
   }
 
   /** A felvevő körének végén: jelzések, eladhatósági próbák, belépések az aktuális áron, kiszállások. */
+  private stepping = false;
+  /** Saját ütem (2026-10-08): a felvevő körétől függetlenül is hívható; egyszerre csak egy fut. */
   async step(): Promise<void> {
+    if (this.stepping) return;
+    this.stepping = true;
+    try { await this.stepInner(); } finally { this.stepping = false; }
+  }
+  private async stepInner(): Promise<void> {
     const now = this.now();
     for (const [pair, s] of this.st) {
       // jelzések
