@@ -6,6 +6,7 @@ import { positionValue } from "../analysis/explore.js";
 import { activeDays, compoundSim } from "../analysis/standings.js";
 import { walletNeed, savedWalletBalance } from "../analysis/wallet.js";
 import { currentPositionUsd } from "../decision/risk.js";
+import { taxedNet } from "../bnb/tax.js";
 
 /**
  * HUD adat-réteg (2026-10-04): a webes áttekintő JSON-jai – ugyanazokból a számításokból, mint a /report és az /allas.
@@ -49,9 +50,14 @@ export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
   let has = false; try { db.prepare("SELECT 1 FROM bnb_shadow_positions LIMIT 1").get(); has = true; } catch { /* nincs tábla */ }
   if (!has) return { arms: [], skips: {} as Record<string, number> };
   const arms = ARMS.map(([arm, label]) => {
+    // adóval korrigált (a mért vételi/eladási adóval; ahol nincs mérés, 0 adóval) és adó nélküli eredmény
     const plans = PLANS.map((plan) => {
-      const r = db.prepare(`SELECT count(*) n, avg(net_usd) mean, sum(net_usd) sum, min(opened_at) first FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND closed_at IS NOT NULL AND opened_at > ?`).get(arm, plan, sinceMs) as { n: number; mean: number | null; sum: number | null; first: number | null };
-      return { plan, n: r.n, mean: r.mean, sum: r.sum ?? 0, first: r.first };
+      const rows = db.prepare(`SELECT net_usd v, size_usd s, txs, buy_tax b, sell_tax t, opened_at o FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND closed_at IS NOT NULL AND opened_at > ?`).all(arm, plan, sinceMs) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; o: number }>;
+      const adj = rows.map((r) => taxedNet(r.v, r.s, r.txs, 0.006, r.b ?? 0, r.t ?? 0)!);
+      const raw = rows.reduce((a, r) => a + r.v, 0), sum = adj.reduce((a, x) => a + x, 0);
+      const measured = rows.filter((r) => r.b !== null && r.t !== null).length;
+      const taxed = rows.filter((r) => (r.b ?? 0) + (r.t ?? 0) > 0.005).length;
+      return { plan, n: rows.length, mean: rows.length ? sum / rows.length : null, sum, rawMean: rows.length ? raw / rows.length : null, measured, taxed, first: rows.length ? Math.min(...rows.map((r) => r.o)) : null };
     });
     const main = plans[0]!;
     const openRows = db.prepare(`SELECT token, opened_at o, entry_price e, last_price l FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND closed_at IS NULL ORDER BY opened_at DESC`).all(arm, PLANS[0]) as Array<{ token: string; o: number; e: number; l: number | null }>;

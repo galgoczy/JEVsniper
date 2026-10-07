@@ -32,6 +32,9 @@ import { FlipArm, FLIP_ARM } from "./graduation/flip.js";
 import { BnbRecorder } from "./bnb/recorder.js";
 import { PancakeRecorder } from "./bnb/pancake.js";
 import { BnbShadow } from "./bnb/shadow.js";
+import { BNB_RECEIPT_RPC } from "./bnb/addresses.js";
+import { createPublicClient, http, type PublicClient } from "viem";
+import { bsc } from "viem/chains";
 import { SolRecorder } from "./sol/recorder.js";
 import { SolAmmRecorder } from "./sol/amm.js";
 import { startHud } from "./hud/server.js";
@@ -142,7 +145,7 @@ async function main() {
   const bnbUsd = () => { const r = db.prepare("SELECT value FROM meta WHERE key = 'bnb_usd'").get() as { value: string } | undefined; const v = Number(r?.value); return v > 0 ? v : null; };
   const pcsRecorder = cfg.bnb.enabled && cfg.bnb.pancake ? new PancakeRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms,
     onEvent: (e) => bnbShadow?.onEvent(e), onStep: async () => { await bnbShadow?.step(); } }) : null;
-  if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg) });
+  if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, receiptClient: createPublicClient({ chain: bsc, transport: http(BNB_RECEIPT_RPC, { timeout: 15_000, retryCount: 1 }) }) as PublicClient, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg) });
   pcsRecorder?.start();
   const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
   solRecorder?.start();

@@ -18,3 +18,6 @@ export const BNB = {
 
 /** Publikus RPC: a bnbchain.org dataseed végpontjai nem adnak getLogs-ot; a publicnode igen, ~1,5 óra előzménnyel (archív kulcs nélkül). */
 export const BNB_DEFAULT_RPC = "https://bsc-rpc.publicnode.com";
+/** Nyugták (adó-méréshez): a BNB Chain hivatalos nyilvános végpontja (docs.bnbchain.org „BSC RPC Endpoints”); a publicnode a
+ *  néhány óránál régebbi nyugtát csak személyes tokennel adja („Archive requests require a personal token”, 2026-10-07). */
+export const BNB_RECEIPT_RPC = "https://bsc-dataseed.bnbchain.org";

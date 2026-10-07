@@ -130,3 +130,22 @@ test("BNB árnyék: +60 mp és bálna jelzés, eladhatósági próba (honeypot k
   assert.equal((db.prepare("SELECT close_reason FROM bnb_shadow_positions WHERE arm = 'bnb_all60' AND plan = 'C'").get() as { close_reason: string }).close_reason, "drained");
   db.close();
 });
+
+test("BSC adó-mérés nyugtából: 5% vételi, 10% eladási adó; aggregátor-továbbküldés nem mérhető", async () => {
+  const { taxFromReceipt, taxedNet } = await import("../src/bnb/tax.js");
+  const { encodeEventTopics, encodeAbiParameters, parseAbi } = await import("viem");
+  const abi = parseAbi(["event Transfer(address indexed from, address indexed to, uint256 value)", "event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)"]);
+  const PAIR = "0x00000000000000000000000000000000000000a1", TOKEN = "0x00000000000000000000000000000000000000b1", USER = "0x00000000000000000000000000000000000000c1", ROUTER = "0x00000000000000000000000000000000000000d1";
+  const tr = (from: string, to: string, v: bigint) => ({ address: TOKEN, topics: encodeEventTopics({ abi, eventName: "Transfer", args: { from: from as `0x${string}`, to: to as `0x${string}` } }) as `0x${string}`[], data: encodeAbiParameters([{ type: "uint256" }], [v]) });
+  const sw = (a0in: bigint, a1in: bigint, a0out: bigint, a1out: bigint, to: string) => ({ address: PAIR, topics: encodeEventTopics({ abi, eventName: "Swap", args: { sender: ROUTER as `0x${string}`, to: to as `0x${string}` } }) as `0x${string}`[], data: encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }], [a0in, a1in, a0out, a1out]) });
+  // WBNB = token1 (wbnbIs0 = false) → a token oldala a 0-s
+  const buy = [tr(PAIR, USER, 950n), tr(PAIR, TOKEN, 50n), sw(0n, 10n, 1000n, 0n, USER)];
+  assert.ok(Math.abs(taxFromReceipt(buy, PAIR, TOKEN, false, "buy")! - 0.05) < 1e-9);
+  const sell = [tr(USER, TOKEN, 100n), tr(USER, PAIR, 900n), sw(900n, 0n, 0n, 9n, ROUTER)];
+  assert.ok(Math.abs(taxFromReceipt(sell, PAIR, TOKEN, false, "sell")! - 0.1) < 1e-9);
+  const agg = [tr(PAIR, ROUTER, 1000n), tr(ROUTER, USER, 1000n), sw(0n, 10n, 1000n, 0n, ROUTER)];
+  assert.equal(taxFromReceipt(agg, PAIR, TOKEN, false, "buy"), null);
+  // korrekció: 1 USD → 2,0 USD kapott (net +1 − gáz), 5%/10% adóval a kapott 0,855-szöröse
+  const n = taxedNet(0.988, 1, 2, 0.006, 0.05, 0.1)!; assert.ok(Math.abs(n - (0.988 - 2 * (1 - 0.95 * 0.9))) < 1e-9);
+  assert.equal(taxedNet(0.5, 1, 2, 0.006, null, 0), null);
+});

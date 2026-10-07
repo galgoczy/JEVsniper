@@ -1,6 +1,7 @@
 import { parseAbi, getAddress, type PublicClient } from "viem";
 import type { DB } from "../db/index.js";
 import { log } from "../logger.js";
+import { measureTax } from "./tax.js";
 
 /**
  * BNB / PancakeSwap árnyékkarok (2026-10-07) – a harmadik visszajátszási kör két jelöltje, ELŐRE rögzítve (docs/FELTETELEZESEK.md):
@@ -31,8 +32,8 @@ export class BnbShadow {
   private open = new Map<number, Pos>();
   private pending = new Map<string, { pair: string; arm: string; signalAt: number }>();
   private checking = new Set<string>();
-  stats = { signals: 0, opened: 0, closed: 0, honeypot: 0, checkErr: 0, noHolder: 0, late: 0 };
-  constructor(private d: { db: DB; client: PublicClient; bnbUsd: () => number | null; sizeUsd: () => number; now?: () => number }) { this.restore(); }
+  stats = { signals: 0, opened: 0, closed: 0, honeypot: 0, checkErr: 0, noHolder: 0, late: 0, taxMeasured: 0 };
+  constructor(private d: { db: DB; client: PublicClient; receiptClient?: PublicClient; bnbUsd: () => number | null; sizeUsd: () => number; now?: () => number }) { this.restore(); }
   private now() { return (this.d.now ?? Date.now)(); }
 
   restore() {
@@ -98,6 +99,7 @@ export class BnbShadow {
         if (r.changes) this.open.set(Number(r.lastInsertRowid), { id: Number(r.lastInsertRowid), pair, arm, plan, entry: s.price, tokens, left: tokens, received: 0, txs: 1, phase: "open", peak: s.price, openedAt: now, sizeBnb, sizeUsd });
       }
       this.stats.opened++;
+      void this.measure(pair).catch(() => undefined); // adó a láncról (a pár eddigi vételeiből/eladásaiból), a belépést nem késlelteti
     } finally { this.pending.delete(key); this.checking.delete(key); }
   }
 
@@ -141,12 +143,27 @@ export class BnbShadow {
     this.d.db.prepare("UPDATE bnb_shadow_positions SET peak_price = ?, last_price = ?, last_at = ? WHERE id = ?").run(p.peak, price, now, p.id);
   }
 
+  /** Token-adó mérése a pár felvett kötéseinek nyugtáiból; az eredmény a pár összes pozíciójára íródik (ahol még nincs meg). */
+  async measure(pair: string): Promise<void> {
+    if (!this.d.receiptClient) return;
+    const pr = this.d.db.prepare("SELECT token, wbnb_is0 FROM bnb_pairs WHERE pair = ?").get(pair) as { token: string; wbnb_is0: number } | undefined; if (!pr) return;
+    const trades = this.d.db.prepare("SELECT tx, side FROM bnb_pair_trades WHERE pair = ? ORDER BY at DESC LIMIT 60").all(pair) as Array<{ tx: string; side: "buy" | "sell" }>;
+    const r = await measureTax(this.d.receiptClient, pair, pr.token, pr.wbnb_is0 === 1, trades);
+    if (r.buyTax === null && r.sellTax === null) return;
+    this.d.db.prepare(`UPDATE bnb_shadow_positions SET buy_tax = COALESCE(?, buy_tax), sell_tax = COALESCE(?, sell_tax), tax_n = ? WHERE pair = ? AND (buy_tax IS NULL OR sell_tax IS NULL)`)
+      .run(r.buyTax, r.sellTax, `${r.nBuy}/${r.nSell}`, pair);
+    this.stats.taxMeasured++;
+  }
+
   private close(p: Pos, now: number, reason: string) {
     const usd = this.d.bnbUsd() ?? 0;
     const net = (p.received - p.sizeBnb) * usd - p.txs * GAS_USD;
     this.d.db.prepare("UPDATE bnb_shadow_positions SET tokens_left = 0, received_bnb = ?, txs = ?, phase = 'closed', closed_at = ?, close_reason = ?, net_usd = ?, peak_price = ?, last_price = ?, last_at = ? WHERE id = ?")
       .run(p.received, p.txs, now, reason, net, p.peak, this.st.get(p.pair)?.price ?? null, now, p.id);
     this.open.delete(p.id); this.stats.closed++;
+    // ha a belépéskor még nem volt eladás (nincs eladási adó), most már lehet
+    const t = this.d.db.prepare("SELECT sell_tax FROM bnb_shadow_positions WHERE id = ?").get(p.id) as { sell_tax: number | null } | undefined;
+    if (t && t.sell_tax === null) void this.measure(p.pair).catch(() => undefined);
   }
 }
 
