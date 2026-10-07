@@ -149,3 +149,22 @@ test("BSC adó-mérés nyugtából: 5% vételi, 10% eladási adó; aggregátor-t
   const n = taxedNet(0.988, 1, 2, 0.006, 0.05, 0.1)!; assert.ok(Math.abs(n - (0.988 - 2 * (1 - 0.95 * 0.9))) < 1e-9);
   assert.equal(taxedNet(0.5, 1, 2, 0.006, null, 0), null);
 });
+
+test("BNB árnyék késés-érzékenység: _d5 / _d10 az akkori áron; közben kiürült pár = teljes veszteség", async () => {
+  const { BnbShadow } = await import("../src/bnb/shadow.js");
+  const db = openDb(":memory:");
+  let now = 1_790_000_000_000; const T0 = now;
+  const client = { readContract: async () => 10n ** 21n, call: async () => ({ data: "0x" }) } as never;
+  const sh = new BnbShadow({ db, client, bnbUsd: () => 500, sizeUsd: () => 1, now: () => now });
+  const P = "0x00000000000000000000000000000000000000a1", T = "0x00000000000000000000000000000000000000b1", B = "0x00000000000000000000000000000000000000c1";
+  const ev = (at: number, price: number, liq = 10) => sh.onEvent({ pair: P, token: T, createdAt: T0, at, kind: "trade", side: "buy", bnb: 0.1, to: B, price, liq } as never);
+  ev(T0 + 5_000, 1);
+  now = T0 + 61_000; await sh.step(); await sh.step();                       // +60s belépés 1,0-n
+  ev(T0 + 64_000, 1.3); now = T0 + 67_000; await sh.step();                  // +5 mp: 1,3-on vesz
+  const d5 = db.prepare("SELECT entry_price, plan FROM bnb_shadow_positions WHERE arm = 'bnb_all60_d5'").all() as Array<{ entry_price: number; plan: string }>;
+  assert.equal(d5.length, 1); assert.equal(d5[0]!.plan, "tp2_sl40"); assert.equal(d5[0]!.entry_price, 1.3);
+  ev(T0 + 69_000, 0.001, 0.01); now = T0 + 72_000; await sh.step();         // kiürült a +10 mp-es vétel előtt
+  const d10 = db.prepare("SELECT close_reason, net_usd FROM bnb_shadow_positions WHERE arm = 'bnb_all60_d10'").get() as { close_reason: string; net_usd: number };
+  assert.equal(d10.close_reason, "drained_before_fill"); assert.ok(d10.net_usd <= -1);
+  db.close();
+});

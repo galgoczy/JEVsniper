@@ -18,6 +18,9 @@ import { measureTax } from "./tax.js";
 export const BNB_ARMS = ["bnb_all60", "bnb_whale"] as const;
 export const BNB_PLANS = ["tp2_sl40", "tp1.5_sl30", "C"] as const;
 export const BNB_MAIN_PLAN = "tp2_sl40";
+/** Késés-érzékenység (2026-10-07): ugyanaz a jelzés és eladhatósági próba, de a vétel 5 / 10 mp-cel később, csak a fő tervvel.
+ *  Ha a pár közben kiürült, a vétel teljes veszteség (élesben a tx addigra elment volna). Kar neve: <kar>_d5 / <kar>_d10. */
+export const BNB_DELAYS_MS = [5_000, 10_000];
 const SIDE_COST = 0.0075, GAS_USD = 0.006, RUG_LIQ = 0.05, HORIZON_MS = 6 * 3600_000;
 const ENTRY_DELAY_MS = 60_000, ENTRY_MAX_LATE_MS = 60_000, WHALE_BNB = 1;
 const ERC20 = parseAbi(["function balanceOf(address) view returns (uint256)", "function transfer(address,uint256) returns (bool)"]);
@@ -32,6 +35,7 @@ export class BnbShadow {
   private open = new Map<number, Pos>();
   private pending = new Map<string, { pair: string; arm: string; signalAt: number }>();
   private checking = new Set<string>();
+  private delayed: Array<{ pair: string; arm: string; signalAt: number; dueAt: number }> = [];
   stats = { signals: 0, opened: 0, closed: 0, honeypot: 0, checkErr: 0, noHolder: 0, late: 0, taxMeasured: 0 };
   constructor(private d: { db: DB; client: PublicClient; receiptClient?: PublicClient; bnbUsd: () => number | null; sizeUsd: () => number; now?: () => number }) { this.restore(); }
   private now() { return (this.d.now ?? Date.now)(); }
@@ -67,6 +71,7 @@ export class BnbShadow {
     // eladhatósági próbák (párhuzamosan, legfeljebb 8)
     const todo = [...this.pending.values()].filter((p) => !this.checking.has(`${p.pair}|${p.arm}`)).slice(0, 8);
     await Promise.all(todo.map((p) => this.checkAndOpen(p.pair, p.arm, p.signalAt)));
+    this.fillDelayed(now);
     // kiszállások
     for (const p of [...this.open.values()]) this.evaluate(p, now);
     for (const s of this.st.values()) { s.hi = s.price; s.lo = s.price; }
@@ -90,17 +95,40 @@ export class BnbShadow {
       const res = await this.sellable(pair, s);
       if (res !== "ok") { this.skip(pair, arm, this.now(), res); if (res === "honeypot") this.stats.honeypot++; else if (res === "no_holder") this.stats.noHolder++; else this.stats.checkErr++; return; }
       const usd = this.d.bnbUsd(); if (!usd) { this.skip(pair, arm, this.now(), "no_bnb_usd"); return; }
-      const sizeUsd = this.d.sizeUsd(), sizeBnb = sizeUsd / usd, now = this.now();
-      const tokens = sizeBnb * (1 - SIDE_COST) / s.price;
-      const ins = this.d.db.prepare(`INSERT OR IGNORE INTO bnb_shadow_positions(pair, token, arm, plan, signal_at, opened_at, entry_price, size_usd, size_bnb, tokens, tokens_left, liq_at_entry, peak_price, last_price, last_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-      for (const plan of BNB_PLANS) {
-        const r = ins.run(pair, s.token, arm, plan, signalAt, now, s.price, sizeUsd, sizeBnb, tokens, tokens, s.liq, s.price, s.price, now);
-        if (r.changes) this.open.set(Number(r.lastInsertRowid), { id: Number(r.lastInsertRowid), pair, arm, plan, entry: s.price, tokens, left: tokens, received: 0, txs: 1, phase: "open", peak: s.price, openedAt: now, sizeBnb, sizeUsd });
-      }
+      this.openPos(pair, s, arm, BNB_PLANS, signalAt, usd);
+      const now = this.now();
+      for (const d of BNB_DELAYS_MS) this.delayed.push({ pair, arm: `${arm}_d${d / 1000}`, signalAt, dueAt: now + d });
       this.stats.opened++;
       void this.measure(pair).catch(() => undefined); // adó a láncról (a pár eddigi vételeiből/eladásaiból), a belépést nem késlelteti
     } finally { this.pending.delete(key); this.checking.delete(key); }
+  }
+
+  private openPos(pair: string, s: PairState, arm: string, plans: readonly string[], signalAt: number, usd: number) {
+    const sizeUsd = this.d.sizeUsd(), sizeBnb = sizeUsd / usd, now = this.now();
+    const tokens = sizeBnb * (1 - SIDE_COST) / s.price;
+    const ins = this.d.db.prepare(`INSERT OR IGNORE INTO bnb_shadow_positions(pair, token, arm, plan, signal_at, opened_at, entry_price, size_usd, size_bnb, tokens, tokens_left, liq_at_entry, peak_price, last_price, last_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    for (const plan of plans) {
+      const r = ins.run(pair, s.token, arm, plan, signalAt, now, s.price, sizeUsd, sizeBnb, tokens, tokens, s.liq, s.price, s.price, now);
+      if (r.changes) this.open.set(Number(r.lastInsertRowid), { id: Number(r.lastInsertRowid), pair, arm, plan, entry: s.price, tokens, left: tokens, received: 0, txs: 1, phase: "open", peak: s.price, openedAt: now, sizeBnb, sizeUsd });
+    }
+  }
+
+  /** Késleltetett (érzékenységi) vételek: az esedékes időpont után az első körben, az akkori áron; kiürült pár = teljes veszteség. */
+  private fillDelayed(now: number) {
+    const due = this.delayed.filter((x) => x.dueAt <= now); if (!due.length) return;
+    this.delayed = this.delayed.filter((x) => x.dueAt > now);
+    const usd = this.d.bnbUsd(); if (!usd) return;
+    for (const x of due) {
+      const s = this.st.get(x.pair); if (!s) continue;
+      if (!(s.price > 0) || s.liq < RUG_LIQ) {
+        const sizeUsd = this.d.sizeUsd();
+        this.d.db.prepare(`INSERT OR IGNORE INTO bnb_shadow_positions(pair, token, arm, plan, signal_at, opened_at, entry_price, size_usd, size_bnb, tokens, tokens_left, liq_at_entry, phase, closed_at, close_reason, net_usd)
+          VALUES (?,?,?,?,?,?,?,?,?,0,0,?, 'closed', ?, 'drained_before_fill', ?)`).run(x.pair, s.token, x.arm, BNB_MAIN_PLAN, x.signalAt, now, s.price || 0, sizeUsd, sizeUsd / usd, s.liq, now, -sizeUsd - GAS_USD);
+        continue;
+      }
+      this.openPos(x.pair, s, x.arm, [BNB_MAIN_PLAN], x.signalAt, usd);
+    }
   }
 
   /** Eladhatósági próba: egy friss vevő címéről a token átküldése a párba (ez az eladás első lépése) – eth_call, kulcs nélkül. */

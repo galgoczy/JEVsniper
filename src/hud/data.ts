@@ -45,7 +45,8 @@ function armExtra(db: DB, chain: string, arm: string, win: number, plan: string,
 
 /** BNB árnyékkarok (2026-10-07): karonként a fő terv (tp2_sl40) eredménye, a többi terv, nyitott pozíciók, legtöbb egyidejű. */
 export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
-  const ARMS: Array<[string, string]> = [["bnb_all60", "minden +60s"], ["bnb_whale", "bálna-vétel"]];
+  const ARMS: Array<[string, string]> = [["bnb_all60", "minden +60s"], ["bnb_all60_d5", "  ↳ 5 mp késéssel"], ["bnb_all60_d10", "  ↳ 10 mp késéssel"],
+    ["bnb_whale", "bálna-vétel"], ["bnb_whale_d5", "  ↳ 5 mp késéssel"], ["bnb_whale_d10", "  ↳ 10 mp késéssel"]];
   const PLANS = ["tp2_sl40", "tp1.5_sl30", "C"];
   let has = false; try { db.prepare("SELECT 1 FROM bnb_shadow_positions LIMIT 1").get(); has = true; } catch { /* nincs tábla */ }
   if (!has) return { arms: [], skips: {} as Record<string, number> };
