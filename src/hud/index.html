@@ -163,7 +163,7 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
       <div class="arms" id="arms-bl"></div>
     </div>
     <div class="card">
-      <div class="ttl"><h2>🧭 Nyitott pozíciók</h2><small id="pos-n">v2 + pregrad</small></div>
+      <div class="ttl"><h2>🧭 Nyitott pozíciók</h2><small id="pos-n">Base v2 + BNB</small><button class="pill btn" id="pos-sort" title="Rendezés váltása">⇅ PnL szerint</button></div>
       <div class="pos" id="pos"></div>
     </div>
   </section>
@@ -346,15 +346,27 @@ function renderSystem(x) {
   $("sys-note").textContent = `minta ${hhmm(x.at)}`;
 }
 
+// rendezés: PnL (alap) vagy lánc szerint; a választás böngészőnként megmarad
+let posSort = "pnl"; try { posSort = localStorage.getItem("hud.posSort") || "pnl"; } catch { /* nincs tároló */ }
+let lastPosRows = [];
+$("pos-sort").addEventListener("click", () => { posSort = posSort === "pnl" ? "chain" : "pnl"; try { localStorage.setItem("hud.posSort", posSort); } catch { /* nincs tároló */ } renderPositions(lastPosRows); });
+const CHAIN_ICON = { base: "🔵", bnb: "🟡", robinhood: "🟣" }, CHAIN_ORDER = { base: 0, bnb: 1, robinhood: 2 };
 function renderPositions(rows) {
+  lastPosRows = rows;
   const box = $("pos"); box.replaceChildren();
-  $("pos-n").textContent = `${rows.length} nyitott · v2 + pregrad`;
+  const nB = rows.filter((r) => r.chain === "base").length, nN = rows.filter((r) => r.chain === "bnb").length;
+  $("pos-n").textContent = `${rows.length} nyitott · Base ${nB} · BNB ${nN}`;
+  $("pos-sort").textContent = posSort === "pnl" ? "⇅ PnL szerint" : "⇅ lánc szerint";
   if (!rows.length) { box.append(el("div", "empty", "nincs nyitott pozíció 💤")); return; }
-  for (const p of rows.slice(0, 14)) {
+  const val = (r) => (r.value === null || r.value === undefined) ? -1e9 : r.value;
+  const sorted = [...rows].sort((a, b) => posSort === "chain" ? ((CHAIN_ORDER[a.chain] ?? 9) - (CHAIN_ORDER[b.chain] ?? 9) || val(b) - val(a)) : val(b) - val(a));
+  let lastChain = null;
+  for (const p of sorted.slice(0, 30)) {
+    if (posSort === "chain" && p.chain !== lastChain) { lastChain = p.chain; box.append(el("div", "note", `${CHAIN_ICON[p.chain] ?? ""} ${p.chain === "bnb" ? "BNB" : p.chain === "base" ? "Base" : p.chain}`)); }
     const c = el("div", "p");
     const top = el("div", "top");
     const left = el("div"); left.style.minWidth = "0";
-    left.append(el("div", "sym", `${p.chain === "base" ? "🔵" : "🟣"} ${p.symbol ?? "?"}`));
+    left.append(el("div", "sym", `${CHAIN_ICON[p.chain] ?? "•"} ${p.symbol ?? "?"}`));
     const x = p.nowX, v = p.value;
     const right = el("div", "mono " + cls(v), v === null ? "–" : `${sgn(v)}$/1$`); right.style.textAlign = "right";
     const xs = el("div", "mono", x === null ? "ár még nincs" : `${x.toFixed(2)}x`); xs.style.cssText = "font-size:12px;color:var(--muted)"; right.append(xs);

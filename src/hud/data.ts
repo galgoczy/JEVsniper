@@ -137,8 +137,8 @@ export function hudPositions(db: DB, cfg: Config, sinceMs: number, now = Date.no
   const rows = db.prepare(`SELECT p.id, p.arm, p.chain, p.token_id, t.symbol, t.address, t.launchpad, p.opened_at, p.entry_price_native, p.last_price_native, p.last_price_at, p.peak_price_native, p.phase, p.stages_done,
       p.size_usd, p.size_native, p.native_received, p.tokens_remaining, p.gas_usd, p.liquidity_at_entry, p.closed_at, p.net_pnl_usd
     FROM positions p JOIN tokens t ON t.id = p.token_id
-    WHERE p.exit_plan = 'live' AND p.closed_at IS NULL AND p.opened_at > ? AND ((p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?) OR p.arm IN (${PREGRAD_ARMS.map(() => "?").join(",")}))
-    ORDER BY p.opened_at DESC`).all(sinceMs, ...V2_ARMS, w, ...PREGRAD_ARMS) as Array<Record<string, unknown> & { token_id: number; arm: string; opened_at: number; entry_price_native: number; last_price_native: number | null; peak_price_native: number | null }>;
+    WHERE p.exit_plan = 'live' AND p.closed_at IS NULL AND p.opened_at > ? AND p.chain = 'base' AND p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?
+    ORDER BY p.opened_at DESC`).all(sinceMs, ...V2_ARMS, w) as Array<Record<string, unknown> & { token_id: number; arm: string; opened_at: number; entry_price_native: number; last_price_native: number | null; peak_price_native: number | null }>;
   const byTok = new Map<number, Record<string, unknown> & { arms: string[] }>();
   for (const r of rows) {
     const e = byTok.get(r.token_id);
@@ -151,7 +151,23 @@ export function hudPositions(db: DB, cfg: Config, sinceMs: number, now = Date.no
       phase: r.phase, stages: r.stages_done, value: v?.value ?? null, priceAt: r.last_price_at,
     });
   }
-  return [...byTok.values()];
+  // 2026-10-07: csak az élesítés-jelölt láncok (Base v2 + BNB fő karok, fő terv); a Robinhood/Solana a karok buborékában látszik
+  const out: Array<Record<string, unknown>> = [...byTok.values()];
+  let bnbUsd = 0; try { bnbUsd = Number((db.prepare("SELECT value FROM meta WHERE key = 'bnb_usd'").get() as { value: string } | undefined)?.value ?? 0); } catch { /* nincs */ }
+  try {
+    const b = db.prepare(`SELECT pair, token, arm, opened_at, entry_price, last_price, peak_price, size_usd, size_bnb, tokens_left, received_bnb, txs, phase FROM bnb_shadow_positions
+      WHERE closed_at IS NULL AND plan = 'tp2_sl40' AND arm IN ('bnb_all60', 'bnb_whale') ORDER BY opened_at DESC`).all() as Array<{ pair: string; token: string; arm: string; opened_at: number; entry_price: number; last_price: number | null; peak_price: number | null; size_usd: number; size_bnb: number; tokens_left: number; received_bnb: number; txs: number; phase: string }>;
+    const byPair = new Map<string, Record<string, unknown> & { arms: string[] }>();
+    for (const r of b) {
+      const lab = r.arm === "bnb_whale" ? "bálna" : "minden +60s";
+      const e = byPair.get(r.pair); if (e) { e.arms.push(lab); continue; }
+      const val = bnbUsd > 0 && r.last_price ? (r.received_bnb + r.tokens_left * r.last_price * (1 - 0.0075)) * bnbUsd - r.size_usd - (r.txs + 1) * 0.006 : null;
+      byPair.set(r.pair, { symbol: `${r.token.slice(0, 6)}…${r.token.slice(-4)}`, address: r.token, chain: "bnb", launchpad: "pancakeswap", arms: [lab], openedAt: r.opened_at, ageMin: (now - r.opened_at) / 60_000,
+        nowX: r.last_price ? r.last_price / r.entry_price : null, peakX: r.peak_price ? r.peak_price / r.entry_price : null, phase: r.phase, stages: 0, value: val === null ? null : val / r.size_usd, priceAt: null });
+    }
+    out.push(...byPair.values());
+  } catch { /* nincs BNB-tábla */ }
+  return out;
 }
 
 /** Kötésfolyam: belépések és (rész)eladások a v2 / pregrad karokban, időrendben visszafelé, tokenenként összevonva. */

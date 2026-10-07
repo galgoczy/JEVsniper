@@ -32,8 +32,8 @@ test("HUD adatok: élő kar Base-eredménye, nyitott pozíciók tokenenként, k�
   assert.equal(s.live.arm, cfg.live_entry.arm); assert.equal(s.decision.need, 100);
   const base = s.base.find((r) => r.arm === cfg.live_entry.arm)!; assert.equal(base.n, 1); assert.equal(base.open, 1);
   const p = hudPositions(db, cfg, since, now);
-  assert.equal(p.length, 2);                                        // a nyitott Base-token és a pregrad-token
-  assert.ok(p.some((x) => x.symbol === "PREG" && (x.arms as string[]).includes("pregrad 50")));
+  assert.equal(p.length, 1);                                        // csak a Base v2 (+ BNB) – a Robinhood pregrad a buborékban látszik (2026-10-07)
+  assert.ok(!p.some((x) => x.symbol === "PREG"));
   const nyitva = p.find((x) => x.symbol === "NYITVA")!; assert.ok(Math.abs((nyitva.nowX as number) - 2.5) < 1e-9);
   const f = hudFeed(db, cfg, since);
   assert.ok(f.some((e) => e.kind === "open")); assert.ok(f.some((e) => e.kind === "close" && e.reason === "moon_20x"));
