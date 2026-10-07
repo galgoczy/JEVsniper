@@ -397,3 +397,10 @@ CREATE TABLE IF NOT EXISTS bnb_live_fills (
   position_id INTEGER REFERENCES bnb_live_positions(id),
   kind TEXT NOT NULL, at INTEGER NOT NULL, tx_hash TEXT, status TEXT NOT NULL, gas_bnb REAL, bnb REAL, tokens REAL, price REAL, latency_ms INTEGER, error TEXT
 );
+
+-- 2026-10-08: BNB élő láb visszaforgatási állapota (a felhasználó szabálya: nyereség 30%-a a tőkéhez, veszteség 100%-ban; a méret arányos)
+CREATE TABLE IF NOT EXISTS bnb_compound_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  initial_capital_usd REAL NOT NULL, capital_usd REAL NOT NULL, reserve_usd REAL NOT NULL DEFAULT 0,
+  position_usd REAL NOT NULL, last_recalc_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);

@@ -30,7 +30,8 @@ const MAX_UINT = (1n << 256n) - 1n;
 const HORIZON_MS = 6 * 3600_000, RUG_LIQ = 0.05;
 
 interface Pos { id: number; pair: string; token: Address; arm: string; openedAt: number; spentBnb: number; spentUsd: number; tokens: bigint; entry: number; peak: number; phase: string; approved: boolean; sellAttempts: number; decimals: number }
-export interface LiveDeps { db: DB; cfg: Config; privateKey: `0x${string}`; rpcUrl?: string; bnbUsd: () => number | null; notify: (m: string) => Promise<unknown>; client?: PublicClient; wallet?: WalletClient; receiptClient?: PublicClient; now?: () => number }
+export interface LiveDeps { db: DB; cfg: Config; privateKey: `0x${string}`; rpcUrl?: string; bnbUsd: () => number | null; notify: (m: string) => Promise<unknown>; client?: PublicClient; wallet?: WalletClient; receiptClient?: PublicClient; now?: () => number;
+  /** Pozícióméret USD-ben (a visszaforgatásból); ha nincs, a config bnb_live.position_usd. */ positionUsd?: () => number }
 
 export class BnbLive {
   readonly address: Address;
@@ -48,6 +49,8 @@ export class BnbLive {
   }
   private now() { return (this.d.now ?? Date.now)(); }
   private get L() { return this.d.cfg.bnb_live; }
+  /** Az aktuális pozícióméret (visszaforgatással). */
+  posUsd(): number { return this.d.positionUsd ? this.d.positionUsd() : this.L.position_usd; }
   get openCount() { return this.open.size; }
 
   restore() {
@@ -69,7 +72,7 @@ export class BnbLive {
     if (this.todayPnl() <= -this.L.daily_loss_limit_usd) return "daily_loss_limit";
     if (liq < this.L.min_liq_bnb) return "sekély_pár";
     const usd = this.d.bnbUsd(); if (!usd) return "nincs_bnb_usd";
-    if (balBnb !== null && balBnb < this.L.position_usd / usd + this.L.gas_reserve_bnb) return "kevés_bnb";
+    if (balBnb !== null && balBnb < this.posUsd() / usd + this.L.gas_reserve_bnb) return "kevés_bnb";
     return null;
   }
 
@@ -78,12 +81,13 @@ export class BnbLive {
     const { cfg, db } = this.d;
     if (!this.L.enabled || arm !== this.L.arm) return;
     this.stats.signals++;
-    if (this.L.mode !== "live") { await this.d.notify(`🧪 dry_run: a BNB élő kar (${arm}) BELÉPNE ${token} ${this.L.position_usd.toFixed(2)} USD-vel (likviditás ${liq.toFixed(1)} BNB)`); return; }
+    if (this.L.mode !== "live") { await this.d.notify(`🧪 dry_run: a BNB élő kar (${arm}) BELÉPNE ${token} ${this.posUsd().toFixed(2)} USD-vel (likviditás ${liq.toFixed(1)} BNB)`); return; }
     if ([...this.open.values()].some((p) => p.pair === pair)) return;
     const bal = await this.c.getBalance({ address: this.address }).then((b) => Number(formatEther(b))).catch(() => null);
+    if (bal !== null) this.d.db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('bnb_wallet_bnb', ?)").run(String(bal));
     const why = this.block(liq, bal);
     if (why) { this.stats.blocked++; log.info("BNB élő belépés blokkolva", { token, why }); return; }
-    const usd = this.d.bnbUsd()!; const amountIn = BigInt(Math.floor(this.L.position_usd / usd * 1e18));
+    const sizeUsd = this.posUsd(), usd = this.d.bnbUsd()!; const amountIn = BigInt(Math.floor(sizeUsd / usd * 1e18));
     const tokenA = getAddress(token), path = [BNB.wbnb, tokenA] as const;
     const t0 = this.now();
     let quoted: bigint;
@@ -100,12 +104,12 @@ export class BnbLive {
     let decimals = 18; try { decimals = Number(await this.c.readContract({ address: tokenA, abi: ERC20, functionName: "decimals" })); } catch { /* 18 */ }
     const entry = Number(formatEther(amountIn)) / (Number(got) / 10 ** decimals); // BNB / token (a felvevő ára: WBNB-tartalék / token-tartalék nyers – a szorzó számít)
     const ins = db.prepare(`INSERT INTO bnb_live_positions(pair, token, arm, signal_at, opened_at, spent_bnb, spent_usd, tokens, tokens_left, entry_price, quoted_price, liq_at_entry, gas_bnb, peak_price, last_price)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(pair, tokenA, arm, signalAt, this.now(), Number(formatEther(amountIn)), this.L.position_usd, Number(got), Number(got), price, Number(formatEther(amountIn)) / (Number(quoted) / 10 ** decimals), liq, r.gasBnb, price, price);
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(pair, tokenA, arm, signalAt, this.now(), Number(formatEther(amountIn)), sizeUsd, Number(got), Number(got), price, Number(formatEther(amountIn)) / (Number(quoted) / 10 ** decimals), liq, r.gasBnb, price, price);
     const id = Number(ins.lastInsertRowid);
-    const pos: Pos = { id, pair, token: tokenA, arm, openedAt: this.now(), spentBnb: Number(formatEther(amountIn)), spentUsd: this.L.position_usd, tokens: got, entry: price, peak: price, phase: "open", approved: false, sellAttempts: 0, decimals };
+    const pos: Pos = { id, pair, token: tokenA, arm, openedAt: this.now(), spentBnb: Number(formatEther(amountIn)), spentUsd: sizeUsd, tokens: got, entry: price, peak: price, phase: "open", approved: false, sellAttempts: 0, decimals };
     this.open.set(id, pos); this.stats.buys++; this.setFailed(0);
     this.fill(id, "buy", r, Number(formatEther(amountIn)), Number(got) / 10 ** decimals, entry);
-    await this.d.notify(`🟢 BNB ÉLŐ VÉTEL ${tokenA.slice(0, 8)}… ${this.L.position_usd.toFixed(2)} USD · ${(Number(got) / 10 ** decimals).toLocaleString("hu-HU", { maximumFractionDigits: 0 })} token · jegyzett→kapott ${(Number(got) / Number(quoted) * 100).toFixed(1)}% · ${this.now() - t0} ms · ${r.hash}`);
+    await this.d.notify(`🟢 BNB ÉLŐ VÉTEL ${tokenA.slice(0, 8)}… ${sizeUsd.toFixed(2)} USD · ${(Number(got) / 10 ** decimals).toLocaleString("hu-HU", { maximumFractionDigits: 0 })} token · jegyzett→kapott ${(Number(got) / Number(quoted) * 100).toFixed(1)}% · ${this.now() - t0} ms · ${r.hash}`);
     void this.approve(pos).catch(() => undefined);
   }
 
@@ -118,8 +122,10 @@ export class BnbLive {
   }
 
   /** A felvevő körének végén: a kar állapotával (ár, kör alatti csúcs/mélypont, likviditás) kiszállási döntés. */
+  private lastBal = 0;
   async step(state: (pair: string) => { price: number; liq: number; hi: number; lo: number } | undefined): Promise<void> {
     const now = this.now();
+    if (now - this.lastBal > 60_000) { this.lastBal = now; void this.c.getBalance({ address: this.address }).then((b) => this.d.db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('bnb_wallet_bnb', ?)").run(formatEther(b))).catch(() => undefined); }
     for (const p of [...this.open.values()]) {
       if (this.busy.has(p.id) || p.openedAt >= now) continue;
       const s = state(p.pair); if (!s || !(s.price > 0)) continue;

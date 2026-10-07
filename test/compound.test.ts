@@ -44,3 +44,19 @@ test("méret a plafonig; kapu zárva → alapméret; veszteségből nem nő", ()
   const lossy = applyClose(s0, -5, 0.3);
   assert.equal(computePositionUsd(lossy, cfg.risk, cfg.compound, true), cfg.risk.base_position_usd);
 });
+
+test("BNB visszaforgatás: nyereség 30%-a a tőkéhez, veszteség 100%-ban; méret arányos, legalább 1 USD; 03:01 helyi idő", async () => {
+  const { applyDay, MIN_POSITION_USD } = await import("../src/bnb/compound.js");
+  const { isLocalTime, localDay } = await import("../src/compound/index.js");
+  const s0 = { initial_capital_usd: 6, capital_usd: 6, reserve_usd: 0, position_usd: 1.5, last_recalc_at: 0 };
+  const win = applyDay(s0, 4, 0.3, 1.5);                       // +4 USD nap → tőke 7,2; tartalék 2,8; méret 1,5 × 7,2/6 = 1,8
+  assert.ok(Math.abs(win.capital_usd - 7.2) < 1e-9); assert.ok(Math.abs(win.reserve_usd - 2.8) < 1e-9); assert.ok(Math.abs(win.position_usd - 1.8) < 1e-9);
+  const loss = applyDay(win, -3, 0.3, 1.5);                    // −3 USD nap → tőke 4,2 (100%); tartalék marad; méret 1,05
+  assert.ok(Math.abs(loss.capital_usd - 4.2) < 1e-9); assert.ok(Math.abs(loss.reserve_usd - 2.8) < 1e-9); assert.ok(Math.abs(loss.position_usd - 1.05) < 1e-9);
+  const floor = applyDay(loss, -4, 0.3, 1.5);                  // nagy veszteség → tőke 0,2; méret a padlón (1 USD)
+  assert.equal(floor.position_usd, MIN_POSITION_USD);
+  assert.equal(isLocalTime("03:01", "Europe/Budapest", new Date("2026-10-08T01:01:30Z")), true);   // nyári idő: UTC+2
+  assert.equal(isLocalTime("03:01", "Europe/Budapest", new Date("2026-12-08T02:01:30Z")), true);   // téli idő: UTC+1
+  assert.equal(isLocalTime("03:01", "Europe/Budapest", new Date("2026-10-08T03:01:30Z")), false);
+  assert.equal(localDay("Europe/Budapest", new Date("2026-10-07T22:30:00Z")), "2026-10-08");
+});

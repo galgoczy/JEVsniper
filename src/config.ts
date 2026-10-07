@@ -51,7 +51,8 @@ export const ConfigSchema = z.object({
   compound: z.object({
     profit_share_to_growth_pool: prob,
     drawdown_halving_pct: pct,
-    recalc_time_utc: z.string().regex(/^\d{2}:\d{2}$/),
+    recalc_time_local: z.string().regex(/^\d{2}:\d{2}$/).default("03:01"), // helyi idő (recalc_timezone) – 03:01: a nyári/téli időszámítás váltása (02:00–03:00) kimarad
+    recalc_timezone: z.string().default("Europe/Budapest"),
     require_positive_vs_random_control: z.boolean(),
     random_control_lookback_days: z.number().int().positive(),
   }),

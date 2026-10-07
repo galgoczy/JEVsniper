@@ -175,13 +175,13 @@ export function tempoLines(db: DB, sinceMs: number, cfg: Config, now = Date.now(
 /**
  * Visszaforgatás-szimuláció (a compound-szabály napi felülvizsgálattal): ha az élő kar (Base, élő ablak, élő terv) az eddigi
  * árnyékeredményeivel élesben, a mostani alapmérettel futott volna, mekkora lenne ma a belépő. Napi újraszámolás a
- * compound.recalc_time_utc időpontjában (UTC-nap határán), ugyanazokkal a függvényekkel, mint az élő compound.
+ * compound.recalc_time_local időpontjában (helyi idő; a szimulációban UTC-napra kerekítve), ugyanazokkal a függvényekkel, mint az élő compound.
  */
 export function compoundSim(db: DB, sinceMs: number, cfg: Config, now = Date.now()): { size: number; pool: number; reserve: number; closes: number } {
   const rows = db.prepare(`SELECT opened_at o, closed_at c, net_pnl_usd v, size_usd s FROM positions WHERE arm = ? AND chain = 'base' AND window_sec = ? AND exit_plan = ?
     AND opened_at > ? AND closed_at IS NOT NULL AND close_reason NOT LIKE 'invalid%' ORDER BY closed_at`)
     .all(cfg.live_entry.arm, cfg.evaluation.live_window_sec, cfg.live_entry.exit_plan, sinceMs) as Array<{ o: number; c: number; v: number; s: number }>;
-  const [hh, mm] = cfg.compound.recalc_time_utc.split(":").map(Number) as [number, number];
+  const [hh, mm] = cfg.compound.recalc_time_local.split(":").map(Number) as [number, number];
   const recalcAt = (t: number) => { const d = new Date(t); d.setUTCHours(hh, mm, 0, 0); return d.getTime() <= t ? d.getTime() : d.getTime() - 86_400_000; };
   let st: CompoundState = { deposit_usd: cfg.risk.deposit_cap_usd, growth_pool_usd: 0, reserve_usd: 0, working_capital_peak_usd: cfg.risk.deposit_cap_usd, position_usd: cfg.risk.base_position_usd, updated_at: 0 };
   const sizeAt = new Map<number, number>(); // napi újraszámolás időpontja → méret
@@ -208,8 +208,8 @@ export function reportCompact(db: DB, sinceMs: number, cfg: Config, now = Date.n
   const tempo = ["⏱ USD/nap · belépés/nap", `🔵 Base (${cfg.evaluation.live_window_sec}s)`, ...t.base, "🟣 Robinhood", ...(t.rh.length ? t.rh : ["még nincs lezárt"]), ""];
   const merged = at >= 0 ? [...body.slice(0, at), ...tempo, ...body.slice(at)] : [...body, ...tempo];
   const sim = compoundSim(db, sinceMs, cfg, now), cs = db.prepare("SELECT position_usd, growth_pool_usd FROM compound_state WHERE id = 1").get() as { position_usd: number; growth_pool_usd: number } | undefined;
-  const [hh, mm] = cfg.compound.recalc_time_utc.split(":");
-  const comp = [`🔁 Visszaforgatás 30% · napi`, `felülvizsgálat ${hh}:${mm} UTC`, `Belépő most: ${currentPositionUsd(db, cfg).toFixed(2)}$ · kassza ${(cs?.growth_pool_usd ?? 0).toFixed(2)}$`,
+  const [hh, mm] = cfg.compound.recalc_time_local.split(":");
+  const comp = [`🔁 Visszaforgatás 30% · napi`, `felülvizsgálat ${hh}:${mm} helyi idő`, `Belépő most: ${currentPositionUsd(db, cfg).toFixed(2)}$ · kassza ${(cs?.growth_pool_usd ?? 0).toFixed(2)}$`,
     `Élesben ma: ${sim.size.toFixed(2)}$ (kassza ${sim.pool.toFixed(1)}$)`];
   const fi = merged.findIndex((l) => l.startsWith("💰"));
   const out = fi >= 0 ? [...merged.slice(0, fi), ...comp, "", ...merged.slice(fi)] : [...merged, ...comp];

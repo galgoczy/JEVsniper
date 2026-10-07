@@ -73,6 +73,32 @@ export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
   return { arms, skips };
 }
 
+/** Élő BNB láb (2026-10-08): állapot, nyitott pozíciók, lezártak, visszaforgatás, tárca – a HUD tetejére. */
+export function hudBnbLive(db: DB, cfg: Config, now = Date.now()) {
+  let ok = true; try { db.prepare("SELECT 1 FROM bnb_live_positions LIMIT 1").get(); } catch { ok = false; }
+  const L = cfg.bnb_live;
+  if (!ok) return { enabled: L.enabled, mode: L.mode, arm: L.arm, positionUsd: L.position_usd, maxOpen: L.max_open, walletBnb: null, walletUsd: null, compound: null, closed: { n: 0, sum: 0, today: 0, wins: 0, avgLatencyMs: null }, open: [], recent: [], shadow: null };
+  const meta = (k: string) => { const r = db.prepare("SELECT value FROM meta WHERE key = ?").get(k) as { value: string } | undefined; const v = Number(r?.value); return Number.isFinite(v) ? v : null; };
+  const bnbUsd = meta("bnb_usd"), walletBnb = meta("bnb_wallet_bnb");
+  const comp = db.prepare("SELECT initial_capital_usd, capital_usd, reserve_usd, position_usd FROM bnb_compound_state WHERE id = 1").get() as { initial_capital_usd: number; capital_usd: number; reserve_usd: number; position_usd: number } | undefined;
+  const closedRows = db.prepare("SELECT net_usd v, closed_at c, opened_at o FROM bnb_live_positions WHERE closed_at IS NOT NULL AND arm <> 'fustproba'").all() as Array<{ v: number; c: number; o: number }>;
+  const today = dayKey(now);
+  const lat = db.prepare("SELECT AVG(latency_ms) a FROM bnb_live_fills WHERE kind = 'buy' AND status = 'success' AND position_id IN (SELECT id FROM bnb_live_positions WHERE arm <> 'fustproba')").get() as { a: number | null };
+  const open = (db.prepare("SELECT token, arm, opened_at, spent_usd, entry_price, last_price, peak_price, phase FROM bnb_live_positions WHERE closed_at IS NULL ORDER BY opened_at DESC").all() as Array<{ token: string; arm: string; opened_at: number; spent_usd: number; entry_price: number; last_price: number | null; peak_price: number | null; phase: string }>)
+    .map((r) => ({ symbol: `${r.token.slice(0, 6)}…${r.token.slice(-4)}`, address: r.token, chain: "bnb", arms: [r.arm === "bnb_whale" ? "bálna" : "minden +60s"], openedAt: r.opened_at, ageMin: (now - r.opened_at) / 60_000, spentUsd: r.spent_usd,
+      nowX: r.last_price ? r.last_price / r.entry_price : null, peakX: r.peak_price ? r.peak_price / r.entry_price : null, phase: r.phase, value: r.last_price ? (r.last_price / r.entry_price - 1) * r.spent_usd : null }));
+  const recent = (db.prepare("SELECT token, close_reason r, net_usd v, closed_at c, spent_usd s FROM bnb_live_positions WHERE closed_at IS NOT NULL AND arm <> 'fustproba' ORDER BY closed_at DESC LIMIT 10").all() as Array<{ token: string; r: string; v: number; c: number; s: number }>)
+    .map((r) => ({ symbol: `${r.token.slice(0, 6)}…${r.token.slice(-4)}`, reason: r.r, net: r.v, closedAt: r.c, spentUsd: r.s }));
+  const sh = db.prepare("SELECT COUNT(*) n, AVG(net_usd) m FROM bnb_shadow_positions WHERE arm = ? AND plan = 'tp2_sl40' AND closed_at IS NOT NULL AND opened_at > ?").get(L.arm, (closedRows[0] ? Math.min(...closedRows.map((r) => r.o)) : now) - 1) as { n: number; m: number | null };
+  return {
+    enabled: L.enabled, mode: L.mode, arm: L.arm, positionUsd: comp?.position_usd ?? L.position_usd, maxOpen: L.max_open,
+    walletBnb, walletUsd: walletBnb !== null && bnbUsd ? walletBnb * bnbUsd : null,
+    compound: comp ? { initial: comp.initial_capital_usd, capital: comp.capital_usd, reserve: comp.reserve_usd, position: comp.position_usd, time: `${cfg.compound.recalc_time_local} ${cfg.compound.recalc_timezone}` } : null,
+    closed: { n: closedRows.length, sum: closedRows.reduce((a, r) => a + r.v, 0), today: closedRows.filter((r) => dayKey(r.c) === today).reduce((a, r) => a + r.v, 0), wins: closedRows.filter((r) => r.v > 0).length, avgLatencyMs: lat.a },
+    open, recent, shadow: sh.n ? { n: sh.n, mean: sh.m } : null,
+  };
+}
+
 export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now()) {
   const w = cfg.evaluation.live_window_sec, live = cfg.live_entry.arm, plan = cfg.live_entry.exit_plan, liveSize = currentPositionUsd(db, cfg);
   const closed = db.prepare(`SELECT chain, arm, window_sec w, opened_at o, closed_at c, net_pnl_usd v FROM positions
@@ -120,6 +146,7 @@ export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now(
     rh: RH_ARMS.map(([a, win]) => armRow("robinhood", a, win === "live" ? w : win)),
     baselines: BASELINES.map(([a, chain, win]) => armRow(chain, a, win === "live" ? w : win)),
     bnb: hudBnb(db, sinceMs, now),
+    bnbLive: hudBnbLive(db, cfg, now),
     wallet: { usd: bal?.usd ?? null, at: bal?.at ?? null, needUsd: wn.needUsd, peakOpen: wn.peakOpen, ok: bal ? bal.usd >= wn.needUsd : null },
     compound: { sizeNow: liveSize, poolNow: cs?.growth_pool_usd ?? 0, simSize: sim.size, simPool: sim.pool },
     recorders: {

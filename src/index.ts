@@ -33,6 +33,7 @@ import { BnbRecorder } from "./bnb/recorder.js";
 import { PancakeRecorder } from "./bnb/pancake.js";
 import { BnbShadow } from "./bnb/shadow.js";
 import { BnbLive } from "./bnb/live.js";
+import { BnbCompound } from "./bnb/compound.js";
 import { currentSince } from "./analysis/periods.js";
 import { BNB_RECEIPT_RPC } from "./bnb/addresses.js";
 import { createPublicClient, http, type PublicClient } from "viem";
@@ -149,10 +150,12 @@ async function main() {
   const pcsRecorder = cfg.bnb.enabled && cfg.bnb.pancake ? new PancakeRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms,
     onEvent: (e) => bnbShadow?.onEvent(e), onStep: async () => { await bnbShadow?.step(); } }) : null;
   // BNB ÉLŐ végrehajtó (2026-10-07, a felhasználó kérésére): csak bnb_live.enabled ÉS bnb_live.mode = live mellett küld tranzakciót; ugyanaz a tárca
-  const bnbLive = pcsRecorder ? new BnbLive({ db, cfg, privateKey: env.WALLET_PRIVATE_KEY as `0x${string}`, rpcUrl: env.BNB_RPC_URL || undefined, bnbUsd, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) }) : null;
+  const bnbCompound = pcsRecorder ? new BnbCompound(db, cfg, (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false))) : null;
+  const bnbCompoundTimer = bnbCompound?.schedule() ?? null;
+  const bnbLive = pcsRecorder ? new BnbLive({ db, cfg, privateKey: env.WALLET_PRIVATE_KEY as `0x${string}`, rpcUrl: env.BNB_RPC_URL || undefined, bnbUsd, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)), positionUsd: () => bnbCompound!.positionUsd() }) : null;
   if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, receiptClient: createPublicClient({ chain: bsc, transport: http(BNB_RECEIPT_RPC, { timeout: 15_000, retryCount: 1 }) }) as PublicClient, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg),
     live: bnbLive && cfg.bnb_live.enabled ? { onSignal: (pair, token, arm, price, liq, at) => bnbLive.onSignal(pair, token, arm, price, liq, at), step: (st) => bnbLive.step(st) } : undefined });
-  if (bnbLive && cfg.bnb_live.enabled) log.info(`BNB élő kar: ${cfg.bnb_live.arm}, ${cfg.bnb_live.position_usd} USD, max ${cfg.bnb_live.max_open} nyitott, mód: ${cfg.bnb_live.mode}`);
+  if (bnbLive && cfg.bnb_live.enabled) log.info(`BNB élő kar: ${cfg.bnb_live.arm}, ${bnbLive.posUsd().toFixed(2)} USD (alap ${cfg.bnb_live.position_usd}), max ${cfg.bnb_live.max_open} nyitott, mód: ${cfg.bnb_live.mode}`);
   pcsRecorder?.start();
   const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
   solRecorder?.start();
@@ -275,6 +278,7 @@ async function main() {
     listing.stop();
     bnbRecorder?.stop();
     pcsRecorder?.stop();
+    if (bnbCompoundTimer) clearInterval(bnbCompoundTimer);
     solRecorder?.stop();
     solAmm?.stop();
     hud?.close();

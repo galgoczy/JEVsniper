@@ -9,7 +9,7 @@ export interface CompoundState { deposit_usd: number; growth_pool_usd: number; r
  * 5. Compound-szabály – tiszta függvények + DB-állapot.
  *  - lezárt élő pozíció nettó eredménye: nyereség 30% → növekedési kassza, 70% → tartalék; veszteség a betétet, majd a kasszát csökkenti, a tartalékot soha
  *  - forgó tőke = betét + kassza; csúcs követve; csúcstól -30% → a kassza fele számít a méretbe, amíg új csúcs nincs
- *  - pozícióméret naponta 0:00 UTC: min(max, base + effektív kassza / max_open_positions); menet közben nem változik
+ *  - pozícióméret naponta (recalc_time_local, helyi idő; 2026-10-08-tól 03:01 Budapest): min(max, base + effektív kassza / max_open_positions); menet közben nem változik
  *  - opcionális kar: méretnövelés csak akkor, ha az utolsó 7 nap élő eredménye jobb a random_control-nál
  */
 export function applyClose(s: CompoundState, netUsd: number, share: number): CompoundState {
@@ -77,12 +77,20 @@ export class CompoundManager {
     return next;
   }
 
-  /** Időzítő: a config recalc_time_utc (HH:MM) pontján naponta. */
+  /** Időzítő: a config recalc_time_local (HH:MM, recalc_timezone) pontján naponta (2026-10-08: helyi idő, 03:01). */
   schedule(): NodeJS.Timeout {
-    const [hh, mm] = this.cfg.compound.recalc_time_utc.split(":").map(Number) as [number, number];
-    const tick = async () => {
-      const d = new Date(); if (d.getUTCHours() === hh && d.getUTCMinutes() === mm) await this.recalcDaily().catch((e) => log.warn("compound recalc hiba", { error: (e as Error).message }));
-    };
+    const tick = async () => { if (isLocalTime(this.cfg.compound.recalc_time_local, this.cfg.compound.recalc_timezone)) await this.recalcDaily().catch((e) => log.warn("compound recalc hiba", { error: (e as Error).message })); };
     return setInterval(() => void tick(), 60_000);
   }
+}
+
+/** Igaz, ha a mostani helyi idő (tz) óra:perc egyezik a HH:MM-mel. */
+export function isLocalTime(hhmm: string, tz: string, now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(now);
+  const h = parts.find((p) => p.type === "hour")!.value, m = parts.find((p) => p.type === "minute")!.value;
+  return `${h === "24" ? "00" : h}:${m}` === hhmm;
+}
+/** A helyi (tz) naptári nap kulcsa, ÉÉÉÉ-HH-NN. */
+export function localDay(tz: string, now = new Date()): string {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
