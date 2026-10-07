@@ -182,7 +182,7 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
       <div class="arms" id="arms-base"></div>
       <div class="ttl" style="margin-top:16px"><h2>🟣 Robinhood</h2><small>pregrad és graduáció</small></div>
       <div class="arms" id="arms-rh"></div>
-      <div class="ttl" style="margin-top:16px"><h2>🟡 BNB árnyék</h2><small id="bnb-note">PancakeSwap · ki 2×/−40% · adóval</small></div>
+      <div class="ttl" style="margin-top:16px"><h2>🟡 BNB árnyék</h2><small id="bnb-note">PancakeSwap · ki 2×/−40% · adóval · honeypot-szűrővel</small></div>
       <div class="arms" id="arms-bnb"></div>
       <div class="ttl" style="margin-top:16px"><h2>📉 Alapvonalak</h2><small>viszonyítás</small></div>
       <div class="arms" id="arms-bl"></div>
@@ -291,7 +291,7 @@ function renderSummary(s) {
   armList("arms-bl", s.baselines, null, null);
   armList("arms-bnb", s.bnb?.arms ?? [], null, null);
   const sk = s.bnb?.skips ?? {}, skN = Object.values(sk).reduce((a, b) => a + b, 0);
-  $("bnb-note").textContent = `PancakeSwap · ki 2×/−40% · adóval · kiszűrve ${skN} (honeypot ${sk.honeypot ?? 0})`;
+  $("bnb-note").textContent = `PancakeSwap · ki 2×/−40% · adóval · honeypot-szűrővel · kiszűrve ${skN}`;
 
   // felvevők
   const rec = $("rec"); rec.replaceChildren();
@@ -316,7 +316,7 @@ function armTip(r, size) {
   if (r.peak) tip.append(line(["Legtöbb egyszerre: ", b(String(r.peak.n)), ` (${when(r.peak.at)}) → max tőkeigény ≈ `, b(usd(r.peak.n)), " + gáz"]));
   if (r.plans) {
     const m = r.plans[0];
-    if (m && m.n) tip.append(line(["Adóval (mért): ", b(sgn(m.mean)), ` · adó nélkül ${sgn(m.rawMean)} · adó mérve ${m.measured}/${m.n}, adózó token ${m.taxed}`]));
+    if (m && m.rawN) tip.append(line(["Honeypot-szűrővel (fő érték): ", b(m.n ? sgn(m.mean) + " (n" + m.n + ")" : "–"), ` · szűretlen ${sgn(m.rawMean)} (n${m.rawN}; szimulált ${m.simmed}) · adó mérve ${m.measured}, adózó ${m.taxed}`]));
     if (r.sim) tip.append(line(["Szimuláció (vétel+eladás): saját cím átment ", b(`${r.sim.meOk}/${r.sim.n}`), `, friss cím ${r.sim.freshOk}/${r.sim.n} · szűrővel: ${r.sim.filteredN ? sgn(r.sim.filteredMean) + " (n" + r.sim.filteredN + ")" : "–"}`]));
     tip.append(line(["Tervek (adóval): ", ...r.plans.map((p) => `${p.plan} ${p.n ? sgn(p.mean) + " (n" + p.n + ")" : "–"}  `)]));
   }
