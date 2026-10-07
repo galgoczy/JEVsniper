@@ -3,6 +3,7 @@ import type { DB } from "../db/index.js";
 import { log } from "../logger.js";
 import { measureTax } from "./tax.js";
 import { simRoundTrip, FRESH_ADDRESS } from "./simtrade.js";
+import { ringBuyers } from "./ring.js";
 
 /**
  * BNB / PancakeSwap árnyékkarok (2026-10-07) – a harmadik visszajátszási kör két jelöltje, ELŐRE rögzítve (docs/FELTETELEZESEK.md):
@@ -122,8 +123,10 @@ export class BnbShadow {
     const tokens = sizeBnb * (1 - SIDE_COST) / s.price;
     const ins = this.d.db.prepare(`INSERT OR IGNORE INTO bnb_shadow_positions(pair, token, arm, plan, signal_at, opened_at, entry_price, size_usd, size_bnb, tokens, tokens_left, liq_at_entry, peak_price, last_price, last_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const ring = ringBuyers(this.d.db, pair, now); // gyűrű-szűrő mérése (2026-10-08): a jelzés előtti gyűrű-vevők száma
     for (const plan of plans) {
       const r = ins.run(pair, s.token, arm, plan, signalAt, now, s.price, sizeUsd, sizeBnb, tokens, tokens, s.liq, s.price, s.price, now);
+      if (r.changes) this.d.db.prepare("UPDATE bnb_shadow_positions SET ring_n = ? WHERE id = ?").run(ring, Number(r.lastInsertRowid));
       if (r.changes) this.open.set(Number(r.lastInsertRowid), { id: Number(r.lastInsertRowid), pair, arm, plan, entry: s.price, tokens, left: tokens, received: 0, txs: 1, phase: "open", peak: s.price, openedAt: now, sizeBnb, sizeUsd });
     }
   }

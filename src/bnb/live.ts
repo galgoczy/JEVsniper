@@ -8,6 +8,7 @@ import { BNB, BNB_DEFAULT_RPC, BNB_RECEIPT_RPC } from "./addresses.js";
 import { stopFileExists } from "../killswitch.js";
 import { log } from "../logger.js";
 import { simRoundTrip } from "./simtrade.js";
+import { ringBuyers, learnRingFromPair, RING_MIN_BUYERS } from "./ring.js";
 
 /**
  * BNB / PancakeSwap ÉLŐ végrehajtó (2026-10-07, kis teszt). A BNB árnyékkar (config bnb_live.arm) jelzésére – az eladhatósági
@@ -39,7 +40,7 @@ export class BnbLive {
   private account; private c: PublicClient; private rc: PublicClient; private w: WalletClient;
   private open = new Map<number, Pos>();
   private busy = new Set<number>();
-  stats = { signals: 0, buys: 0, sells: 0, failed: 0, blocked: 0, simBlocked: 0 };
+  stats = { signals: 0, buys: 0, sells: 0, failed: 0, blocked: 0, simBlocked: 0, ringBlocked: 0 };
   constructor(private d: LiveDeps) {
     this.account = privateKeyToAccount(d.privateKey); this.address = this.account.address;
     const url = (d.rpcUrl ?? BNB_DEFAULT_RPC).split(",")[0]!.trim();
@@ -97,6 +98,14 @@ export class BnbLive {
     const sizeUsd = this.posUsd(), usd = this.d.bnbUsd()!; const amountIn = BigInt(Math.floor(sizeUsd / usd * 1e18));
     const tokenA = getAddress(token), path = [BNB.wbnb, tokenA] as const;
     const t0 = this.now();
+    // gyűrű-szűrő (2026-10-08): ha a párban ismert gyűrű-tárcák vettek, a vevőt utólag letiltják – nincs vétel
+    const ring = ringBuyers(this.d.db, pair, this.now());
+    if (ring >= RING_MIN_BUYERS) {
+      this.stats.blocked++; this.stats.ringBlocked++;
+      log.info("BNB élő: gyűrű-szűrő nem engedte", { token: tokenA, gyűrű_vevők: ring });
+      this.d.db.prepare("INSERT INTO bnb_live_fills(position_id, kind, at, tx_hash, status, gas_bnb, bnb, tokens, price, latency_ms, error) VALUES (NULL, 'ring_block', ?, NULL, 'skipped', 0, 0, 0, ?, 0, ?)").run(this.now(), ring, `${tokenA} gyűrű-vevők ${ring}`);
+      return;
+    }
     // honeypot-teszt (2026-10-08): vétel+visszaeladás szimuláció a SAJÁT címről, ugyanazzal a gázárral és mérettel
     if (this.L.sim_filter) {
       const chainGas = await this.c.getGasPrice().catch(() => 0n), gp = chainGas > BigInt(Math.round(this.L.gas_gwei * 1e9)) ? chainGas : BigInt(Math.round(this.L.gas_gwei * 1e9));
@@ -186,7 +195,7 @@ export class BnbLive {
       if (!r.ok) {
         this.fail("sell", p.id, r.error ?? "?", r);
         this.d.db.prepare("UPDATE bnb_live_positions SET phase = 'unsellable', sell_attempts = ?, close_reason = ? WHERE id = ?").run(p.sellAttempts, `unsellable:${reason}`, p.id);
-        if (p.sellAttempts >= 4) { this.close(p, `unsellable:${reason}`, 0, usd); await this.d.notify(`⛔ BNB ÉLŐ: ${p.token.slice(0, 8)}… ELADHATATLAN (honeypot?) – ${reason}, 4 kísérlet; −${p.spentUsd.toFixed(2)} USD`); }
+        if (p.sellAttempts >= 4) { this.close(p, `unsellable:${reason}`, 0, usd); learnRingFromPair(this.d.db, p.pair, this.address); await this.d.notify(`⛔ BNB ÉLŐ: ${p.token.slice(0, 8)}… ELADHATATLAN (honeypot?) – ${reason}, 4 kísérlet; −${p.spentUsd.toFixed(2)} USD`); }
         return;
       }
       this.close(p, reason, received, usd, r.gasBnb);

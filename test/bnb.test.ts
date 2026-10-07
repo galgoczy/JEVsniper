@@ -241,3 +241,20 @@ test("BNB élő napi veszteségkorlát: a visszaforgatás utolsó újraszámolá
   assert.equal((live as unknown as { block: (l: number, b: number | null) => string | null }).block(10, 0.1), "daily_loss_limit");
   db.close();
 });
+
+test("BNB gyűrű-szűrő: csak a ≥2 rossz párban vásárló tárca tag; a jelzés előtti tag-vevők számolása", async () => {
+  const { learnRingFromPair, ringBuyers, ringSize } = await import("../src/bnb/ring.js");
+  const db = openDb(":memory:");
+  const tr = db.prepare("INSERT INTO bnb_pair_trades(pair, tx, log_index, block, at, side, to_addr, bnb, price) VALUES (?,?,?,0,?,?,?,0.1,1)");
+  let k = 0; const buy = (pair: string, at: number, to: string) => tr.run(pair, `0x${(++k).toString(16)}`, 0, at, "buy", to);
+  const OWN = "0x00000000000000000000000000000000000000ee", R1 = "0x00000000000000000000000000000000000000a1", R2 = "0x00000000000000000000000000000000000000a2", V = "0x00000000000000000000000000000000000000b1";
+  buy("0xbad1", 1, R1); buy("0xbad1", 2, R2); buy("0xbad1", 3, OWN); buy("0xbad1", 4, V);    // V: egyszeri áldozat
+  buy("0xbad2", 1, R1); buy("0xbad2", 2, R2);
+  learnRingFromPair(db, "0xbad1", OWN); learnRingFromPair(db, "0xbad2", OWN);
+  assert.equal(ringSize(db), 2);                                                          // R1, R2 – V és a saját cím nem
+  buy("0xnew", 100, R1); buy("0xnew", 200, V);
+  assert.equal(ringBuyers(db, "0xnew", 150), 1);                                          // a jelzés előtt 1 tag
+  assert.equal(ringBuyers(db, "0xnew", 50), 0);
+  assert.equal(ringBuyers(db, "0xclean", 1000), 0);
+  db.close();
+});

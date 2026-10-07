@@ -317,7 +317,7 @@ function armTip(r, size) {
   if (r.sim && !r.plans) tip.append(line(["Honeypot-teszt (vétel+eladás, mérés): saját cím átment ", b(`${r.sim.meOk}/${r.sim.n}`), `, friss cím ${r.sim.freshOk}/${r.sim.n} · szűrővel: ${r.sim.filteredN ? sgn(r.sim.filteredMean) + " (n" + r.sim.filteredN + ")" : "–"}`]));
   if (r.plans) {
     const m = r.plans[0];
-    if (m && m.rawN) tip.append(line(["Honeypot-szűrővel (fő érték): ", b(m.n ? sgn(m.mean) + " (n" + m.n + ")" : "–"), ` · szűretlen ${sgn(m.rawMean)} (n${m.rawN}; szimulált ${m.simmed}) · adó mérve ${m.measured}, adózó ${m.taxed}`]));
+    if (m && m.rawN) tip.append(line(["Honeypot- és gyűrű-szűrővel (fő érték): ", b(m.n ? sgn(m.mean) + " (n" + m.n + ")" : "–"), ` · szűretlen ${sgn(m.rawMean)} (n${m.rawN}; szimulált ${m.simmed}, gyűrűs ${m.ringN}) · adó mérve ${m.measured}, adózó ${m.taxed}`]));
     if (r.sim) tip.append(line(["Szimuláció (vétel+eladás): saját cím átment ", b(`${r.sim.meOk}/${r.sim.n}`), `, friss cím ${r.sim.freshOk}/${r.sim.n} · szűrővel: ${r.sim.filteredN ? sgn(r.sim.filteredMean) + " (n" + r.sim.filteredN + ")" : "–"}`]));
     tip.append(line(["Tervek (adóval): ", ...r.plans.map((p) => `${p.plan} ${p.n ? sgn(p.mean) + " (n" + p.n + ")" : "–"}  `)]));
   }

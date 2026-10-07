@@ -417,3 +417,8 @@ CREATE TABLE IF NOT EXISTS base_sim_checks (
   token_id INTEGER PRIMARY KEY REFERENCES tokens(id), at INTEGER NOT NULL,
   me_stage INTEGER, me_ratio REAL, fresh_stage INTEGER, fresh_ratio REAL, ms INTEGER, error TEXT
 );
+
+-- 2026-10-08: „gyűrű” – tárcák, amelyek több olyan párban vettek, ahol az élő pozíciónk eladhatatlan lett (utólagos tiltás / honeypot).
+-- Jelölt = egy ilyen pár vevője; gyűrű-tag = legalább 2 különböző ilyen párban vett.
+CREATE TABLE IF NOT EXISTS bnb_ring_candidates (addr TEXT NOT NULL, pair TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (addr, pair));
+CREATE INDEX IF NOT EXISTS idx_bnb_pair_trades_to ON bnb_pair_trades(to_addr);

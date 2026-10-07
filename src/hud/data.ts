@@ -7,6 +7,7 @@ import { activeDays, compoundSim } from "../analysis/standings.js";
 import { walletNeed, savedWalletBalance } from "../analysis/wallet.js";
 import { currentPositionUsd } from "../decision/risk.js";
 import { taxedNet } from "../bnb/tax.js";
+import { RING_MIN_BUYERS } from "../bnb/ring.js";
 import { periods as allPeriods } from "../analysis/periods.js";
 import { bootstrapCI } from "../report/index.js";
 
@@ -69,16 +70,16 @@ export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
     // Szimuláció nélküli pozíció (10-07 21:54 UTC előtt) a szűrtbe nem számít.
     const baseArm = arm.replace(/_d(5|10)$/, "");
     const plans = PLANS.map((plan) => {
-      const rows = db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t, p.opened_at o, c.me_lo_stage st, c.me_lo_ratio rt FROM bnb_shadow_positions p
-        LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = ? AND p.closed_at IS NOT NULL AND p.opened_at > ?`).all(baseArm, arm, plan, sinceMs) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; o: number; st: number | null; rt: number | null }>;
+      const rows = db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t, p.opened_at o, c.me_lo_stage st, c.me_lo_ratio rt, p.ring_n rg FROM bnb_shadow_positions p
+        LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = ? AND p.closed_at IS NOT NULL AND p.opened_at > ?`).all(baseArm, arm, plan, sinceMs) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; o: number; st: number | null; rt: number | null; rg: number | null }>;
       const adjOf = (r: typeof rows[number]) => taxedNet(r.v, r.s, r.txs, 0.006, r.b ?? 0, r.t ?? 0)!;
-      const pass = rows.filter((r) => r.st === 5 && (r.rt ?? 0) >= 0.85);
+      const pass = rows.filter((r) => r.st === 5 && (r.rt ?? 0) >= 0.85 && (r.rg ?? 0) < RING_MIN_BUYERS); // honeypot-teszt + gyűrű-szűrő (2026-10-08)
       const rawAll = rows.map(adjOf), adjPass = pass.map(adjOf);
       const sum = adjPass.reduce((a, x) => a + x, 0), sumAll = rawAll.reduce((a, x) => a + x, 0);
       const measured = rows.filter((r) => r.b !== null && r.t !== null).length;
       const taxed = rows.filter((r) => (r.b ?? 0) + (r.t ?? 0) > 0.005).length;
       return { plan, n: pass.length, mean: pass.length ? sum / pass.length : null, sum, rawN: rows.length, rawMean: rows.length ? sumAll / rows.length : null,
-        simmed: rows.filter((r) => r.st !== null).length, measured, taxed, first: pass.length ? Math.min(...pass.map((r) => r.o)) : null };
+        simmed: rows.filter((r) => r.st !== null).length, ringN: rows.filter((r) => (r.rg ?? 0) >= RING_MIN_BUYERS).length, measured, taxed, first: pass.length ? Math.min(...pass.map((r) => r.o)) : null };
     });
     const main = plans[0]!;
     const openRows = db.prepare(`SELECT token, opened_at o, entry_price e, last_price l FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND closed_at IS NULL ORDER BY opened_at DESC`).all(arm, PLANS[0]) as Array<{ token: string; o: number; e: number; l: number | null }>;
@@ -277,10 +278,10 @@ export function hudPeriods(db: DB, cfg: Config, now = Date.now()) {
     AND opened_at >= ? AND opened_at < ? AND closed_at IS NOT NULL AND (close_reason IS NULL OR close_reason NOT LIKE 'invalid%')`).all(chain, arm, win, from, to) as Array<{ v: number }>).map((r) => r.v);
   let bnbOk = true; try { db.prepare("SELECT 1 FROM bnb_shadow_positions LIMIT 1").get(); } catch { bnbOk = false; }
   // BNB: ahol van honeypot-szimuláció, csak az átmentek (élesben is így szűrünk); az 1. időszakban még nem volt → szűretlen
-  const bnb = (arm: string, from: number, to: number) => !bnbOk ? [] : (db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t, c.me_lo_stage st, c.me_lo_ratio rt FROM bnb_shadow_positions p
+  const bnb = (arm: string, from: number, to: number) => !bnbOk ? [] : (db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t, c.me_lo_stage st, c.me_lo_ratio rt, p.ring_n rg FROM bnb_shadow_positions p
     LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = 'tp2_sl40' AND p.opened_at >= ? AND p.opened_at < ? AND p.closed_at IS NOT NULL`)
-    .all(arm.replace(/_d(5|10)$/, ""), arm, from, to) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; st: number | null; rt: number | null }>)
-    .filter((r) => r.st === null || (r.st === 5 && (r.rt ?? 0) >= 0.85)).map((r) => taxedNet(r.v, r.s, r.txs, 0.006, r.b ?? 0, r.t ?? 0)!);
+    .all(arm.replace(/_d(5|10)$/, ""), arm, from, to) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; st: number | null; rt: number | null; rg: number | null }>)
+    .filter((r) => (r.rg ?? 0) < RING_MIN_BUYERS && (r.st === null || (r.st === 5 && (r.rt ?? 0) >= 0.85))).map((r) => taxedNet(r.v, r.s, r.txs, 0.006, r.b ?? 0, r.t ?? 0)!);
   return allPeriods(cfg).filter((p) => p.to !== null && p.to <= now).map((p) => {
     const to = p.to!;
     const rows = [
