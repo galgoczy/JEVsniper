@@ -7,6 +7,7 @@ import type { Config } from "../config.js";
 import { BNB, BNB_DEFAULT_RPC, BNB_RECEIPT_RPC } from "./addresses.js";
 import { stopFileExists } from "../killswitch.js";
 import { log } from "../logger.js";
+import { simRoundTrip } from "./simtrade.js";
 
 /**
  * BNB / PancakeSwap ÉLŐ végrehajtó (2026-10-07, kis teszt). A BNB árnyékkar (config bnb_live.arm) jelzésére – az eladhatósági
@@ -38,7 +39,7 @@ export class BnbLive {
   private account; private c: PublicClient; private rc: PublicClient; private w: WalletClient;
   private open = new Map<number, Pos>();
   private busy = new Set<number>();
-  stats = { signals: 0, buys: 0, sells: 0, failed: 0, blocked: 0 };
+  stats = { signals: 0, buys: 0, sells: 0, failed: 0, blocked: 0, simBlocked: 0 };
   constructor(private d: LiveDeps) {
     this.account = privateKeyToAccount(d.privateKey); this.address = this.account.address;
     const url = (d.rpcUrl ?? BNB_DEFAULT_RPC).split(",")[0]!.trim();
@@ -90,6 +91,18 @@ export class BnbLive {
     const sizeUsd = this.posUsd(), usd = this.d.bnbUsd()!; const amountIn = BigInt(Math.floor(sizeUsd / usd * 1e18));
     const tokenA = getAddress(token), path = [BNB.wbnb, tokenA] as const;
     const t0 = this.now();
+    // honeypot-teszt (2026-10-08): vétel+visszaeladás szimuláció a SAJÁT címről, ugyanazzal a gázárral és mérettel
+    if (this.L.sim_filter) {
+      const chainGas = await this.c.getGasPrice().catch(() => 0n), gp = chainGas > BigInt(Math.round(this.L.gas_gwei * 1e9)) ? chainGas : BigInt(Math.round(this.L.gas_gwei * 1e9));
+      const sim = await simRoundTrip(this.c, this.address, tokenA, amountIn, gp);
+      if (sim.stage !== 5 || (sim.ratio ?? 0) < this.L.min_roundtrip_ratio) {
+        this.stats.blocked++; this.stats.simBlocked++;
+        log.info("BNB élő: honeypot-teszt nem engedte", { token: tokenA, stage: sim.stage, ratio: sim.ratio, error: sim.error });
+        this.d.db.prepare("INSERT INTO bnb_live_fills(position_id, kind, at, tx_hash, status, gas_bnb, bnb, tokens, price, latency_ms, error) VALUES (NULL, 'sim_block', ?, NULL, 'skipped', 0, 0, 0, ?, ?, ?)")
+          .run(this.now(), sim.ratio, this.now() - t0, `${tokenA} stage ${sim.stage}${sim.error ? " " + sim.error : ""}`);
+        return;
+      }
+    }
     let quoted: bigint;
     try { quoted = (await this.c.readContract({ address: BNB.pancakeV2Router, abi: ROUTER_ABI, functionName: "getAmountsOut", args: [amountIn, [...path]] }))[1]!; }
     catch (e) { this.fail("buy_quote", null, (e as Error).message); return; }

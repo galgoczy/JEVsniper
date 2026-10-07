@@ -45,7 +45,8 @@ test("HUD szerver: belépés nélkül 401 / átirányítás; jelszóval munkamen
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "hud-")), "t.db");
   const { db } = seed(file);                                    // a HUD-szál ezt a fájlt olvassa (csak olvasó kapcsolattal)
   const { hashPassword } = await import("../src/hud/auth.js");
-  const c2 = { ...cfg, db: { ...cfg.db, path: file }, hud: { ...cfg.hud, origins: ["https://tradehud.zentopia.hu"] } };
+  // értékelési időszakok nélkül (a mintaadat 10-04-i; a 2. időszak 10-07 22:00 UTC-kor indult)
+  const c2 = { ...cfg, db: { ...cfg.db, path: file }, evaluation: { ...cfg.evaluation, periods: [] }, hud: { ...cfg.hud, origins: ["https://tradehud.zentopia.hu"] } };
   const srv = startHud({ db, cfg: c2, port: 0, host: "127.0.0.1", passwordHash: hashPassword("helyes-jelszo-123") });
   await new Promise((r) => srv.once("listening", r));
   const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
@@ -77,6 +78,7 @@ test("HUD szerver: belépés nélkül 401 / átirányítás; jelszóval munkamen
   assert.equal((await post("/auth/password", { password: "rossz" }, { "cf-connecting-ip": "9.9.9.9" })).status, 401);
   assert.equal((await post("/auth/password", { password: "helyes-jelszo-123" }, { "cf-connecting-ip": "9.9.9.9" })).status, 429);
   assert.equal((await post("/auth/password", { password: "helyes-jelszo-123" }, { "cf-connecting-ip": "8.8.8.8" })).status, 200);
+  srv.closeAllConnections(); // a fetch életben tartott kapcsolatai különben a close-t percekig várakoztatják
   await new Promise((r) => srv.close(r)); db.close();
 });
 

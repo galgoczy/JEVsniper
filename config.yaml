@@ -223,17 +223,19 @@ bnb_live:
   enabled: true        # 2026-10-07 23:05: ÉLES – a felhasználó kérésére, a sikeres füstpróba után (~14 USD BNB a tárcán)
   mode: live           # KÜLÖN kapcsoló (a globális mode a Base-t vezérli, az marad dry_run): live = valódi BNB-tranzakciók
   arm: bnb_whale
-  position_usd: 2             # 2026-10-08: 1,5 → 2 USD (mint a Base alapméret); 2 × 4 = 8 USD lekötés a ~14 USD-ből
+  position_usd: 0.8           # 2026-10-08 reggel: 0,8 USD (a felhasználó: újraindítás kisebb belépővel, élő tapasztalatért; ~3,8 USD a tárcán)
   max_open: 4
   daily_loss_limit_usd: 5
   max_consecutive_failed: 3
   buy_slippage_pct: 12
   sell_slippage_pct: 15
   panic_slippage_pct: 40
-  gas_gwei: 0.2
+  gas_gwei: 0.05              # 2026-10-08: a hálózati szint (0,2 gwei-jel egyedül mi lógtunk ki → valószínű anti-sniper tiltás, AC)
   max_gas_usd_per_tx: 0.15
-  gas_reserve_bnb: 0.003
+  gas_reserve_bnb: 0.0005     # ~0,4 USD; 0,05 gwei-n egy vétel+approve+eladás ~0,000013 BNB
   min_liq_bnb: 3
+  sim_filter: true            # vétel előtt honeypot-teszt a saját címről (vétel+visszaeladás szimuláció)
+  min_roundtrip_ratio: 0.85   # a szimulált oda-vissza legalább 85%-ot adjon vissza (díj + rejtett adó)
 
 # V2 – graduációs szakasz: a PONS-tokenek a bonding curve után Uniswap v4 poolba kerülnek (napi több száz).
 # Árnyékkarok: grad_at (graduáláskor), grad_15_all (15 perc múlva, ha átmegy a kemény szűrőn),

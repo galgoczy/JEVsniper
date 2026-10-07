@@ -175,6 +175,8 @@ test("BNB élő végrehajtó: dry_run-ban nincs tx; élőben vétel+approve, 2×
   const db = openDb(":memory:");
   let now = 1_790_000_000_000; const sent: Array<{ to: string; value: bigint; data: string }> = [];
   let tokenBal = 0n, allowance = 0n, bnbBal = 20n * 10n ** 15n; // 0,02 BNB
+  let simStage = 5;
+  const { encodeAbiParameters } = await import("viem");
   const client = {
     getBalance: async () => bnbBal,
     getGasPrice: async () => 50_000_000n,
@@ -187,6 +189,8 @@ test("BNB élő végrehajtó: dry_run-ban nincs tx; élőben vétel+approve, 2×
       throw new Error("ismeretlen " + a.functionName);
     },
     waitForTransactionReceipt: async () => ({ status: "success", gasUsed: 150_000n, effectiveGasPrice: 200_000_000n }),
+    // honeypot-teszt (vétel+visszaeladás szimuláció): a `simStage` szerint felel
+    call: async (a: { value: bigint }) => ({ data: encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }, { type: "uint8" }], [1000n, simStage === 5 ? a.value * 99n / 100n : 0n, simStage]) }),
   } as never;
   const wallet = { sendTransaction: async (tx: { to: string; value: bigint; data: string }) => { sent.push(tx); const sel = tx.data.slice(0, 10);
     if (sel === "0xb6f9de95") tokenBal += tx.value * 1000n;                 // swapExactETHForTokensSupportingFeeOnTransferTokens
@@ -203,6 +207,10 @@ test("BNB élő végrehajtó: dry_run-ban nincs tx; élőben vétel+approve, 2×
   await live.onSignal("0xp1", "0x00000000000000000000000000000000000000b1", "bnb_all60", 1, 10, now); // más kar → semmi
   await live.onSignal("0xp1", "0x00000000000000000000000000000000000000b1", "bnb_whale", 1, 1, now);   // sekély pár → blokk
   assert.equal(sent.length, 0); assert.equal(live.stats.blocked, 1);
+  simStage = 4;                                                                                           // honeypot: a szimulált eladás elbukik
+  await live.onSignal("0xp1", "0x00000000000000000000000000000000000000b1", "bnb_whale", 1, 10, now);
+  assert.equal(sent.length, 0); assert.equal(live.stats.simBlocked, 1);
+  simStage = 5;
   await live.onSignal("0xp1", "0x00000000000000000000000000000000000000b1", "bnb_whale", 1, 10, now);
   await new Promise((r) => setTimeout(r, 20));                                                            // approve a háttérben
   assert.equal(sent.length, 2); assert.equal(sent[0]!.value, BigInt(Math.floor(1.5 / 750 * 1e18)));

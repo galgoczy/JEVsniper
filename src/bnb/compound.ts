@@ -9,10 +9,10 @@ import { log } from "../logger.js";
  *  - naponta 03:01 helyi idő (compound.recalc_time_local / recalc_timezone; az óraátállítást kikerüli);
  *  - a nap nettó eredménye (az utolsó újraszámolás óta zárt élő BNB-pozíciók): NYERESÉG → 30%-a a tőkéhez, 70% tartalékba (nem forog);
  *    VESZTESÉG → 100%-ban a tőkét csökkenti;
- *  - pozícióméret = alapméret × (tőke / induló tőke), legalább MIN_POSITION_USD (a gáz miatt kisebb nem ésszerű); menet közben nem változik.
+ *  - pozícióméret = alapméret × (tőke / induló tőke), legalább MIN_POSITION_USD; menet közben nem változik.
  * Induló tőke = position_usd × max_open (config), az első futáskor.
  */
-export const MIN_POSITION_USD = 1;
+export const MIN_POSITION_USD = 0.5; // 2026-10-08: 0,05 gwei-n a gáz egy körre ~0,01 USD, így 0,5 USD még ésszerű
 export interface BnbCompoundState { initial_capital_usd: number; capital_usd: number; reserve_usd: number; position_usd: number; last_recalc_at: number }
 
 export function applyDay(s: BnbCompoundState, dayNet: number, share: number, basePosition: number): BnbCompoundState {

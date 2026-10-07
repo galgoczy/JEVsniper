@@ -205,7 +205,10 @@ export const ConfigSchema = z.object({
     max_gas_usd_per_tx: z.number().positive().default(0.15),
     gas_reserve_bnb: z.number().positive().default(0.003),     // ennyi BNB mindig maradjon gázra
     min_liq_bnb: z.number().positive().default(3),             // sekély pár: nincs vétel
-  }).default({ enabled: false, mode: "dry_run", arm: "bnb_whale", position_usd: 1.5, max_open: 4, daily_loss_limit_usd: 5, max_consecutive_failed: 3, buy_slippage_pct: 12, sell_slippage_pct: 15, panic_slippage_pct: 40, gas_gwei: 0.2, max_gas_usd_per_tx: 0.15, gas_reserve_bnb: 0.003, min_liq_bnb: 3 }),
+    // honeypot-teszt (2026-10-08): vétel előtt vétel+visszaeladás szimuláció a SAJÁT címről, a valódi gázárral (src/bnb/simtrade.ts)
+    sim_filter: z.boolean().default(true),
+    min_roundtrip_ratio: z.number().min(0).max(1).default(0.85), // a szimulált oda-vissza visszakapott/elköltött BNB legalább ennyi (díj + rejtett adó)
+  }).default({ enabled: false, mode: "dry_run", arm: "bnb_whale", position_usd: 1.5, max_open: 4, daily_loss_limit_usd: 5, max_consecutive_failed: 3, buy_slippage_pct: 12, sell_slippage_pct: 15, panic_slippage_pct: 40, gas_gwei: 0.2, max_gas_usd_per_tx: 0.15, gas_reserve_bnb: 0.003, min_liq_bnb: 3, sim_filter: true, min_roundtrip_ratio: 0.85 }),
   // Futás közbeni figyelő: állapotváltás-riasztások (csak jelez, a szabályokon nem változtat)
   alerts: z.object({
     enabled: z.boolean().default(true),
