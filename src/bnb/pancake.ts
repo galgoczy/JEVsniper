@@ -173,6 +173,9 @@ export class PancakeRecorder {
         p.liq = rW / 1e18; p.peakLiq = Math.max(p.peakLiq, p.liq); if (rT > 0) p.price = rW / rT;
         if (p.refPrice && p.price > 0) { const x = p.price / p.refPrice; p.maxX = Math.max(p.maxX, x); p.minX = Math.min(p.minX, x); }
         if (p.refPrice) p.minLiq = Math.min(p.minLiq, p.liq);
+        // 2026-10-08: a likviditás-kivétel (Sync swap nélkül) is jusson el az árnyékhoz/élő karhoz – különben a kiürülést csak a 30 perces
+        // tartalék-frissítés vette észre (10-07: két élő pozíció „kiürülése” 30,5 percnél)
+        if (rT > 0) this.d.onEvent?.({ pair: p.pair, token: p.token, createdAt: p.createdAt, at: this.atOf(head, nowMs, l.blockNumber ?? head), kind: "reserve", price: p.price, liq: p.liq });
       } else {
         const wIn = Number(p.wbnbIs0 ? a.amount0In : a.amount1In) / 1e18, wOut = Number(p.wbnbIs0 ? a.amount0Out : a.amount1Out) / 1e18;
         const isBuy = wIn > 0 && wOut === 0, at = this.atOf(head, nowMs, l.blockNumber ?? head);
