@@ -220,8 +220,8 @@ listing:
 # dry_run-ban csak „BELÉPNE” jelzés. Ugyanaz az EVM-tárca (a BSC-n BNB kell rá: pozíciók + gáz-tartalék).
 # Kar: bnb_whale (bálna-vétel után; +5 mp késéssel is +0,59/1 USD) vagy bnb_all60 (minden indítás +60 mp; sok egyidejű pozíció, több tőke).
 bnb_live:
-  enabled: true        # 2026-10-07 23:05: ÉLES – a felhasználó kérésére, a sikeres füstpróba után (~14 USD BNB a tárcán)
-  mode: live           # KÜLÖN kapcsoló (a globális mode a Base-t vezérli, az marad dry_run): live = valódi BNB-tranzakciók
+  enabled: false       # 2026-10-08 03:40: ÉLŐ VÉTEL LEÁLLÍTVA a felhasználó kérésére (reaktív kihúzó gyárak); újraindítás csak kifejezett kérésre
+  mode: dry_run        # KÜLÖN kapcsoló (a globális mode a Base-t vezérli, az marad dry_run): live = valódi BNB-tranzakciók
   arm: bnb_whale              # 2026-10-08 01:45: vissza a bálna-karra, szűrőkkel (a +60 mp-es élőben 12/12 kihúzás egy rossz órában; az 1. időszakban gyűrű-szűrővel bálna +0,72 vs +60 mp +0,14)
   position_usd: 0.25          # 2026-10-08 03:05: 0,25 USD (a felhasználó: több adat; a gáz egy körre ~0,01 USD ≈ 4%)
   max_open: 15        # 2026-10-08: 4 → 15 (a felhasználó: a +60 mp-es árnyék 11–13 egyidejűvel is ment)
