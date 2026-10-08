@@ -645,3 +645,9 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 ## 2026-10-08 reggeli ellenőrzés – a 0xe264-család a többi Base karban is
 - base_uni_hold 30s/live n=73, +0,48, 90% CI 0,20…0,81 (⏳) – de a 0xe264-család nélkül: 30s n=65 +0,11, 60s n=50 −0,11; a család (8–10 token) +3,0…+3,5. rule_v2_strict 60s: család n=13 +3,58, nélküle n=40 −0,13. base_uni_all és random_control mintájában (1/8) családtag nincs.
 - Következtetés: a Base karok „nulla fölötti” eredménye a tárcafarmos családból jön, élesben nem elérhető; nélküle nincs nyereséges Base kar.
+
+## 2026-10-08 délután – van-e hivatalos vételi út a 0xe264-családba? Nincs.
+- A 0xe264.swap (0xe6cb474f) eth_call-szimulációja: az eredeti (farm-)küldővel sikerül, a mi tárcánkkal és véletlen címmel „Access deny” revert → csak engedélyezett tárcák hívhatják, nyilvános router/app nincs.
+- Befizetés: az utolsó 150 blokkban egyetlen ETH-t küldő tx sincs a 0xe264-hez, saját eseményt nem bocsát ki; az egyenlege közben 4,27 → 59,87 ETH (a farm eladásaiból). Nyilvános forrás/dokumentáció nincs.
+- A Trenchors likviditását a token készítője (0xac22…, EOA) húzta ki 13:45 UTC-kor a Uniswap v4 PositionManageren át.
+- Felépítés: készítő-EOA telepíti a tokent (0xe264 beégetve) és likviditást ad → a 0xe264 pénzéből a farmtárcák vásárolnak (ár fel) → a kívülről (routeren) vevőket a 0xe264 elégeti → a farm elad, a készítő kihúzza a likviditást. Kívülálló számára „szabályos” belépés nincs.
