@@ -1,7 +1,7 @@
 # Jev Sniper Bot – minden paraméter és küszöb itt állítható.
 # A kockázati limitek (risk) CSAK itt állíthatók, kódban nincs felülírás.
 
-mode: live            # live | dry_run  (dry_run: minden fut, Jev is, de tranzakció nem megy ki). 2026-10-08: a felhasználó kérésére Base élő teszt (rule_v2_strict, 0,2 USD); a BNB-t külön kapcsoló (bnb_live) védi
+mode: dry_run         # live | dry_run  (dry_run: minden fut, Jev is, de tranzakció nem megy ki). 2026-10-08 09:36: Base élő teszt LEÁLLÍTVA a felhasználó kérésére (0xe264-család célzott égetése); újraindítás csak kifejezett kérésre
 
 chains:
   base:
