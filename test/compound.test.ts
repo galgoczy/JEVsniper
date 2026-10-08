@@ -60,3 +60,16 @@ test("BNB visszaforgatás: nyereség 30%-a a tőkéhez, veszteség 100%-ban; mé
   assert.equal(isLocalTime("03:01", "Europe/Budapest", new Date("2026-10-08T03:01:30Z")), false);
   assert.equal(localDay("Europe/Budapest", new Date("2026-10-07T22:30:00Z")), "2026-10-08");
 });
+
+test("BNB visszaforgatás egyszeri kihagyása: a méret és a tőke marad, a nap újraindul, a jelző törlődik", async () => {
+  const { BnbCompound } = await import("../src/bnb/compound.js");
+  const { openDb } = await import("../src/db/index.js");
+  const db = openDb(":memory:"); let now = 1_790_000_000_000;
+  const bc = new BnbCompound(db, { ...cfg, bnb_live: { ...cfg.bnb_live, position_usd: 0.8, max_open: 15 } }, async () => undefined, () => now);
+  db.prepare("INSERT INTO bnb_live_positions(pair, token, arm, signal_at, opened_at, spent_bnb, spent_usd, tokens, tokens_left, entry_price, closed_at, net_usd, phase) VALUES ('p','t','bnb_all60',?,?,0.001,0.8,1,0,1,?,-9.7,'closed')").run(now + 1, now + 1, now + 2);
+  db.prepare("INSERT INTO meta(key, value) VALUES ('bnb_compound_skip_next', '1')").run();
+  now += 10_000; assert.equal(await bc.recalc(), 0.8);
+  assert.equal(bc.state().capital_usd, 12); assert.equal(bc.state().last_recalc_at, now);
+  assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'bnb_compound_skip_next'").get(), undefined);
+  db.close();
+});

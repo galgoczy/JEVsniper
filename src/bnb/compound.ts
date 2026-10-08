@@ -36,6 +36,16 @@ export class BnbCompound {
   /** Napi újraszámolás: az utolsó óta zárt élő BNB-pozíciók nettója (a füstpróba nem számít). */
   async recalc(reason = "daily"): Promise<number> {
     const s = this.state();
+    // egyszeri kihagyás (2026-10-08, a felhasználó kérésére): meta bnb_compound_skip_next = 1 → a „nap” újraindul (a napi korlát is),
+    // de a tőke és a méret NEM változik; a jelző utána törlődik
+    const skip = (this.db.prepare("SELECT value FROM meta WHERE key = 'bnb_compound_skip_next'").get() as { value: string } | undefined)?.value === "1";
+    if (skip) {
+      this.db.prepare("UPDATE bnb_compound_state SET last_recalc_at = ?, updated_at = ? WHERE id = 1").run(this.now(), this.now());
+      this.db.prepare("DELETE FROM meta WHERE key = 'bnb_compound_skip_next'").run();
+      logEvent(this.db, "bnb_size_change", `kihagyva (kérésre) – méret marad ${s.position_usd.toFixed(2)}`);
+      await this.notify(`📐 BNB visszaforgatás: ma éjjel kérésre KIHAGYVA – a méret marad ${s.position_usd.toFixed(2)} USD, a tőke ${s.capital_usd.toFixed(2)} USD; a napi korlát újraindult`);
+      return s.position_usd;
+    }
     const r = this.db.prepare("SELECT COALESCE(SUM(net_usd),0) net, COUNT(*) n FROM bnb_live_positions WHERE closed_at IS NOT NULL AND closed_at > ? AND arm <> 'fustproba'").get(s.last_recalc_at) as { net: number; n: number };
     const n = applyDay(s, r.net, this.cfg.compound.profit_share_to_growth_pool, this.cfg.bnb_live.position_usd);
     this.db.prepare("UPDATE bnb_compound_state SET capital_usd=?, reserve_usd=?, position_usd=?, last_recalc_at=?, updated_at=? WHERE id=1").run(n.capital_usd, n.reserve_usd, n.position_usd, this.now(), this.now());
