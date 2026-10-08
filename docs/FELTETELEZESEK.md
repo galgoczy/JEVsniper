@@ -641,3 +641,7 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - A Trenchors 900 blokkjában 524 vétel ment a 0xe264.swap-on át, 452 különböző küldőtől. A küldők nonce-a 10–1039 (medián 480), az ETH-egyenlegük EGYFORMÁN 0,00028–0,00030 ETH (gázra feltöltött farm), a swap 0 ETH értékkel megy, a vételt a 0xe264 saját ETH-ja fizeti. Következtetés: egy üzemeltető tárcafarmja gyártja a keresletet (wash-vétel), a kívülről (Uniswap routeren) vevőket célzottan elégeti.
 - Ezért nincs „szabályos” belépés: a 0xe264.swap nem nyilvános router (a szerződés saját pénzét költi), a többi út égetéssel jár. A kar árnyék-nyeresége ebben a családban (n=15, +3,09) élesben nem érhető el – mérési műtermék (a farm vételei emelik az árat, a mi pozíciónkat pedig elégetnék).
 - A család felismerhető: a 0xe264 cím PUSH20-ként a token bájtkódjában. Nélküle a rule_v2_strict n=38, −0,13.
+
+## 2026-10-08 reggeli ellenőrzés – a 0xe264-család a többi Base karban is
+- base_uni_hold 30s/live n=73, +0,48, 90% CI 0,20…0,81 (⏳) – de a 0xe264-család nélkül: 30s n=65 +0,11, 60s n=50 −0,11; a család (8–10 token) +3,0…+3,5. rule_v2_strict 60s: család n=13 +3,58, nélküle n=40 −0,13. base_uni_all és random_control mintájában (1/8) családtag nincs.
+- Következtetés: a Base karok „nulla fölötti” eredménye a tárcafarmos családból jön, élesben nem elérhető; nélküle nincs nyereséges Base kar.
