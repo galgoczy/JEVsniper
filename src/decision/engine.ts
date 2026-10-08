@@ -159,6 +159,20 @@ export class DecisionEngine {
     const wei = parseEther((sizeUsd / eth).toFixed(18));
     const token = getAddress(t.address);
     try {
+      // 2026-10-08: kötelező honeypot-teszt (Base, Uniswap v4): a vételt és az azonnali eladást a saját címünkről, az élő mérettel
+      // szimuláljuk; ha az eladás bukik vagy túl sokat veszít (adó/hook), nem veszünk. Nem natív ETH-pár (WETH) → nincs élő útvonal.
+      if (t.chain === "base" && cfg.live_entry.sim_filter) {
+        const key = t.pool_key_json ? JSON.parse(t.pool_key_json) as PoolKey : null;
+        const sim = key ? await simRoundTripV4(ex.client, "base", ex.address, token, key, wei) : { stage: 0, ratio: null, error: "nincs PoolKey" };
+        const pass = sim.stage === 5 && sim.ratio !== null && sim.ratio >= cfg.live_entry.min_roundtrip_ratio;
+        if (!pass) {
+          const why = `sim_block:stage${sim.stage}${sim.ratio !== null ? `:r${sim.ratio.toFixed(3)}` : ""}${sim.error ? `:${sim.error.slice(0, 60)}` : ""}`;
+          db.prepare("INSERT INTO decisions(token_id, arm, window_sec, regime, decided_at, enter, reason, size_usd, jev_call_id) VALUES (?,?,?,?,?,?,?,?,?)").run(t.id, "live", w, "", nowMs(), 0, why, null, null);
+          log.info("Élő vétel kihagyva (honeypot-teszt)", { token: t.symbol, why });
+          await this.d.notify(`🛡️ Honeypot-teszt: nincs vétel ${t.symbol ?? t.address} (${why})`);
+          return;
+        }
+      }
       const route = await routeFor(ex.client, t.chain, t);
       // A pozíció sora csak sikeres vétel után jön létre; a sikertelen vétel gas-költsége a fills táblába kerül (position_id nélkül)
       const r = await ex.buy(route, token, wei, cfg.execution.max_slippage_pct, {});

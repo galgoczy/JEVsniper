@@ -148,7 +148,7 @@ test("élő kar: config live_entry – alapértelmezés live_rule/live, ismeretl
   const raw = structuredClone(cfg) as Record<string, unknown>;
   delete raw.live_entry;
   const parsed = ConfigSchema.parse(raw);
-  assert.deepEqual(parsed.live_entry, { arm: "live_rule", exit_plan: "live", chains: [] });
+  assert.deepEqual(parsed.live_entry, { arm: "live_rule", exit_plan: "live", chains: [], sim_filter: true, min_roundtrip_ratio: 0.85 });
   assert.deepEqual(cfg.live_entry.chains, ["base"]);
   assert.equal(ConfigSchema.safeParse({ ...raw, live_entry: { arm: "nincs_ilyen", exit_plan: "live" } }).success, false);
   assert.equal(ConfigSchema.safeParse({ ...raw, live_entry: { arm: "rule_v2", exit_plan: "X" } }).success, false);
@@ -169,8 +169,8 @@ test("Jev kikapcsolva: nem hív, szünetelőnek számít", async () => {
 test("pozícióméret: élő = max(alap, compound), árnyék fix", async () => {
   const { currentPositionUsd, shadowSizeUsd } = await import("../src/decision/risk.js");
   const db = openDb(":memory:");
-  ensureCompoundState(db, 30, 1); // régi állapot: 1 USD
-  assert.equal(currentPositionUsd(db, cfg), cfg.risk.base_position_usd); // az alap (2) nem megy lejjebb
+  ensureCompoundState(db, 30, cfg.risk.base_position_usd / 2); // régi, kisebb állapot
+  assert.equal(currentPositionUsd(db, cfg), cfg.risk.base_position_usd); // az alapnál nem megy lejjebb
   db.prepare("UPDATE compound_state SET position_usd = 3 WHERE id = 1").run();
   assert.equal(currentPositionUsd(db, cfg), 3);
   db.prepare("UPDATE compound_state SET position_usd = 50 WHERE id = 1").run();

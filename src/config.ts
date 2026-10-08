@@ -117,7 +117,10 @@ export const ConfigSchema = z.object({
     exit_plan: z.enum(EXIT_PLANS).default("live"),
     // Élő vétel csak ezeken a láncokon (2026-10-03: a nyereség csak Base/Uniswap-ról jön; üres = mindegyik)
     chains: z.array(z.enum(["base", "robinhood"])).default([]),
-  }).default({ arm: "live_rule", exit_plan: "live", chains: [] }),
+    // 2026-10-08: kötelező Base honeypot-teszt az élő vétel előtt (vétel+eladás szimuláció a saját címről, az élő mérettel)
+    sim_filter: z.boolean().default(true),
+    min_roundtrip_ratio: z.number().min(0).max(1).default(0.85),
+  }).default({ arm: "live_rule", exit_plan: "live", chains: [], sim_filter: true, min_roundtrip_ratio: 0.85 }),
   exit_plan: z.object({
     tp1_multiple: z.number().min(1),
     tp1_sell_pct: pct,

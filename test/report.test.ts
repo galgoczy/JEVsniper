@@ -143,7 +143,8 @@ test("riport: aktív napok a kiesett időszak levonásával; USD/nap sor; vissza
   assert.ok(Math.abs(activeDays(b, b + 2 * day) - 2) < 1e-9);                 // utána indult kar: nincs levonás
   const { openDb } = await import("../src/db/index.js");
   const { loadConfig } = await import("../src/config.js");
-  const cfg = loadConfig("config.yaml");
+  const loaded = loadConfig("config.yaml");
+  const cfg = { ...loaded, risk: { ...loaded.risk, base_position_usd: 2 } }; // a példa 2 USD-s élő mérettel számol (a config.yaml értékétől függetlenül)
   const db = openDb(":memory:");
   const now = Date.parse("2026-10-10T00:00:00Z"), start = now - 2 * day;
   for (let i = 1; i <= 4; i++) {

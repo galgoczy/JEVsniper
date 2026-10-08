@@ -1,7 +1,7 @@
 # Jev Sniper Bot – minden paraméter és küszöb itt állítható.
 # A kockázati limitek (risk) CSAK itt állíthatók, kódban nincs felülírás.
 
-mode: dry_run         # live | dry_run  (dry_run: minden fut, Jev is, de tranzakció nem megy ki) – a 7. lépésig (kiszállás) maradjon dry_run!
+mode: live            # live | dry_run  (dry_run: minden fut, Jev is, de tranzakció nem megy ki). 2026-10-08: a felhasználó kérésére Base élő teszt (rule_v2_strict, 0,2 USD); a BNB-t külön kapcsoló (bnb_live) védi
 
 chains:
   base:
@@ -14,13 +14,13 @@ chains:
     native_symbol: ETH
 
 risk:
-  base_position_usd: 2          # élő vétel mérete (2026-10-03: 1 → 2 USD); az árnyékmérés fix 1 USD (evaluation.shadow_size_usd)
+  base_position_usd: 0.2        # élő vétel mérete (2026-10-08: Base élő teszt 0,2 USD, a felhasználó döntése); az árnyékmérés fix 1 USD (evaluation.shadow_size_usd)
   max_position_usd: null         # 2026-10-03: nincs felső határ a belépőre (visszaforgatással nőhet) – figyeljük; számmal visszaállítható
-  deposit_cap_usd: 30
+  deposit_cap_usd: 3           # 2026-10-08: a Base-tárcán ~3,6 USD van; ~0,6 USD marad gasra
   max_open_positions: 15
   max_entries_per_hour: 10
   max_entries_per_day: 60
-  daily_loss_limit_pct_of_working_capital: 25
+  daily_loss_limit_pct_of_working_capital: 85   # 2026-10-08: 3 USD betétnél ≈ 2,5 USD napi veszteségkorlát
   max_consecutive_failed_tx: 3
   # Az 1. napi mérés után állítandó (irány: pozícióméret 5%-a, min. 0,05 USD)
   max_gas_per_tx_usd: 0.05
@@ -122,6 +122,8 @@ live_entry:
   exit_plan: live
   # 2026-10-03: élő vétel csak Base-en (a nyereség Base/Uniswap-ról jön; a Robinhood-belépések veszítenek, és ott nincs pénz a tárcában)
   chains: [base]
+  sim_filter: true            # 2026-10-08: kötelező honeypot-teszt (vétel+eladás szimuláció a saját címről) minden élő vétel előtt
+  min_roundtrip_ratio: 0.85   # a szimulált oda-vissza kör legalább 85%-ot adjon vissza
 
 exit_plan:
   tp1_multiple: 2.0

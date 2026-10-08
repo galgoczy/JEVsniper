@@ -8,10 +8,10 @@ import { parseCommand } from "../src/telegram.js";
 
 test("config.yaml valid és a kockázati limitek a specifikáció szerintiek", () => {
   const c = loadConfig("config.yaml");
-  assert.equal(c.risk.base_position_usd, 2);
+  assert.equal(c.risk.base_position_usd, 0.2); // 2026-10-08: Base élő teszt 0,2 USD
   assert.equal(c.evaluation.shadow_size_usd, 1);
   assert.equal(c.risk.max_position_usd, null);
-  assert.equal(c.risk.deposit_cap_usd, 30);
+  assert.equal(c.risk.deposit_cap_usd, 3);
   assert.equal(c.risk.max_open_positions, 15);
   assert.equal(c.exit_plan.tp1_sell_pct + c.exit_plan.tp2_sell_pct + c.exit_plan.moon_bag_pct, 100);
 });
@@ -19,7 +19,7 @@ test("config.yaml valid és a kockázati limitek a specifikáció szerintiek", (
 test("hibás config elutasítva", () => {
   const c = loadConfig("config.yaml");
   const broken = structuredClone(c) as Record<string, unknown>;
-  (broken.risk as Record<string, number>).max_position_usd = 0.5; // ha van plafon, nem lehet az alap alatt
+  (broken.risk as Record<string, number>).max_position_usd = 0.1; // ha van plafon, nem lehet az alap alatt
   assert.equal(ConfigSchema.safeParse(broken).success, false);
 });
 
