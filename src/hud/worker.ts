@@ -2,7 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
-import { hudSummary, hudPositions, hudFeed, hudWinners, hudPeriods, hudBnbLive } from "./data.js";
+import { hudSummary, hudPositions, hudFeed, hudWinners, hudPeriods, hudBnbLive, hudBaseLive } from "./data.js";
 import { currentSince } from "../analysis/periods.js";
 
 /**
@@ -15,9 +15,9 @@ db.pragma("busy_timeout = 5000");
 const since = () => currentSince(cfg);
 
 parentPort!.on("message", (msg: { id: number; kind?: "all" | "live" }) => {
-  // 2026-10-08: a gyors (5 mp-es) élő-blokk csak az olcsó BNB-élő lekérdezést futtatja
+  // 2026-10-08: a gyors (5 mp-es) élő-blokk csak az olcsó élő lekérdezéseket futtatja (Base + BNB)
   if (msg.kind === "live") {
-    try { parentPort!.postMessage({ id: msg.id, data: { bnbLive: hudBnbLive(db, cfg), computedAt: Date.now() } }); }
+    try { parentPort!.postMessage({ id: msg.id, data: { bnbLive: hudBnbLive(db, cfg), baseLive: hudBaseLive(db, cfg), computedAt: Date.now() } }); }
     catch (e) { parentPort!.postMessage({ id: msg.id, error: (e as Error).message.slice(0, 200) }); }
     return;
   }

@@ -219,6 +219,7 @@ CREATE INDEX IF NOT EXISTS idx_positions_plan_opened ON positions(exit_plan, ope
 CREATE INDEX IF NOT EXISTS idx_fills_position ON fills(position_id, kind);
 CREATE INDEX IF NOT EXISTS idx_jev_calls_at ON jev_calls(called_at);
 CREATE INDEX IF NOT EXISTS idx_decisions_token ON decisions(token_id, arm);
+CREATE INDEX IF NOT EXISTS idx_decisions_arm_at ON decisions(arm, decided_at);   -- 2026-10-08: HUD élő blokk (mai élő döntések)
 
 -- Árnyékkar-állapotok a futás közbeni figyelőhöz (Telegram-riasztás állapotváltáskor)
 CREATE TABLE IF NOT EXISTS arm_states (

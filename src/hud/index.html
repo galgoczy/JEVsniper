@@ -134,7 +134,7 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
   </header>
 
   <section class="card sec live-card" id="live-card">
-    <div class="ttl"><h2>🟡 ÉLŐ · BNB</h2><small id="live-note">–</small></div>
+    <div class="ttl"><h2>🔵 ÉLŐ · Base</h2><small id="l-note">–</small></div>
     <div class="grid kpis" style="margin-top:10px">
       <div class="card kpi"><div class="lab">💸 Eddig (nettó)</div><div class="val" id="l-total">–</div><div class="note" id="l-total-n">–</div></div>
       <div class="card kpi"><div class="lab">☀️ Ma</div><div class="val" id="l-today">–</div><div class="note" id="l-today-n">–</div></div>
@@ -143,20 +143,21 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
     </div>
     <div class="grid row2" style="margin-top:12px">
       <div class="card">
-        <div class="ttl"><h2>📌 Élő pozíciók</h2><small id="lpos-n">–</small></div>
-        <div class="pos" id="lpos"></div>
+        <div class="ttl"><h2>📌 Élő pozíciók</h2><small id="l-pos-n">–</small></div>
+        <div class="pos" id="l-pos"></div>
       </div>
       <div class="card">
-        <div class="ttl"><h2>🧾 Utolsó zárások</h2><small id="lrec-n">–</small></div>
-        <div class="feed" id="lrec"></div>
+        <div class="ttl"><h2>🧾 Utolsó zárások</h2><small id="l-rec-n">–</small></div>
+        <div class="feed" id="l-rec"></div>
         <div class="note" id="l-comp" style="margin-top:10px;color:var(--muted);font-size:13px">–</div>
       </div>
     </div>
+    <div class="note" id="l-skip" style="margin-top:10px;color:var(--muted);font-size:13px">–</div>
   </section>
 
   <div class="ttl sec"><h2>🔵 Base · árnyék-kiértékelés</h2><small>az „élesben” értékek az élő belépővel felszorozva</small></div>
   <section class="grid kpis">
-    <div class="card kpi"><div class="lab">💸 Élesben eddig (Base)</div><div class="val" id="k-total">–</div><div class="note" id="k-total-n">–</div></div>
+    <div class="card kpi"><div class="lab">🧮 Árnyék élő mérettel (Base)</div><div class="val" id="k-total">–</div><div class="note" id="k-total-n">–</div></div>
     <div class="card kpi"><div class="lab">☀️ Ma</div><div class="val" id="k-today">–</div><div class="note" id="k-today-n">–</div></div>
     <div class="card kpi"><div class="lab">⏱ Tempó / nap</div><div class="val" id="k-rate">–</div><div class="note" id="k-rate-n">–</div></div>
     <div class="card kpi"><div class="lab">👛 Tárca</div><div class="val" id="k-wallet">–</div><div class="note" id="k-wallet-n">–</div></div>
@@ -213,6 +214,27 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
     <div class="ttl"><h2>🖥 Mac mini (M4)</h2><small id="sys-note">–</small></div>
     <div class="mini" id="sys"></div>
   </section>
+
+  <details class="card sec" id="bnb-live-card">
+    <summary class="ttl"><h2>🟡 BNB élő</h2><small id="b-note">–</small></summary>
+    <div class="grid kpis" style="margin-top:10px">
+      <div class="card kpi"><div class="lab">💸 Eddig (nettó)</div><div class="val" id="b-total">–</div><div class="note" id="b-total-n">–</div></div>
+      <div class="card kpi"><div class="lab">☀️ Ma</div><div class="val" id="b-today">–</div><div class="note" id="b-today-n">–</div></div>
+      <div class="card kpi"><div class="lab">🧭 Nyitott</div><div class="val" id="b-open">–</div><div class="note" id="b-open-n">–</div></div>
+      <div class="card kpi"><div class="lab">👛 Tárca · méret</div><div class="val" id="b-wallet">–</div><div class="note" id="b-wallet-n">–</div></div>
+    </div>
+    <div class="grid row2" style="margin-top:12px">
+      <div class="card">
+        <div class="ttl"><h2>📌 Élő pozíciók</h2><small id="b-pos-n">–</small></div>
+        <div class="pos" id="b-pos"></div>
+      </div>
+      <div class="card">
+        <div class="ttl"><h2>🧾 Utolsó zárások</h2><small id="b-rec-n">–</small></div>
+        <div class="feed" id="b-rec"></div>
+        <div class="note" id="b-comp" style="margin-top:10px;color:var(--muted);font-size:13px">–</div>
+      </div>
+    </div>
+  </details>
 
   <footer>Csak olvas · dry_run-ban árnyékmérés · az „élesben” értékek az élő belépővel felszorozva · <span id="foot-since">–</span></footer>
 </div>
@@ -329,34 +351,45 @@ function armTip(r, size) {
   return tip;
 }
 
-function renderLive(l) {
+/** Élő blokk (Base felül, BNB alul összecsukva) – közös rajzoló; p = id-előtag ("l" Base, "b" BNB). */
+function renderLive(l, p) {
   if (!l) return;
-  const live = l.enabled && l.mode === "live";
-  $("live-note").textContent = live ? `${l.arm === "bnb_whale" ? "bálna-vétel" : "minden +60s"} · ki 2×/−40% · max ${l.maxOpen} nyitott · ÉLES` : `kikapcsolva (${l.mode})`;
-  const c = l.closed, usd = (x) => `${sgn(x)}$`;
-  $("l-total").textContent = c.n ? usd(c.sum) : "–"; $("l-total").className = "val " + cls(c.sum);
-  $("l-total-n").textContent = c.n ? `${c.n} zárás · ${c.wins} nyerő (${Math.round(100 * c.wins / c.n)}%) · átlag ${sgn(c.sum / c.n)}$` : "még nincs lezárt élő pozíció";
-  $("l-today").textContent = usd(c.today); $("l-today").className = "val " + cls(c.today);
-  $("l-today-n").textContent = c.avgLatencyMs !== null ? `vétel-késés átlag ${(c.avgLatencyMs / 1000).toFixed(1)} s` : "–";
-  $("l-open").textContent = String(l.open.length); $("l-open-n").textContent = `lekötve ${l.open.reduce((a, p) => a + p.spentUsd, 0).toFixed(2)}$ · max ${l.maxOpen}`;
-  $("l-wallet").textContent = l.walletBnb === null ? "–" : `${l.walletBnb.toFixed(4)} BNB`;
-  $("l-wallet-n").textContent = `${l.walletUsd === null ? "" : `≈ ${l.walletUsd.toFixed(2)}$ · `}belépő ${l.positionUsd.toFixed(2)}$`;
-  const box = $("lpos"); box.replaceChildren(); $("lpos-n").textContent = `${l.open.length} nyitott`;
+  const q = (id) => $(`${p}-${id}`);
+  const live = l.chain === "base" ? l.enabled : (l.enabled && l.mode === "live");
+  const usd = (x) => `${sgn(x)}$`;
+  if (l.chain === "base") q("note").textContent = live ? `${l.armLabel} · terv ${l.plan} · honeypot-teszttel · max ${l.maxOpen} nyitott · ÉLES` : `nem éles (${l.mode})`;
+  else q("note").textContent = live ? `${l.arm === "bnb_whale" ? "bálna-vétel" : "minden +60s"} · ki 2×/−40% · max ${l.maxOpen} nyitott · ÉLES` : `kikapcsolva (${l.enabled ? l.mode : "enabled: false"})`;
+  const c = l.closed;
+  q("total").textContent = c.n ? usd(c.sum) : "–"; q("total").className = "val " + cls(c.sum);
+  q("total-n").textContent = c.n ? `${c.n} zárás · ${c.wins} nyerő (${Math.round(100 * c.wins / c.n)}%) · átlag ${sgn(c.sum / c.n)}$` : "még nincs lezárt élő pozíció";
+  q("today").textContent = usd(c.today); q("today").className = "val " + cls(c.today);
+  q("today-n").textContent = l.chain === "base" ? `gáz eddig ${(c.gasUsd ?? 0).toFixed(3)}$` : (c.avgLatencyMs !== null ? `vétel-késés átlag ${(c.avgLatencyMs / 1000).toFixed(1)} s` : "–");
+  q("open").textContent = String(l.open.length); q("open-n").textContent = `lekötve ${l.open.reduce((a, x) => a + x.spentUsd, 0).toFixed(2)}$ · max ${l.maxOpen}`;
+  if (l.chain === "base") q("wallet").textContent = l.walletUsd === null ? "–" : `${l.walletUsd.toFixed(2)}$`;
+  else q("wallet").textContent = l.walletBnb === null ? "–" : `${l.walletBnb.toFixed(4)} BNB`;
+  q("wallet-n").textContent = l.chain === "base"
+    ? `${l.walletEth === null ? "" : `${l.walletEth.toFixed(5)} ETH · `}belépő ${l.positionUsd.toFixed(2)}$${l.walletAt ? ` · ${ago(l.walletAt)}` : ""}`
+    : `${l.walletUsd === null ? "" : `≈ ${l.walletUsd.toFixed(2)}$ · `}belépő ${l.positionUsd.toFixed(2)}$`;
+  const box = q("pos"); box.replaceChildren(); q("pos-n").textContent = `${l.open.length} nyitott`;
   if (!l.open.length) box.append(el("div", "empty", "nincs nyitott élő pozíció 💤"));
-  for (const p of l.open) {
+  for (const x of l.open) {
     const card = el("div", "p"), top = el("div", "top"), left = el("div"); left.style.minWidth = "0";
-    left.append(el("div", "sym", `🟡 ${p.symbol}`));
-    const right = el("div", "mono " + cls(p.value), p.value === null ? "–" : `${sgn(p.value)}$`); right.style.textAlign = "right";
-    const xs = el("div", "mono", p.nowX === null ? "ár még nincs" : `${p.nowX.toFixed(2)}x`); xs.style.cssText = "font-size:12px;color:var(--muted)"; right.append(xs);
+    left.append(el("div", "sym", `${l.chain === "base" ? "🔵" : "🟡"} ${x.symbol}`));
+    const right = el("div", "mono " + cls(x.value), x.value === null ? "–" : `${sgn(x.value)}$`); right.style.textAlign = "right";
+    const xs = el("div", "mono", x.nowX === null ? "ár még nincs" : `${x.nowX.toFixed(2)}x`); xs.style.cssText = "font-size:12px;color:var(--muted)"; right.append(xs);
     top.append(left, right);
-    const meta = el("div", "meta"); for (const a of p.arms) meta.append(el("span", "tag", a)); meta.append(el("span", "", `· ${ago(p.openedAt)} · ${p.spentUsd.toFixed(2)}$${p.peakX ? ` · csúcs ${p.peakX.toFixed(2)}x` : ""}`));
+    const meta = el("div", "meta"); for (const a of x.arms) meta.append(el("span", "tag", a)); meta.append(el("span", "", `· ${ago(x.openedAt)} · ${x.spentUsd.toFixed(2)}$${x.peakX ? ` · csúcs ${x.peakX.toFixed(2)}x` : ""}`));
     card.append(top, meta); box.append(card);
   }
-  const rec = $("lrec"); rec.replaceChildren(); $("lrec-n").textContent = l.recent.length ? `utolsó ${l.recent.length}` : "–";
+  const rec = q("rec"); rec.replaceChildren(); q("rec-n").textContent = l.recent.length ? `utolsó ${l.recent.length}` : "–";
   for (const r of l.recent) { const row = el("div", "ev"); row.append(el("div", "em", r.net >= 0 ? "🟢" : "🔴"), el("div", "t", `${r.symbol} · ${r.reason.replace(/_/g, " ")} · ${hhmm(r.closedAt)}`), el("div", "r mono " + cls(r.net), `${sgn(r.net)}$`)); rec.append(row); }
   if (!l.recent.length) rec.append(el("div", "empty", "még nincs zárás"));
   const k = l.compound;
-  $("l-comp").textContent = k ? `🔁 Visszaforgatás ${k.time}: tőke ${k.capital.toFixed(2)}$ (induló ${k.initial.toFixed(2)}$) · tartalék ${k.reserve.toFixed(2)}$ · méret ${k.position.toFixed(2)}$${l.shadow ? ` · árnyék ugyanebben az időben: ${sgn(l.shadow.mean)}$/1$ (n${l.shadow.n})` : ""}` : "";
+  q("comp").textContent = k ? `🔁 Visszaforgatás ${k.time}: tőke ${k.capital.toFixed(2)}$ (induló ${k.initial.toFixed(2)}$) · tartalék ${k.reserve.toFixed(2)}$ · méret ${k.position.toFixed(2)}$${l.shadow ? ` · árnyék ugyanebben az időben: ${sgn(l.shadow.mean)}$/1$ (n${l.shadow.n})` : ""}` : "";
+  if (l.today && q("skip")) {
+    const t = l.today, other = t.blocked.map((b) => `${b.reason.replace(/_/g, " ")} ${b.n}`).join(", ");
+    q("skip").textContent = `Ma: ${t.signals} vételi jelzés · 🛡️ honeypot-teszt megfogott ${t.honeypot} · nincs útvonal (WETH/v2/v3) ${t.noRoute}${other ? ` · korlát: ${other}` : ""}`;
+  }
 }
 
 function renderPeriods(ps) {
@@ -476,7 +509,7 @@ async function refresh(fresh = false) {
   try {
     const d = await fetch("/api/all" + (fresh ? "?fresh=1" : "") + (token ? `${fresh ? "&" : "?"}t=${encodeURIComponent(token)}` : ""), { cache: "no-store" })
       .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
-    renderSummary(d.summary); renderLive(d.summary.bnbLive); renderPositions(d.positions); renderWinners(d.winners); renderSystem(d.system); renderPeriods(d.periods);
+    renderSummary(d.summary); renderLive(d.summary.baseLive, "l"); renderLive(d.summary.bnbLive, "b"); renderPositions(d.positions); renderWinners(d.winners); renderSystem(d.system); renderPeriods(d.periods);
     const age = Math.max(0, Math.round((Date.now() - d.computedAt) / 1000));
     $("upd").textContent = `adat ${hhmm(d.computedAt)}${age > 5 ? ` (${age} mp)` : ""}`; $("live-dot").classList.remove("off");
   } catch (e) {
@@ -504,13 +537,13 @@ $("pk-add").onclick = async () => {
 $("logout").onclick = async () => { await post("/auth/logout"); location.href = "/login"; };
 authState();
 refresh(); setInterval(() => refresh(false), 30_000);
-// 2026-10-08: az élő BNB-blokk és a gép-állapot 5 mp-enként (olcsó lekérdezés, külön a 30 mp-es teljes frissítéstől)
+// 2026-10-08: az élő blokkok (Base, BNB) és a gép-állapot 5 mp-enként (olcsó lekérdezés, külön a 30 mp-es teljes frissítéstől)
 let liveBusy = false;
 async function refreshLive() {
   if (liveBusy || document.hidden) return; liveBusy = true;
   try {
     const d = await fetch("/api/live" + (token ? `?t=${encodeURIComponent(token)}` : ""), { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
-    renderLive(d.bnbLive); renderSystem(d.system);
+    renderLive(d.baseLive, "l"); renderLive(d.bnbLive, "b"); renderSystem(d.system);
   } catch { /* a teljes frissítés kezeli a hibát */ } finally { liveBusy = false; }
 }
 setInterval(refreshLive, 5_000);

@@ -129,6 +129,49 @@ export function hudBnbLive(db: DB, cfg: Config, now = Date.now()) {
   };
 }
 
+/**
+ * Base élő blokk (2026-10-08): a valódi Base-pozíciók (positions.arm = 'live') – ugyanabban az alakban, mint a BNB élő blokk,
+ * plusz a honeypot-teszt kihagyásai és a ma elutasított belépések okai.
+ */
+export function hudBaseLive(db: DB, cfg: Config, now = Date.now()) {
+  const enabled = cfg.mode === "live" && (!cfg.live_entry.chains.length || cfg.live_entry.chains.includes("base"));
+  const bal = savedWalletBalance(db);
+  const ethUsd = Number((db.prepare("SELECT value FROM meta WHERE key = 'wallet_eth_usd'").get() as { value: string } | undefined)?.value) || null;
+  const cs = db.prepare("SELECT deposit_usd, growth_pool_usd, reserve_usd, position_usd FROM compound_state WHERE id = 1").get() as { deposit_usd: number; growth_pool_usd: number; reserve_usd: number; position_usd: number } | undefined;
+  type Row = { id: number; symbol: string | null; address: string; opened_at: number; closed_at: number | null; close_reason: string | null; net_pnl_usd: number | null; size_usd: number; size_native: number;
+    native_received: number; tokens_remaining: number; tokens_bought: number; entry_price_native: number; last_price_native: number | null; peak_price_native: number | null; gas_usd: number | null; liquidity_at_entry: number | null; phase: string };
+  const rows = db.prepare(`SELECT p.id, t.symbol, t.address, p.opened_at, p.closed_at, p.close_reason, p.net_pnl_usd, p.size_usd, p.size_native, p.native_received, p.tokens_remaining, p.tokens_bought,
+      p.entry_price_native, p.last_price_native, p.peak_price_native, p.gas_usd, p.liquidity_at_entry, p.phase
+    FROM positions p JOIN tokens t ON t.id = p.token_id WHERE p.arm = 'live' AND p.chain = 'base' AND COALESCE(p.close_reason, '') NOT LIKE '%dry_run%' ORDER BY p.opened_at DESC`).all() as Row[];
+  const today = dayKey(now);
+  const closed = rows.filter((r) => r.closed_at !== null && r.net_pnl_usd !== null);
+  const open = rows.filter((r) => r.closed_at === null).map((r) => {
+    const v = positionValue({ at: r.opened_at, closed_at: null, net_pnl_usd: null, size_usd: r.size_usd, size_native: r.size_native, native_received: r.native_received, tokens_remaining: r.tokens_remaining,
+      last_price_native: r.last_price_native, gas_usd: r.gas_usd, liquidity_at_entry: r.liquidity_at_entry, chain: "base", launchpad: "", p: "" }, cfg.cost_model);
+    return { symbol: r.symbol ?? `${r.address.slice(0, 6)}…`, address: r.address, chain: "base", arms: [LABEL[cfg.live_entry.arm] ?? cfg.live_entry.arm, r.phase], openedAt: r.opened_at, ageMin: (now - r.opened_at) / 60_000,
+      spentUsd: r.size_usd, nowX: r.last_price_native && r.entry_price_native ? r.last_price_native / r.entry_price_native : null,
+      peakX: r.peak_price_native && r.entry_price_native ? r.peak_price_native / r.entry_price_native : null, phase: r.phase, value: v ? v.value * r.size_usd : null };
+  });
+  const recent = closed.slice(0, 10).map((r) => ({ symbol: r.symbol ?? r.address.slice(0, 8), reason: r.close_reason ?? "", net: r.net_pnl_usd as number, closedAt: r.closed_at as number, spentUsd: r.size_usd }));
+  const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0);
+  const reasons = db.prepare("SELECT reason, COUNT(*) n FROM decisions WHERE arm = 'live' AND decided_at > ? GROUP BY reason").all(dayStart.getTime()) as Array<{ reason: string; n: number }>;
+  const honeypot = reasons.filter((r) => r.reason?.startsWith("sim_block")).reduce((a, r) => a + r.n, 0);
+  const noRoute = reasons.filter((r) => r.reason?.startsWith("no_route")).reduce((a, r) => a + r.n, 0);
+  const blocked = reasons.filter((r) => r.reason && !r.reason.startsWith("sim_block") && !r.reason.startsWith("no_route") && !r.reason.startsWith("enter:") && r.reason !== "dry_run");
+  const signals = reasons.filter((r) => r.reason?.startsWith("enter:")).reduce((a, r) => a + r.n, 0);
+  const gas = db.prepare("SELECT COALESCE(SUM(f.real_gas_usd),0) g FROM fills f JOIN positions p ON p.id = f.position_id WHERE f.is_live = 1 AND p.arm = 'live' AND p.chain = 'base'").get() as { g: number };
+  return {
+    chain: "base", enabled, mode: cfg.mode, arm: cfg.live_entry.arm, armLabel: LABEL[cfg.live_entry.arm] ?? cfg.live_entry.arm, plan: cfg.live_entry.exit_plan,
+    positionUsd: currentPositionUsd(db, cfg), maxOpen: cfg.risk.max_open_positions,
+    walletEth: bal && ethUsd ? bal.usd / ethUsd : null, walletUsd: bal?.usd ?? null, walletAt: bal?.at ?? null,
+    compound: cs ? { initial: cfg.risk.deposit_cap_usd, capital: cs.deposit_usd + cs.growth_pool_usd, reserve: cs.reserve_usd, position: cs.position_usd, time: `${cfg.compound.recalc_time_local} ${cfg.compound.recalc_timezone}` } : null,
+    closed: { n: closed.length, sum: closed.reduce((a, r) => a + (r.net_pnl_usd as number), 0), today: closed.filter((r) => dayKey(r.closed_at as number) === today).reduce((a, r) => a + (r.net_pnl_usd as number), 0),
+      wins: closed.filter((r) => (r.net_pnl_usd as number) > 0).length, gasUsd: gas.g },
+    today: { signals, honeypot, noRoute, blocked: blocked.map((r) => ({ reason: r.reason, n: r.n })) },
+    open, recent,
+  };
+}
+
 export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now()) {
   const w = cfg.evaluation.live_window_sec, live = cfg.live_entry.arm, plan = cfg.live_entry.exit_plan, liveSize = currentPositionUsd(db, cfg);
   const closed = db.prepare(`SELECT chain, arm, window_sec w, opened_at o, closed_at c, net_pnl_usd v FROM positions
@@ -177,6 +220,7 @@ export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now(
     baselines: BASELINES.map(([a, chain, win]) => armRow(chain, a, win === "live" ? w : win)),
     bnb: hudBnb(db, sinceMs, now),
     bnbLive: hudBnbLive(db, cfg, now),
+    baseLive: hudBaseLive(db, cfg, now),
     wallet: { usd: bal?.usd ?? null, at: bal?.at ?? null, needUsd: wn.needUsd, peakOpen: wn.peakOpen, ok: bal ? bal.usd >= wn.needUsd : null },
     compound: { sizeNow: liveSize, poolNow: cs?.growth_pool_usd ?? 0, simSize: sim.size, simPool: sim.pool },
     recorders: {
