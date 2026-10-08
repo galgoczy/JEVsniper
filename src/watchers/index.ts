@@ -5,6 +5,8 @@ import type { ChainKey } from "../chains/index.js";
 import { erc20Abi } from "../abis/uniswap.js";
 import { sourcesFor, type LogSource, type NewToken } from "./sources.js";
 import { log } from "../logger.js";
+import { ADDRESSES } from "../chains/addresses.js";
+import { isAddressEqual } from "viem";
 
 export interface WatcherOptions {
   pollIntervalMs: number;
@@ -12,6 +14,8 @@ export interface WatcherOptions {
   confirmations: number;        // hány blokkot várunk (reorg ellen)
   enabledSources: Record<string, boolean>;
   onToken?: (t: NewToken, tokenId: number) => void | Promise<void>;
+  /** PONS-graduáció (a curve-ről v4 poolba lépés első észlelése): tokenId + a pool induló ára */
+  onGraduation?: (tokenId: number, initSqrtPriceX96: bigint | null) => void | Promise<void>;
 }
 
 /**
@@ -43,7 +47,13 @@ export class ChainWatcher {
 
   async start(): Promise<void> {
     this.stopped = false;
-    const head = await this.client.getBlockNumber();
+    // 2026-10-06: induláskor az RPC átmenetileg tilthat (Cloudflare 403) – újrapróbálás, nem leállás
+    let head: bigint | null = null;
+    while (head === null && !this.stopped) {
+      head = await this.client.getBlockNumber().catch((e) => { log.warn(`Watcher indulás: RPC hiba (${this.chain}), újrapróbálás`, { error: (e as Error).message.slice(0, 120) }); return null; });
+      if (head === null) await new Promise((r) => setTimeout(r, Math.max(this.opts.pollIntervalMs, 10_000)));
+    }
+    if (head === null) return;
     const stored = this.loadLastBlock();
     let last: bigint = stored === null || head - stored > BigInt(this.opts.maxBlockRange) * 10n ? head - 1n : stored; // ne dolgozzunk fel órákat visszamenőleg
     log.info(`Watcher indul: ${this.chain}`, { from: last.toString(), sources: this.sourceKeys });
@@ -69,35 +79,62 @@ export class ChainWatcher {
 
   stop() { this.stopped = true; }
 
+  /** Egy getLogs hívás az összes forrásra (címlista + eseménylista), utána cím szerint szétosztva. */
   private async processRange(from: bigint, to: bigint) {
     this.stats.polls++;
-    for (const src of this.sources) {
-      const logs = await this.client.getLogs({ address: src.address, event: src.event, fromBlock: from, toBlock: to });
-      this.stats.logs += logs.length;
-      for (const l of logs) {
-        let t: NewToken | null = null;
-        try { t = src.decode(l); } catch (e) { log.debug("dekódolási hiba", { src: src.key, error: (e as Error).message }); }
-        if (!t) continue;
-        await this.upsertToken(t);
-      }
+    const byAddr = new Map(this.sources.map((s) => [s.address.toLowerCase(), s] as const));
+    const logs = await this.client.getLogs({
+      address: this.sources.map((s) => s.address),
+      events: this.sources.map((s) => s.event),
+      fromBlock: from, toBlock: to,
+    });
+    this.stats.logs += logs.length;
+    for (const l of logs) {
+      const src = byAddr.get(l.address.toLowerCase());
+      if (!src) continue;
+      if (l.topics[0] !== src.topic0) continue; // más forrás eseménye ugyanazon a címen – nem fordul elő, de biztos ami biztos
+      let t: NewToken | null = null;
+      try { t = src.decode(l); } catch (e) { log.debug("dekódolási hiba", { src: src.key, error: (e as Error).message }); }
+      if (!t) continue;
+      await this.upsertToken(t);
     }
   }
 
   private async upsertToken(t: NewToken) {
-    const existing = this.db.prepare("SELECT id, launchpad FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(t.chain, t.address) as { id: number; launchpad: string } | undefined;
+    const existing = this.db.prepare("SELECT id, launchpad, discovered_block, graduated_at FROM tokens WHERE chain = ? AND lower(address) = lower(?)").get(t.chain, t.address) as { id: number; launchpad: string; discovered_block: number | null; graduated_at: number | null } | undefined;
     if (existing) {
-      // Launchpad-token graduált Uniswapra: csak a pool-adatot frissítjük, nem új token.
       if (t.launchpad === "uniswap" && existing.launchpad !== "uniswap") {
-        this.db.prepare("UPDATE tokens SET pool_address = COALESCE(pool_address, ?) WHERE id = ?").run(t.pool, existing.id);
+        // PONS: csak a PONS saját hookjával nyitott pool a graduáció (2026-10-06 javítás: botok idegen, 79–88% díjú por-poolokat
+        // nyitnak a görbén lévő tokeneknek; ezek graduációnak számítottak, és az árfigyelő onnan olvasta az árat).
+        if (existing.launchpad === "pons" && !isOfficialPonsPool(this.chain, t)) { log.debug("PONS-token idegen v4 poolja – nem graduáció", { token: t.address, hooks: t.poolKey?.hooks }); return; }
+        if (existing.launchpad === "pons") {
+          this.db.prepare("UPDATE tokens SET graduated_at = COALESCE(graduated_at, ?), pool_key_json = ? WHERE id = ?").run(nowMs(), JSON.stringify(t.poolKey), existing.id);
+          if (existing.graduated_at === null) await this.opts.onGraduation?.(existing.id, t.initSqrtPriceX96 ?? null);
+          return;
+        }
+        // Launchpad-token v4 poolja: ugyanabban a blokkban (Clanker) → nem graduáció, csak a PoolKey.
+        const sameBlock = existing.discovered_block !== null && BigInt(existing.discovered_block) === t.blockNumber;
+        this.db.prepare("UPDATE tokens SET graduated_at = CASE WHEN ? THEN graduated_at ELSE COALESCE(graduated_at, ?) END, pool_key_json = COALESCE(pool_key_json, ?) WHERE id = ?")
+          .run(sameBlock ? 1 : 0, nowMs(), t.poolKey ? JSON.stringify(t.poolKey) : null, existing.id);
+        if (!sameBlock && existing.graduated_at === null && existing.launchpad === "pons") await this.opts.onGraduation?.(existing.id, t.initSqrtPriceX96 ?? null);
+      } else if (t.launchpad !== "uniswap" && existing.launchpad === "uniswap") {
+        // A v4 Initialize hamarabb jött, mint a launchpad TokenCreated eseménye (ugyanaz a tx): pótoljuk a launchpad-adatokat.
+        this.db.prepare("UPDATE tokens SET launchpad = ?, creator = COALESCE(?, creator), mechanics = ?, name = COALESCE(name, ?), symbol = COALESCE(symbol, ?), graduated_at = NULL, graduation_threshold = COALESCE(?, graduation_threshold) WHERE id = ?")
+          .run(t.launchpad, t.creator, t.mechanics, t.name, t.symbol, t.graduationThreshold?.toString() ?? null, existing.id);
       }
       return;
+    }
+    if (!t.creator && t.launchpad === "uniswap" && t.txHash) {
+      // Közvetlen Uniswap-indításnál nincs launchpad-esemény a készítővel: a pool-létrehozó tx küldőjét tekintjük készítőnek.
+      const tx = await this.client.getTransaction({ hash: t.txHash }).catch((e) => { log.debug("tx-küldő lekérés hiba", { error: (e as Error).message.slice(0, 100) }); return null; });
+      if (tx) t.creator = tx.from;
     }
     if (!t.name || !t.symbol) {
       const meta = await this.readErc20(t.address);
       t.name = t.name ?? meta.name; t.symbol = t.symbol ?? meta.symbol;
     }
-    const info = this.db.prepare(`INSERT OR IGNORE INTO tokens(chain, address, creator, launchpad, mechanics, pool_address, name, symbol, discovered_at, discovered_block, status)
-      VALUES (?,?,?,?,?,?,?,?,?,?,'new')`).run(t.chain, t.address, t.creator, t.launchpad, t.mechanics, t.pool, t.name, t.symbol, nowMs(), Number(t.blockNumber));
+    const info = this.db.prepare(`INSERT OR IGNORE INTO tokens(chain, address, creator, launchpad, mechanics, pool_address, pair_token, name, symbol, discovered_at, discovered_block, status, graduation_threshold, pool_key_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'new',?,?)`).run(t.chain, t.address, t.creator, t.launchpad, t.mechanics, t.pool, t.pairToken, t.name, t.symbol, nowMs(), Number(t.blockNumber), t.graduationThreshold?.toString() ?? null, t.poolKey ? JSON.stringify(t.poolKey) : null);
     if (info.changes === 0) return;
     this.stats.tokens++;
     const id = Number(info.lastInsertRowid);
@@ -114,4 +151,10 @@ export class ChainWatcher {
       return { name: name as string | null, symbol: symbol as string | null };
     } catch { return { name: null, symbol: null }; }
   }
+}
+
+/** A PONS graduációs poolja: a PONS v2 hook (docs.ponsfamily.com/v2#contracts) a PoolKey-ben. */
+export function isOfficialPonsPool(chain: ChainKey, t: Pick<NewToken, "poolKey">): boolean {
+  const hook = ADDRESSES[chain].ponsV2Hook;
+  return !!hook && !!t.poolKey && isAddressEqual(t.poolKey.hooks as `0x${string}`, hook);
 }
