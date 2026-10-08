@@ -70,16 +70,17 @@ export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
     // Szimuláció nélküli pozíció (10-07 21:54 UTC előtt) a szűrtbe nem számít.
     const baseArm = arm.replace(/_d(5|10)$/, "");
     const plans = PLANS.map((plan) => {
-      const rows = db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t, p.opened_at o, c.me_lo_stage st, c.me_lo_ratio rt, p.ring_n rg FROM bnb_shadow_positions p
-        LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = ? AND p.closed_at IS NOT NULL AND p.opened_at > ?`).all(baseArm, arm, plan, sinceMs) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; o: number; st: number | null; rt: number | null; rg: number | null }>;
+      const rows = db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t, p.opened_at o, c.me_lo_stage st, c.me_lo_ratio rt, p.ring_n rg,
+        (SELECT 1 FROM bnb_reactive_marks m WHERE (m.kind = 'code' AND m.value = c.code_hash) OR (m.kind = 'via' AND m.value = c.whale_via)) rx FROM bnb_shadow_positions p
+        LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = ? AND p.closed_at IS NOT NULL AND p.opened_at > ?`).all(baseArm, arm, plan, sinceMs) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; o: number; st: number | null; rt: number | null; rg: number | null; rx: number | null }>;
       const adjOf = (r: typeof rows[number]) => taxedNet(r.v, r.s, r.txs, 0.006, r.b ?? 0, r.t ?? 0)!;
-      const pass = rows.filter((r) => r.st === 5 && (r.rt ?? 0) >= 0.85 && (r.rg ?? 0) < RING_MIN_BUYERS); // honeypot-teszt + gyűrű-szűrő (2026-10-08)
+      const pass = rows.filter((r) => r.st === 5 && (r.rt ?? 0) >= 0.85 && (r.rg ?? 0) < RING_MIN_BUYERS && !r.rx); // honeypot-teszt + gyűrű + reaktív gyár (2026-10-08)
       const rawAll = rows.map(adjOf), adjPass = pass.map(adjOf);
       const sum = adjPass.reduce((a, x) => a + x, 0), sumAll = rawAll.reduce((a, x) => a + x, 0);
       const measured = rows.filter((r) => r.b !== null && r.t !== null).length;
       const taxed = rows.filter((r) => (r.b ?? 0) + (r.t ?? 0) > 0.005).length;
       return { plan, n: pass.length, mean: pass.length ? sum / pass.length : null, sum, rawN: rows.length, rawMean: rows.length ? sumAll / rows.length : null,
-        simmed: rows.filter((r) => r.st !== null).length, ringN: rows.filter((r) => (r.rg ?? 0) >= RING_MIN_BUYERS).length, measured, taxed, first: pass.length ? Math.min(...pass.map((r) => r.o)) : null };
+        simmed: rows.filter((r) => r.st !== null).length, ringN: rows.filter((r) => (r.rg ?? 0) >= RING_MIN_BUYERS).length, reactiveN: rows.filter((r) => r.rx).length, measured, taxed, first: pass.length ? Math.min(...pass.map((r) => r.o)) : null };
     });
     const main = plans[0]!;
     const openRows = db.prepare(`SELECT token, opened_at o, entry_price e, last_price l FROM bnb_shadow_positions WHERE arm = ? AND plan = ? AND closed_at IS NULL ORDER BY opened_at DESC`).all(arm, PLANS[0]) as Array<{ token: string; o: number; e: number; l: number | null }>;

@@ -4,6 +4,7 @@ import { log } from "../logger.js";
 import { measureTax } from "./tax.js";
 import { simRoundTrip, FRESH_ADDRESS } from "./simtrade.js";
 import { ringBuyers } from "./ring.js";
+import { tokenCodeHash, whaleVia } from "./reactive.js";
 
 /**
  * BNB / PancakeSwap árnyékkarok (2026-10-07) – a harmadik visszajátszási kör két jelöltje, ELŐRE rögzítve (docs/FELTETELEZESEK.md):
@@ -191,9 +192,11 @@ export class BnbShadow {
   /** Vétel+eladás szimuláció három változatban (saját cím 0,2 / 0,05 gwei, friss cím 0,05 gwei), párhuzamosan; eredmény a bnb_sim_checks-be. */
   private async simulate(pair: string, token: string, arm: string, usd: number) {
     const t0 = Date.now(), value = BigInt(Math.floor(2 / usd * 1e18)), tk = getAddress(token), me = getAddress(this.d.simAddress!);
-    const [hi, lo, fr] = await Promise.all([simRoundTrip(this.d.client, me, tk, value, 200_000_000n), simRoundTrip(this.d.client, me, tk, value, 50_000_000n), simRoundTrip(this.d.client, FRESH_ADDRESS, tk, value, 50_000_000n)]);
-    this.d.db.prepare(`INSERT OR IGNORE INTO bnb_sim_checks(pair, arm, at, token, me_hi_stage, me_hi_ratio, me_lo_stage, me_lo_ratio, fresh_stage, fresh_ratio, ms, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(pair, arm, this.now(), token, hi.stage, hi.ratio, lo.stage, lo.ratio, fr.stage, fr.ratio, Date.now() - t0, hi.error ?? lo.error ?? fr.error ?? null);
+    const rc = this.d.receiptClient ?? this.d.client;
+    const [hi, lo, fr, code, via] = await Promise.all([simRoundTrip(this.d.client, me, tk, value, 200_000_000n), simRoundTrip(this.d.client, me, tk, value, 50_000_000n), simRoundTrip(this.d.client, FRESH_ADDRESS, tk, value, 50_000_000n),
+      tokenCodeHash(this.d.client, token), whaleVia(rc, this.d.db, pair, this.now())]);
+    this.d.db.prepare(`INSERT OR IGNORE INTO bnb_sim_checks(pair, arm, at, token, me_hi_stage, me_hi_ratio, me_lo_stage, me_lo_ratio, fresh_stage, fresh_ratio, ms, error, code_hash, whale_via) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(pair, arm, this.now(), token, hi.stage, hi.ratio, lo.stage, lo.ratio, fr.stage, fr.ratio, Date.now() - t0, hi.error ?? lo.error ?? fr.error ?? null, code, via);
     this.stats.simulated++;
   }
 

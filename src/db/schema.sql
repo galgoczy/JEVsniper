@@ -422,3 +422,7 @@ CREATE TABLE IF NOT EXISTS base_sim_checks (
 -- Jelölt = egy ilyen pár vevője; gyűrű-tag = legalább 2 különböző ilyen párban vett.
 CREATE TABLE IF NOT EXISTS bnb_ring_candidates (addr TEXT NOT NULL, pair TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (addr, pair));
 CREATE INDEX IF NOT EXISTS idx_bnb_pair_trades_to ON bnb_pair_trades(to_addr);
+
+-- 2026-10-08: reaktív kihúzó gyárak – token-kódsablonok (keccak(bytecode)) és a csali-vétel szerződései, amelyeknél az élő vételünk
+-- után 30 mp-en belül kihúzták a likviditást. A jelzéskor a token kódja / a bálna-vétel tx.to-ja → ha listán van, nincs vétel.
+CREATE TABLE IF NOT EXISTS bnb_reactive_marks (kind TEXT NOT NULL, value TEXT NOT NULL, pair TEXT, added_at INTEGER NOT NULL, PRIMARY KEY (kind, value));

@@ -9,6 +9,7 @@ import { stopFileExists } from "../killswitch.js";
 import { log } from "../logger.js";
 import { simRoundTrip } from "./simtrade.js";
 import { ringBuyers, learnRingFromPair, RING_MIN_BUYERS } from "./ring.js";
+import { tokenCodeHash, whaleVia, isReactive, markReactive, QUICK_RUG_MS } from "./reactive.js";
 
 /**
  * BNB / PancakeSwap ÉLŐ végrehajtó (2026-10-07, kis teszt). A BNB árnyékkar (config bnb_live.arm) jelzésére – az eladhatósági
@@ -40,7 +41,7 @@ export class BnbLive {
   private account; private c: PublicClient; private rc: PublicClient; private w: WalletClient;
   private open = new Map<number, Pos>();
   private busy = new Set<number>();
-  stats = { signals: 0, buys: 0, sells: 0, failed: 0, blocked: 0, simBlocked: 0, ringBlocked: 0 };
+  stats = { signals: 0, buys: 0, sells: 0, failed: 0, blocked: 0, simBlocked: 0, ringBlocked: 0, reactiveBlocked: 0 };
   constructor(private d: LiveDeps) {
     this.account = privateKeyToAccount(d.privateKey); this.address = this.account.address;
     const url = (d.rpcUrl ?? BNB_DEFAULT_RPC).split(",")[0]!.trim();
@@ -104,6 +105,15 @@ export class BnbLive {
       this.stats.blocked++; this.stats.ringBlocked++;
       log.info("BNB élő: gyűrű-szűrő nem engedte", { token: tokenA, gyűrű_vevők: ring });
       this.d.db.prepare("INSERT INTO bnb_live_fills(position_id, kind, at, tx_hash, status, gas_bnb, bnb, tokens, price, latency_ms, error) VALUES (NULL, 'ring_block', ?, NULL, 'skipped', 0, 0, 0, ?, 0, ?)").run(this.now(), ring, `${tokenA} gyűrű-vevők ${ring}`);
+      return;
+    }
+    // reaktív kihúzó gyár (2026-10-08): ismert kódsablon vagy csali-szerződés → nincs vétel
+    const [codeHash, via] = await Promise.all([tokenCodeHash(this.c, tokenA), whaleVia(this.rc, this.d.db, pair, this.now())]);
+    const react = isReactive(this.d.db, codeHash, via);
+    if (react) {
+      this.stats.blocked++; this.stats.reactiveBlocked++;
+      log.info("BNB élő: reaktív-gyár szűrő nem engedte", { token: tokenA, ok: react });
+      this.d.db.prepare("INSERT INTO bnb_live_fills(position_id, kind, at, tx_hash, status, gas_bnb, bnb, tokens, price, latency_ms, error) VALUES (NULL, 'reactive_block', ?, NULL, 'skipped', 0, 0, 0, NULL, 0, ?)").run(this.now(), `${tokenA} ${react}`);
       return;
     }
     // honeypot-teszt (2026-10-08): vétel+visszaeladás szimuláció a SAJÁT címről, ugyanazzal a gázárral és mérettel
@@ -174,6 +184,11 @@ export class BnbLive {
     this.busy.add(p.id);
     try {
       const usd = this.d.bnbUsd() ?? 0;
+      if (slippagePct === null && reason === "drained" && this.now() - p.openedAt < QUICK_RUG_MS) {
+        const [code, via] = await Promise.all([tokenCodeHash(this.c, p.token), whaleVia(this.rc, this.d.db, p.pair, p.openedAt)]);
+        const n = markReactive(this.d.db, p.pair, code, via);
+        log.info("BNB élő: gyors kihúzás – reaktív gyár tanulva", { token: p.token, uj_jelolok: n });
+      }
       if (slippagePct === null) { this.close(p, reason, 0, usd); await this.d.notify(`🔴 BNB ÉLŐ: ${p.token.slice(0, 8)}… kiürült – a pozíció nullát ér (−${p.spentUsd.toFixed(2)} USD)`); return; }
       if (!p.approved) await this.approve(p);
       const bal = await this.c.readContract({ address: p.token, abi: ERC20, functionName: "balanceOf", args: [this.address] }).catch(() => p.tokens);

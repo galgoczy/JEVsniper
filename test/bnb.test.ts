@@ -258,3 +258,15 @@ test("BNB gyűrű-szűrő: csak a ≥2 rossz párban vásárló tárca tag; a je
   assert.equal(ringBuyers(db, "0xclean", 1000), 0);
   db.close();
 });
+
+test("BNB reaktív-gyár szűrő: listás kódsablon vagy csali-szerződés → tiltva; a router soha nem kerül listára", async () => {
+  const { isReactive, markReactive } = await import("../src/bnb/reactive.js");
+  const db = openDb(":memory:");
+  assert.equal(isReactive(db, "0xcode1", "0xbait"), null);
+  assert.equal(markReactive(db, "0xp1", "0xcode1", "0xbait"), 2);
+  assert.equal(markReactive(db, "0xp2", "0xcode2", "0x10ed43c718714eb63d5aa57b78b54704e256024e"), 1); // router nem
+  assert.equal(isReactive(db, "0xcode1", null), "kódsablon");
+  assert.equal(isReactive(db, "0xother", "0xbait"), "csali-szerződés");
+  assert.equal(isReactive(db, "0xother", "0x10ed43c718714eb63d5aa57b78b54704e256024e"), null);
+  db.close();
+});

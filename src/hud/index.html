@@ -291,7 +291,7 @@ function renderSummary(s) {
   armList("arms-bl", s.baselines, null, null);
   armList("arms-bnb", s.bnb?.arms ?? [], null, null);
   const sk = s.bnb?.skips ?? {}, skN = Object.values(sk).reduce((a, b) => a + b, 0);
-  $("bnb-note").textContent = `PancakeSwap · ki 2×/−40% · adóval · honeypot-szűrővel · kiszűrve ${skN}`;
+  $("bnb-note").textContent = `PancakeSwap · ki 2×/−40% · adóval · szűrőkkel · kiszűrve ${skN}`;
 
   // felvevők
   const rec = $("rec"); rec.replaceChildren();
@@ -317,7 +317,7 @@ function armTip(r, size) {
   if (r.sim && !r.plans) tip.append(line(["Honeypot-teszt (vétel+eladás, mérés): saját cím átment ", b(`${r.sim.meOk}/${r.sim.n}`), `, friss cím ${r.sim.freshOk}/${r.sim.n} · szűrővel: ${r.sim.filteredN ? sgn(r.sim.filteredMean) + " (n" + r.sim.filteredN + ")" : "–"}`]));
   if (r.plans) {
     const m = r.plans[0];
-    if (m && m.rawN) tip.append(line(["Honeypot- és gyűrű-szűrővel (fő érték): ", b(m.n ? sgn(m.mean) + " (n" + m.n + ")" : "–"), ` · szűretlen ${sgn(m.rawMean)} (n${m.rawN}; szimulált ${m.simmed}, gyűrűs ${m.ringN}) · adó mérve ${m.measured}, adózó ${m.taxed}`]));
+    if (m && m.rawN) tip.append(line(["Szűrőkkel – honeypot, gyűrű, reaktív gyár (fő érték): ", b(m.n ? sgn(m.mean) + " (n" + m.n + ")" : "–"), ` · szűretlen ${sgn(m.rawMean)} (n${m.rawN}; szimulált ${m.simmed}, gyűrűs ${m.ringN}, reaktív gyár ${m.reactiveN}) · adó mérve ${m.measured}, adózó ${m.taxed}`]));
     if (r.sim) tip.append(line(["Szimuláció (vétel+eladás): saját cím átment ", b(`${r.sim.meOk}/${r.sim.n}`), `, friss cím ${r.sim.freshOk}/${r.sim.n} · szűrővel: ${r.sim.filteredN ? sgn(r.sim.filteredMean) + " (n" + r.sim.filteredN + ")" : "–"}`]));
     tip.append(line(["Tervek (adóval): ", ...r.plans.map((p) => `${p.plan} ${p.n ? sgn(p.mean) + " (n" + p.n + ")" : "–"}  `)]));
   }

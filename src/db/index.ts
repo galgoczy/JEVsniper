@@ -30,6 +30,8 @@ const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ["bnb_shadow_positions", "buy_tax", "REAL"],
   ["listing_events", "entry_at", "INTEGER"],
   ["bnb_shadow_positions", "ring_n", "INTEGER"],
+  ["bnb_sim_checks", "code_hash", "TEXT"],
+  ["bnb_sim_checks", "whale_via", "TEXT"],
   ["bnb_shadow_positions", "sell_tax", "REAL"],
   ["bnb_shadow_positions", "tax_n", "TEXT"],
   ["sol_outcomes", "max_x30", "REAL"],
