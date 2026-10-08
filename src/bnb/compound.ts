@@ -12,7 +12,7 @@ import { log } from "../logger.js";
  *  - pozícióméret = alapméret × (tőke / induló tőke), legalább MIN_POSITION_USD; menet közben nem változik.
  * Induló tőke = position_usd × max_open (config), az első futáskor.
  */
-export const MIN_POSITION_USD = 0.5; // 2026-10-08: 0,05 gwei-n a gáz egy körre ~0,01 USD, így 0,5 USD még ésszerű
+export const MIN_POSITION_USD = 0.2; // 2026-10-08: 0,25 USD-s élő teszt; a gáz egy körre ~0,01 USD
 export interface BnbCompoundState { initial_capital_usd: number; capital_usd: number; reserve_usd: number; position_usd: number; last_recalc_at: number }
 
 export function applyDay(s: BnbCompoundState, dayNet: number, share: number, basePosition: number): BnbCompoundState {
