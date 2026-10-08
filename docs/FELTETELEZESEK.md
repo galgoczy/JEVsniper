@@ -627,3 +627,10 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Feltételezés: egyes egyedi hookos poolokon (pl. cbwCAT, hook 0x82B6…C0cc) a szimuláció a vételnél bukik (a hívó kód miatt), miközben a valódi vétel becslése átmegy → ezeket kihagyjuk (óvatos irány, hamis negatív).
 - Korlát: a WETH-páros (nem natív ETH) v4 poolokra nincs élő útvonal; a Base-szimulációk ~fele ilyen volt (189/384) → ezek kimaradnak az élő vételből.
 - Füstpróba 08:11 UTC (Penguin, 0,2 USD): vétel, szándékosan bukó eladás (revert, gas nélkül), 50% eladás, maradék eladás – mind rendben; teljes gas ~0,005 USD, kör mérlege −0,010 USD.
+
+## 2026-10-08 09:00 – első Base élő vétel: célzott égetés (0xe264-család)
+- Trenchors (0x9438…F526), 0,2 USD, vétel 08:59:57 UTC (a honeypot-teszt átment, saját és friss címről is 0,9997). 32 mp-cel később egy külső automata (küldő 0xf608…e33b, nonce 724) a 0xe264430807f0b62688420ac17faad06b3ed40873 szerződésen át a tárcánk teljes egyenlegét a 0xdEaD címre küldte – csak a mienket abban a tx-ben. Lekönyvelve: close_reason `burned_by_owner`, nettó −0,2019 USD.
+- A 0xe264 cím BE VAN ÉGETVE a token bájtkódjába (PUSH20); a token kívülről sima ERC20 (csak increase/decreaseAllowance többlet).
+- A rule_v2_strict (09-30 óta) tokenjeiből 14-ben szerepel ugyanez a cím; ez a család adja a kar teljes nyereségét: 0xe264-család n=15, átlag +3,09 (BLUEPILL, WOFT, ANYONE, TOSHI, fastlane…), minden más n=38, átlag −0,13.
+- Az égetés célzott és tárcalistás: tokenenként 0–6 tárca a több száz vevőből, ugyanazok a címek több tokenben (pl. 0x0d5a1fda…, 0xFEB1213e…, 0xaAa66dF0…, 0x6AA98924…). Feltételezés: a mi tárcánk is listára került → a család tokenjeiben élesben valószínűleg minden vételünket elégetik; az árnyék-nyereség erre a családra élesben (ezzel a tárcával) nem érhető el. n=1, további megerősítés kell.
+- A honeypot-szimuláció ezt nem látja (az eladás technikailag működik; az égetés utólag, külső tx-ből jön).
