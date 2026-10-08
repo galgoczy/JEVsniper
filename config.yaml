@@ -223,7 +223,7 @@ bnb_live:
   enabled: true        # 2026-10-07 23:05: ÉLES – a felhasználó kérésére, a sikeres füstpróba után (~14 USD BNB a tárcán)
   mode: live           # KÜLÖN kapcsoló (a globális mode a Base-t vezérli, az marad dry_run): live = valódi BNB-tranzakciók
   arm: bnb_whale              # 2026-10-08 01:45: vissza a bálna-karra, szűrőkkel (a +60 mp-es élőben 12/12 kihúzás egy rossz órában; az 1. időszakban gyűrű-szűrővel bálna +0,72 vs +60 mp +0,14)
-  position_usd: 0.6           # 2026-10-08 02:10: 0,6 USD (a felhasználó: minél több próbálkozás; 0,05 gwei-n a gáz egy körre ~0,01 USD)
+  position_usd: 0.5           # 2026-10-08 02:15: 0,5 USD (a felhasználó: minél több próbálkozás – ~9 fér a tárcába; a gáz egy körre ~0,01 USD)
   max_open: 15        # 2026-10-08: 4 → 15 (a felhasználó: a +60 mp-es árnyék 11–13 egyidejűvel is ment)
   daily_loss_limit_usd: 7      # 2026-10-08: 2 → 7 USD (a felhasználó: 15 pozícióhoz, feltöltött tárcával)
   max_consecutive_failed: 3
