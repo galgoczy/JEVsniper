@@ -634,3 +634,10 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - A rule_v2_strict (09-30 óta) tokenjeiből 14-ben szerepel ugyanez a cím; ez a család adja a kar teljes nyereségét: 0xe264-család n=15, átlag +3,09 (BLUEPILL, WOFT, ANYONE, TOSHI, fastlane…), minden más n=38, átlag −0,13.
 - Az égetés célzott és tárcalistás: tokenenként 0–6 tárca a több száz vevőből, ugyanazok a címek több tokenben (pl. 0x0d5a1fda…, 0xFEB1213e…, 0xaAa66dF0…, 0x6AA98924…). Feltételezés: a mi tárcánk is listára került → a család tokenjeiben élesben valószínűleg minden vételünket elégetik; az árnyék-nyereség erre a családra élesben (ezzel a tárcával) nem érhető el. n=1, további megerősítés kell.
 - A honeypot-szimuláció ezt nem látja (az eladás technikailag működik; az égetés utólag, külső tx-ből jön).
+
+## 2026-10-08 09:40 – a 0xe264-család: tárcafarmos áremelés, „szabályos” belépés nincs
+- A Base élő teszt leállítva (09:36 UTC, mode: dry_run) a felhasználó kérésére. Mérleg: 1 vétel, −0,20 USD (célzott égetés).
+- A 0xe264430807f0b62688420ac17faad06b3ed40873 (owner 0x1Ca0…E18E, ~4,27 ETH) funkciói: swap(…) (0xe6cb474f), buy, sell, execute, multicall, setTokenDisabled, withdraw*, claim, balanceOf/transfer. Nyilvános forrás nincs róla (webkeresés üres).
+- A Trenchors 900 blokkjában 524 vétel ment a 0xe264.swap-on át, 452 különböző küldőtől. A küldők nonce-a 10–1039 (medián 480), az ETH-egyenlegük EGYFORMÁN 0,00028–0,00030 ETH (gázra feltöltött farm), a swap 0 ETH értékkel megy, a vételt a 0xe264 saját ETH-ja fizeti. Következtetés: egy üzemeltető tárcafarmja gyártja a keresletet (wash-vétel), a kívülről (Uniswap routeren) vevőket célzottan elégeti.
+- Ezért nincs „szabályos” belépés: a 0xe264.swap nem nyilvános router (a szerződés saját pénzét költi), a többi út égetéssel jár. A kar árnyék-nyeresége ebben a családban (n=15, +3,09) élesben nem érhető el – mérési műtermék (a farm vételei emelik az árat, a mi pozíciónkat pedig elégetnék).
+- A család felismerhető: a 0xe264 cím PUSH20-ként a token bájtkódjában. Nélküle a rule_v2_strict n=38, −0,13.
