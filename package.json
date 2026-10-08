@@ -26,6 +26,7 @@
     "verify:sol": "tsx scripts/verify-sol.ts",
     "sol:replay": "tsx scripts/sol-replay.ts",
     "hud:jelszo": "tsx scripts/hud-jelszo.ts",
+    "tg": "tsx scripts/tg-send.ts",
     "replay:solbnb": "NODE_OPTIONS=--max-old-space-size=8192 tsx scripts/replay-solbnb.ts"
   },
   "repository": {
