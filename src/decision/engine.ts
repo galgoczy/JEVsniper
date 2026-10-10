@@ -5,6 +5,7 @@ import { capPositionUsd, type Config } from "../config.js";
 import type { ParamSnapshot } from "../collector/types.js";
 import type { TokenRow } from "../collector/index.js";
 import { simRoundTripV4, FRESH_ADDRESS_BASE } from "../exec/simV4.js";
+import { scanToken } from "../filters/scamscan.js";
 import type { PoolKey } from "../exec/routes.js";
 import type { ChainKey } from "../chains/index.js";
 import { JevClient, JevPausedError } from "../jev/client.js";
@@ -94,6 +95,8 @@ export class DecisionEngine {
 
     // 2026-10-08: Base honeypot-teszt (mérés): az élő ablakban, ha bármelyik kar belépett, vétel+eladás szimuláció a saját és egy friss címről
     if (t.chain === "base" && w === cfg.evaluation.live_window_sec && supported && t.pool_key_json && arms.some((a) => a.res.enter)) void this.simBase(t).catch(() => undefined);
+    // 2026-10-11: Base csalásszűrő (mérés): az első olyan ablakban, ahol bármelyik kar belép – a belépésig ismert adatból
+    if (t.chain === "base" && supported && arms.some((a) => a.res.enter)) void this.scanBase(t, snap).catch(() => undefined);
 
     // 3) élő belépés csak az élő ablakban: a config live_entry.arm kar dönt (2026-10-01-ig fixen a Jev-címkés live_rule volt)
     if (w !== cfg.evaluation.live_window_sec) return;
@@ -113,6 +116,28 @@ export class DecisionEngine {
       return;
     }
     await this.enterLive(t, snap, labels, capPositionUsd(cfg.risk, posUsd * live.sizeMultiplier), w);
+  }
+
+  /**
+   * Base csalásszűrő: a token indulásától a pillanatkép blokkjáig (src/filters/scamscan.ts); eredmény a base_scam_checks-be (tokenenként egyszer).
+   * Tanulás: kényszerített átutalásnál a kódba égetett címek a base_scam_marks-ba kerülnek (a következő tokennél „marked_operator”).
+   */
+  async scanBase(t: TokenRow, snap: ParamSnapshot, force = false): Promise<string[]> {
+    const { db } = this.d;
+    if (!force) { const old = db.prepare("SELECT flags FROM base_scam_checks WHERE token_id = ? AND error IS NULL").get(t.id) as { flags: string } | undefined; if (old) return old.flags ? old.flags.split(",") : []; }
+    const ex = this.d.executors.base; if (!ex || t.discovered_block == null) return ["no_scan"];
+    const upto = BigInt(snap.meta_snapshot.block ?? (await ex.client.getBlockNumber()));
+    const marked = new Set((db.prepare("SELECT addr FROM base_scam_marks").all() as { addr: string }[]).map((r) => r.addr));
+    const ins = db.prepare(`INSERT OR REPLACE INTO base_scam_checks(token_id, at, upto_block, embedded, buys, top_router, top_share, top_v0, top_embedded, forced, flags, error, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'live')`);
+    try {
+      const s = await scanToken(ex.client, getAddress(t.address), BigInt(t.discovered_block) - 3n, upto, { marked });
+      ins.run(t.id, nowMs(), Number(upto), JSON.stringify(s.embedded), s.buys, s.topRouter, s.topRouterShare, s.topRouterValue0, s.topRouterEmbedded ? 1 : 0, s.forced, s.flags.join(","), null);
+      if (s.forced > 0) for (const a of s.embedded) db.prepare("INSERT OR IGNORE INTO base_scam_marks(addr, reason, added_at) VALUES (?,?,?)").run(a, `forced_transfer:${t.address}`, nowMs());
+      return s.flags;
+    } catch (e) {
+      ins.run(t.id, nowMs(), Number(upto), null, null, null, null, null, null, null, null, (e as Error).message.slice(0, 160));
+      return ["scan_error"];
+    }
   }
 
   /** Base honeypot-teszt: saját cím + friss cím, ~2 USD, az élő útvonalon (Universal Router + Permit2); eredmény a base_sim_checks-be. */
@@ -161,6 +186,17 @@ export class DecisionEngine {
     try {
       // 2026-10-08: kötelező honeypot-teszt (Base, Uniswap v4): a vételt és az azonnali eladást a saját címünkről, az élő mérettel
       // szimuláljuk; ha az eladás bukik vagy túl sokat veszít (adó/hook), nem veszünk. Nem natív ETH-pár (WETH) → nincs élő útvonal.
+      // 2026-10-11: kötelező csalásszűrő (friss vizsgálat a belépés pillanatáig); vizsgálati hiba esetén sincs vétel
+      if (t.chain === "base" && cfg.live_entry.scam_block_flags.length) {
+        const flags = await this.scanBase(t, snap, true);
+        const hit = flags.filter((f) => cfg.live_entry.scam_block_flags.includes(f) || f === "scan_error" || f === "no_scan");
+        if (hit.length) {
+          db.prepare("INSERT INTO decisions(token_id, arm, window_sec, regime, decided_at, enter, reason, size_usd, jev_call_id) VALUES (?,?,?,?,?,?,?,?,?)").run(t.id, "live", w, "", nowMs(), 0, `scam_block:${hit.join("+")}`, null, null);
+          log.info("Élő vétel kihagyva (csalásszűrő)", { token: t.symbol, flags: hit });
+          await this.d.notify(`🛡️ Csalásszűrő: nincs vétel ${t.symbol ?? t.address} (${hit.join(", ")})`);
+          return;
+        }
+      }
       if (t.chain === "base" && cfg.live_entry.sim_filter) {
         const key = t.pool_key_json ? JSON.parse(t.pool_key_json) as PoolKey : null;
         const sim = key ? await simRoundTripV4(ex.client, "base", ex.address, token, key, wei) : { stage: 0, ratio: null, error: "nincs PoolKey" };

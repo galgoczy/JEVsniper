@@ -419,6 +419,15 @@ CREATE TABLE IF NOT EXISTS base_sim_checks (
   me_stage INTEGER, me_ratio REAL, fresh_stage INTEGER, fresh_ratio REAL, ms INTEGER, error TEXT
 );
 
+-- 2026-10-11: Base csalásszűrő (src/filters/scamscan.ts) – a belépésig ismert jelek: kódba égetett üzemeltető-cím,
+-- farm-router (vételek zöme egy ismeretlen szerződésen át, 0 ETH-val), kényszerített átutalás. flags = vesszővel, üres = tiszta.
+CREATE TABLE IF NOT EXISTS base_scam_checks (
+  token_id INTEGER PRIMARY KEY REFERENCES tokens(id), at INTEGER NOT NULL, upto_block INTEGER, embedded TEXT, buys INTEGER,
+  top_router TEXT, top_share REAL, top_v0 REAL, top_embedded INTEGER, forced INTEGER, flags TEXT, error TEXT, source TEXT
+);
+-- tanult üzemeltető-címek (pl. a 0xe264…): ha egy token kódjában szerepel, „marked_operator”
+CREATE TABLE IF NOT EXISTS base_scam_marks (addr TEXT PRIMARY KEY, reason TEXT, added_at INTEGER NOT NULL);
+
 -- 2026-10-08: „gyűrű” – tárcák, amelyek több olyan párban vettek, ahol az élő pozíciónk eladhatatlan lett (utólagos tiltás / honeypot).
 -- Jelölt = egy ilyen pár vevője; gyűrű-tag = legalább 2 különböző ilyen párban vett.
 CREATE TABLE IF NOT EXISTS bnb_ring_candidates (addr TEXT NOT NULL, pair TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (addr, pair));

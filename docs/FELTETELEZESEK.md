@@ -651,3 +651,9 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Befizetés: az utolsó 150 blokkban egyetlen ETH-t küldő tx sincs a 0xe264-hez, saját eseményt nem bocsát ki; az egyenlege közben 4,27 → 59,87 ETH (a farm eladásaiból). Nyilvános forrás/dokumentáció nincs.
 - A Trenchors likviditását a token készítője (0xac22…, EOA) húzta ki 13:45 UTC-kor a Uniswap v4 PositionManageren át.
 - Felépítés: készítő-EOA telepíti a tokent (0xe264 beégetve) és likviditást ad → a 0xe264 pénzéből a farmtárcák vásárolnak (ár fel) → a kívülről (routeren) vevőket a 0xe264 elégeti → a farm elad, a készítő kihúzza a likviditást. Kívülálló számára „szabályos” belépés nincs.
+
+## 2026-10-11 – Base csalásszűrő (scamscan)
+- src/filters/scamscan.ts, három jel, csak a belépésig ismert adatból: (1) kódba égetett, nem infrastruktúra cím (PUSH20; metaadat/szöveg-töredék kiszűrve), (2) farm-router: ≥8 vételből ≥50% egy nem-Universal-Router szerződésen át, ezek ≥80%-a 0 ETH értékkel (natív ETH-páros poolnál a vételt a szerződés fizeti), (3) kényszerített átutalás: tulajdonos tokenje 0xdEaD/0x0/kódba égetett címre megy, a tx-et nem ő küldte, és nem pool/router/Permit2 mozgatta (a telepítő tx kimarad).
+- Tanulás: kényszerített átutalásnál a kódba égetett címek a base_scam_marks-ba kerülnek („marked_operator”).
+- Élő kapu: live_entry.scam_block_flags (alapból mind az öt jel); vizsgálati hiba esetén sincs élő vétel. Árnyékban: base_scam_checks (tokenenként egyszer), a karok nem változnak – szűrt nézet.
+- Első visszamérési részeredmény (156 token): a 0xe264-családot megbízhatóan jelzi; talált beégetett cím nélküli farm-változatot (WOFT, WSOS, Denim egyes példányai) és egy másik égető üzemeltetőt (0xdb7b520b…, TOBY/JO). A publikus RPC getLogs-hibái miatt (~15–35%) újrapróbálás és utólagos újrafuttatás kell.

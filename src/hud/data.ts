@@ -156,8 +156,9 @@ export function hudBaseLive(db: DB, cfg: Config, now = Date.now()) {
   const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0);
   const reasons = db.prepare("SELECT reason, COUNT(*) n FROM decisions WHERE arm = 'live' AND decided_at > ? GROUP BY reason").all(dayStart.getTime()) as Array<{ reason: string; n: number }>;
   const honeypot = reasons.filter((r) => r.reason?.startsWith("sim_block")).reduce((a, r) => a + r.n, 0);
+  const scam = reasons.filter((r) => r.reason?.startsWith("scam_block")).reduce((a, r) => a + r.n, 0);
   const noRoute = reasons.filter((r) => r.reason?.startsWith("no_route")).reduce((a, r) => a + r.n, 0);
-  const blocked = reasons.filter((r) => r.reason && !r.reason.startsWith("sim_block") && !r.reason.startsWith("no_route") && !r.reason.startsWith("enter:") && r.reason !== "dry_run");
+  const blocked = reasons.filter((r) => r.reason && !r.reason.startsWith("sim_block") && !r.reason.startsWith("scam_block") && !r.reason.startsWith("no_route") && !r.reason.startsWith("enter:") && r.reason !== "dry_run");
   const signals = reasons.filter((r) => r.reason?.startsWith("enter:")).reduce((a, r) => a + r.n, 0);
   const gas = db.prepare("SELECT COALESCE(SUM(f.real_gas_usd),0) g FROM fills f JOIN positions p ON p.id = f.position_id WHERE f.is_live = 1 AND p.arm = 'live' AND p.chain = 'base'").get() as { g: number };
   return {
@@ -167,7 +168,7 @@ export function hudBaseLive(db: DB, cfg: Config, now = Date.now()) {
     compound: cs ? { initial: cfg.risk.deposit_cap_usd, capital: cs.deposit_usd + cs.growth_pool_usd, reserve: cs.reserve_usd, position: cs.position_usd, time: `${cfg.compound.recalc_time_local} ${cfg.compound.recalc_timezone}` } : null,
     closed: { n: closed.length, sum: closed.reduce((a, r) => a + (r.net_pnl_usd as number), 0), today: closed.filter((r) => dayKey(r.closed_at as number) === today).reduce((a, r) => a + (r.net_pnl_usd as number), 0),
       wins: closed.filter((r) => (r.net_pnl_usd as number) > 0).length, gasUsd: gas.g },
-    today: { signals, honeypot, noRoute, blocked: blocked.map((r) => ({ reason: r.reason, n: r.n })) },
+    today: { signals, honeypot, scam, noRoute, blocked: blocked.map((r) => ({ reason: r.reason, n: r.n })) },
     open, recent,
   };
 }

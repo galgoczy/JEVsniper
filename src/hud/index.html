@@ -388,7 +388,7 @@ function renderLive(l, p) {
   q("comp").textContent = k ? `🔁 Visszaforgatás ${k.time}: tőke ${k.capital.toFixed(2)}$ (induló ${k.initial.toFixed(2)}$) · tartalék ${k.reserve.toFixed(2)}$ · méret ${k.position.toFixed(2)}$${l.shadow ? ` · árnyék ugyanebben az időben: ${sgn(l.shadow.mean)}$/1$ (n${l.shadow.n})` : ""}` : "";
   if (l.today && q("skip")) {
     const t = l.today, other = t.blocked.map((b) => `${b.reason.replace(/_/g, " ")} ${b.n}`).join(", ");
-    q("skip").textContent = `Ma: ${t.signals} vételi jelzés · 🛡️ honeypot-teszt megfogott ${t.honeypot} · nincs útvonal (WETH/v2/v3) ${t.noRoute}${other ? ` · korlát: ${other}` : ""}`;
+    q("skip").textContent = `Ma: ${t.signals} vételi jelzés · 🛡️ csalásszűrő ${t.scam ?? 0} · honeypot-teszt ${t.honeypot} · nincs útvonal (WETH/v2/v3) ${t.noRoute}${other ? ` · korlát: ${other}` : ""}`;
   }
 }
 
