@@ -12,6 +12,8 @@ test("scamscan: kódba égetett üzemeltető-cím felismerése, PUSH-adat átugr
   assert.equal(looksLikeAddress("0x00000000000000000000000000006f6c634300081c0033".slice(0, 42)), false);
   assert.deepEqual(operatorAddresses(code), ["0x" + OP]);
   assert.equal(looksLikeAddress("0x6f6c634300081c0033"), false);              // csonka metaadat a kód végén
+  assert.equal(looksLikeAddress("0x5822122074bc05b6edb088c198299d39e338f71a"), false); // ipfs-hash a metaadatban
+  assert.equal(looksLikeAddress("0x4200000000000000000000000000000000000028"), false); // SuperchainTokenBridge (rendszer)
 });
 
 test("scamscan: jelek – farm-router, kódban lévő router, kényszerített átutalás, tanult cím", () => {

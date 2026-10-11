@@ -39,6 +39,8 @@ export function looksLikeAddress(a: string): boolean {
   const h = a.slice(2);
   if (h.length !== 40) return false;                                           // a kód végén csonka (metaadat-) töredék
   if (h.includes("736f6c6343") || h.includes("6970667358")) return false;     // solc / ipfs metaadat („solcC”, „ipfsX”)
+  if (h.startsWith("58221220")) return false;                                // ipfs-hash eleje a metaadatban (0x58 0x22 0x12 0x20)
+  if (/^4200000000000000000000000000000000000[0-9a-f]{3}$/.test(h)) return false; // OP-stack rendszerszerződések (pl. 0x4200…0028 SuperchainTokenBridge)
   if (/^0+/.test(h) && h.replace(/^0+/, "").length < 30) return false;           // kis szám (pl. 0x…081c0033 – metaadat)
   const bytes = h.match(/../g)!.map((b) => parseInt(b, 16));
   const printable = bytes.filter((b) => b >= 0x20 && b <= 0x7e).length;

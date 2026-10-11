@@ -657,3 +657,8 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Tanulás: kényszerített átutalásnál a kódba égetett címek a base_scam_marks-ba kerülnek („marked_operator”).
 - Élő kapu: live_entry.scam_block_flags (alapból mind az öt jel); vizsgálati hiba esetén sincs élő vétel. Árnyékban: base_scam_checks (tokenenként egyszer), a karok nem változnak – szűrt nézet.
 - Első visszamérési részeredmény (156 token): a 0xe264-családot megbízhatóan jelzi; talált beégetett cím nélküli farm-változatot (WOFT, WSOS, Denim egyes példányai) és egy másik égető üzemeltetőt (0xdb7b520b…, TOBY/JO). A publikus RPC getLogs-hibái miatt (~15–35%) újrapróbálás és utólagos újrafuttatás kell.
+
+## 2026-10-11 06:30 – csalásszűrő javítás, 3. (csalásszűrt) mérési kör
+- Éjszakai élő vizsgálat: 119 Base-token, a javítás előtt 59 jelzett. Téves jelzések: 0x4200…0028 (OP-stack SuperchainTokenBridge, rendszerszerződés – szabályos tokenekben is), 0x5822122… (ipfs-metaadat töredék). Javítva (looksLikeAddress), minden sor újraszámolva → élő 42/119 jelzett, zömük a kényszerített átutaláson tanult 0xdb7b520b… (−0,16, sok kihúzás) és 0xedf3f398… családok.
+- Teljes visszamérés (09-30 óta, élő terv), TISZTA tokeneken: rule_v2_strict 60s −0,22 (n=30, 90% CI −0,34…−0,12), rule_v2 −0,18 (n=48, CI −0,26…−0,10), base_uni_hold 30s +0,06 (n=57, CI −0,11…+0,25), base_uni_all −0,32 (n=458), random_control −0,38 (n=318). A jelzett tokenek +0,7…+1,8 – élesben nem elérhető.
+- `npm run allas` alján „Csalásszűrt nézet” (src/analysis/scamview.ts). A 2. időszak lezárva 06:30 UTC-kor; 3. időszak (csalásszűrt) indul, egy nap után kiértékelés (a felhasználó kérésére).
