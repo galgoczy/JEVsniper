@@ -149,7 +149,7 @@ test("élő kar: config live_entry – alapértelmezés live_rule/live, ismeretl
   delete raw.live_entry;
   const parsed = ConfigSchema.parse(raw);
   assert.deepEqual(parsed.live_entry, { arm: "live_rule", exit_plan: "live", chains: [], sim_filter: true, min_roundtrip_ratio: 0.85,
-    scam_block_flags: ["marked_operator", "embedded_operator", "farm_router", "router_in_code", "forced_transfer"] });
+    scam_block_flags: ["marked_operator", "marked_router", "embedded_operator", "farm_router", "router_in_code", "forced_transfer"] });
   assert.deepEqual(cfg.live_entry.chains, ["base"]);
   assert.equal(ConfigSchema.safeParse({ ...raw, live_entry: { arm: "nincs_ilyen", exit_plan: "live" } }).success, false);
   assert.equal(ConfigSchema.safeParse({ ...raw, live_entry: { arm: "rule_v2", exit_plan: "X" } }).success, false);

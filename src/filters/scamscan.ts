@@ -67,7 +67,9 @@ export function scamFlags(s: Omit<ScamScan, "flags">, marked: Set<string> = new 
   const f: string[] = [];
   if (s.embedded.some((a) => marked.has(a))) f.push("marked_operator");     // ismert (tanult) üzemeltető-cím a kódban
   if (s.embedded.length) f.push("embedded_operator");
-  if (s.buys >= 8 && (s.topRouterShare ?? 0) >= 0.5 && (s.topRouterValue0 ?? 0) >= 0.8 && s.topRouter !== ADDRESSES.base.universalRouter?.toLowerCase()) f.push("farm_router");
+  // 2026-10-14: a 0xe264-család már kódba égetés nélkül is indít (UKFLMS) → ismert farm-router a vevők élén, vételszám-küszöb nélkül
+  if (s.topRouter && marked.has(s.topRouter.toLowerCase())) f.push("marked_router");
+  if (s.buys >= 5 && (s.topRouterShare ?? 0) >= 0.5 && (s.topRouterValue0 ?? 0) >= 0.8 && s.topRouter !== ADDRESSES.base.universalRouter?.toLowerCase()) f.push("farm_router");
   if (s.topRouterEmbedded) f.push("router_in_code");
   if (s.forced > 0) f.push("forced_transfer");
   return f;

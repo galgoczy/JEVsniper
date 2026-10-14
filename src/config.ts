@@ -121,9 +121,9 @@ export const ConfigSchema = z.object({
     sim_filter: z.boolean().default(true),
     min_roundtrip_ratio: z.number().min(0).max(1).default(0.85),
     // 2026-10-11: Base csalásszűrő (src/filters/scamscan.ts) – ezen jelek bármelyike → nincs élő vétel
-    scam_block_flags: z.array(z.string()).default(["marked_operator", "embedded_operator", "farm_router", "router_in_code", "forced_transfer"]),
+    scam_block_flags: z.array(z.string()).default(["marked_operator", "marked_router", "embedded_operator", "farm_router", "router_in_code", "forced_transfer"]),
   }).default({ arm: "live_rule", exit_plan: "live", chains: [], sim_filter: true, min_roundtrip_ratio: 0.85,
-    scam_block_flags: ["marked_operator", "embedded_operator", "farm_router", "router_in_code", "forced_transfer"] }),
+    scam_block_flags: ["marked_operator", "marked_router", "embedded_operator", "farm_router", "router_in_code", "forced_transfer"] }),
   exit_plan: z.object({
     tp1_multiple: z.number().min(1),
     tp1_sell_pct: pct,

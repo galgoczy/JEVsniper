@@ -21,6 +21,7 @@ test("scamscan: jelek – farm-router, kódban lévő router, kényszerített á
   assert.deepEqual(scamFlags(base), ["farm_router"]);
   assert.deepEqual(scamFlags({ ...base, topRouterValue0: 0.1 }), []);                       // értéket küldő vevők: nem farm
   assert.deepEqual(scamFlags({ ...base, buys: 3 }), []);                                    // kevés vétel: nem ítélünk
+  assert.deepEqual(scamFlags({ ...base, buys: 3, topRouter: "0x" + OP }, new Set(["0x" + OP])), ["marked_router"]); // ismert farm-router: küszöb nélkül
   assert.deepEqual(scamFlags({ ...base, topRouter: "0x6ff5693b99212da76ad316178a184ab56d299b43" }), []); // Universal Router
   assert.deepEqual(scamFlags({ ...base, topRouterValue0: 0, embedded: ["0x" + OP], topRouterEmbedded: true, forced: 2 }, new Set(["0x" + OP])),
     ["marked_operator", "embedded_operator", "router_in_code", "forced_transfer"]);
