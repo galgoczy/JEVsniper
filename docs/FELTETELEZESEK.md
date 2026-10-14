@@ -667,3 +667,8 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - A 3. időszak 3 „tiszta” rule_v2_strict Base-pozíciójából kettő (UKFLMS ×2) a 0xe264-család: a teljes élettartamon a vételek 91–98%-a a 0xe264-en át, 0 ETH-val; a kódban már nincs beégetett cím, és a belépésig csak 6–7 vétel volt (a farm-küszöb 8) → átment. A többi vizsgált nyerő (CITADEL, FLOOR, 黄狗, 黄色细狗) szerves: a vevők fizetnek, ismert routereken/kereskedőbotokon át, nincs kényszerített átutalás.
 - Javítás: 0xe264 kézzel a base_scam_marks-ba; új jel „marked_router” (ismert farm-router a vevők élén, vételszám-küszöb nélkül; élő kapu része); farm_router küszöb 8 → 5 vétel. Minden tárolt sor újraszámolva.
 - 3. időszak, TISZTA: rule_v2_strict −0,23 (n=1), rule_v2 −0,30 (n=2), base_uni_hold 30s +0,27 (n=16, CI −0,06…+0,64), base_uni_all −0,64 (n=1134), random_control −0,63 (n=214).
+
+## 2026-10-14 – fókusz: base_uni_hold (tiszta), 4. mérési időszak
+- Utólagos (teljes élettartamú) átvilágítás: a base_uni_hold 30s tiszta pozíciói (3. időszak n=16 + 09-30 óta a ≥1 USD nyerők, összesen 21) mind tiszták maradtak (nincs farm-router, kényszerített átutalás, beégetett cím; a vevők fizetnek, fő routerek: Universal Router, 0xd8ba9d1a…, 0x80656aa3… kereskedőbotok). 3. időszak tiszta +0,27 (n=16), 09-30 óta a tiszta nagy nyerők +2,46 (n=5).
+- A felhasználó kérésére a base_uni_hold (tiszta) a HUD élén (hudFocus): aktuális időszak, 09-30 óta, véletlen kontroll (tiszta), döntésig, nyitott tiszta pozíciók, a kiszűrt tokenek értéke külön.
+- 3. időszak lezárva 2026-10-14 06:30 UTC; 4. időszak (csalásszűrt v2: marked_router, farm-küszöb 5) indul. A régi időszakok megmaradnak (HUD „Lezárt időszakok”, npm run allas -- --period N).

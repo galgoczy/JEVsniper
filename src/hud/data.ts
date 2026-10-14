@@ -10,6 +10,8 @@ import { taxedNet } from "../bnb/tax.js";
 import { RING_MIN_BUYERS } from "../bnb/ring.js";
 import { periods as allPeriods } from "../analysis/periods.js";
 import { bootstrapCI } from "../report/index.js";
+import { scamView } from "../analysis/scamview.js";
+import { currentPeriod } from "../analysis/periods.js";
 
 /**
  * HUD adat-réteg (2026-10-04): a webes áttekintő JSON-jai – ugyanazokból a számításokból, mint a /report és az /allas.
@@ -337,4 +339,21 @@ export function hudPeriods(db: DB, cfg: Config, now = Date.now()) {
     ];
     return { name: p.name, from: p.from, to, rows };
   });
+}
+
+/**
+ * Fókusz-blokk (2026-10-14): base_uni_hold a csalásszűrt (TISZTA) tokeneken – az aktuális időszakban és 09-30 óta,
+ * viszonyításként a véletlen kontroll és a minden-Base kar tiszta értéke; plusz a fókusz-kar nyitott tiszta pozíciói.
+ */
+export function hudFocus(db: DB, cfg: Config, now = Date.now()) {
+  const cur = currentPeriod(cfg, now), all = Date.parse("2026-09-30T00:00:00Z");
+  const st = (xs: number[]) => { if (!xs.length) return { n: 0, mean: null, ciLow: null, ciHigh: null, big: 0 }; const ci = bootstrapCI(xs);
+    return { n: xs.length, mean: xs.reduce((a, b) => a + b, 0) / xs.length, ciLow: ci?.[0] ?? null, ciHigh: ci?.[1] ?? null, big: xs.filter((x) => x >= 2).length }; };
+  const pick = (since: number) => Object.fromEntries(scamView(db, since).filter((r) => ["base_uni_hold", "base_uni_hold_nofactory", "random_control", "base_uni_all"].includes(r.arm))
+    .map((r) => [r.arm, { clean: st(r.clean), flagged: st(r.flagged), openClean: r.openClean }]));
+  const open = (db.prepare(`SELECT t.symbol, p.opened_at o, p.entry_price_native e, p.last_price_native l, p.peak_price_native pk FROM positions p JOIN tokens t ON t.id = p.token_id
+      JOIN base_scam_checks s ON s.token_id = p.token_id AND s.error IS NULL AND s.flags = ''
+      WHERE p.chain = 'base' AND p.arm = 'base_uni_hold' AND p.window_sec = 30 AND p.exit_plan = 'live' AND p.closed_at IS NULL ORDER BY p.opened_at DESC LIMIT 12`).all() as Array<{ symbol: string | null; o: number; e: number; l: number | null; pk: number | null }>)
+    .map((r) => ({ symbol: r.symbol ?? "?", ageMin: (now - r.o) / 60_000, x: r.l && r.e ? r.l / r.e : null, peakX: r.pk && r.e ? r.pk / r.e : null }));
+  return { arm: "base_uni_hold", window: 30, period: { name: cur.name, from: cur.from }, current: pick(cur.from), overall: pick(all), open, need: 100 };
 }

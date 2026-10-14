@@ -75,7 +75,9 @@ evaluation:
     - { name: "1. időszak", from: "2026-09-30T00:00:00Z", to: "2026-10-07T22:00:00Z" }
     - { name: "2. időszak", from: "2026-10-07T22:00:00Z", to: "2026-10-11T06:30:00Z" }
     # 2026-10-11: a csalásszűrő (base_scam_checks) élőben vizsgál minden Base-jelöltet → tiszta mérés; a felhasználó kérésére egynapos kör, utána kiértékelés
-    - { name: "3. időszak (csalásszűrt)", from: "2026-10-11T06:30:00Z" }
+    - { name: "3. időszak (csalásszűrt)", from: "2026-10-11T06:30:00Z", to: "2026-10-14T06:30:00Z" }
+    # 2026-10-14: új szabályok (marked_router, farm-küszöb 5); fókusz: base_uni_hold a tiszta tokeneken (a felhasználó kérésére)
+    - { name: "4. időszak (csalásszűrt v2)", from: "2026-10-14T06:30:00Z" }
 
 jev:
   # false = a bot egyáltalán nem hívja a Jev-et (címkézés, rezsim, tartás); csak on-chain szabályok döntenek.

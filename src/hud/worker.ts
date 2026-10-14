@@ -2,7 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 import type { DB } from "../db/index.js";
 import type { Config } from "../config.js";
-import { hudSummary, hudPositions, hudFeed, hudWinners, hudPeriods, hudBnbLive, hudBaseLive } from "./data.js";
+import { hudSummary, hudPositions, hudFeed, hudWinners, hudPeriods, hudBnbLive, hudBaseLive, hudFocus } from "./data.js";
 import { currentSince } from "../analysis/periods.js";
 
 /**
@@ -23,7 +23,7 @@ parentPort!.on("message", (msg: { id: number; kind?: "all" | "live" }) => {
   }
   try {
     const s = since(), t = Date.now();
-    const data = { summary: hudSummary(db, cfg, s), positions: hudPositions(db, cfg, s), feed: hudFeed(db, cfg, s), winners: hudWinners(db, cfg, s), periods: hudPeriods(db, cfg), computedAt: Date.now(), tookMs: 0 };
+    const data = { summary: hudSummary(db, cfg, s), positions: hudPositions(db, cfg, s), feed: hudFeed(db, cfg, s), winners: hudWinners(db, cfg, s), periods: hudPeriods(db, cfg), focus: hudFocus(db, cfg), computedAt: Date.now(), tookMs: 0 };
     data.tookMs = Date.now() - t;
     parentPort!.postMessage({ id: msg.id, data });
   } catch (e) {

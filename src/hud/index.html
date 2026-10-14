@@ -63,6 +63,8 @@ h1 span { background: var(--grad); -webkit-background-clip: text; background-cli
 .arm { position: relative; cursor: default; }
 .arm .tip { display: none; position: absolute; left: 8px; right: 8px; top: calc(100% + 6px); z-index: 20; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; color: var(--text); box-shadow: 0 10px 30px rgba(0,0,0,.35); font-weight: 400; }
 .arm:hover .tip, .arm:focus .tip, .arm:focus-within .tip { display: block; }
+.focus-card { border-color: rgba(52, 211, 153, 0.45); box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.10) inset; }
+.focus-card .kpi .val { font-size: 26px; }
 .live-card { border-color: rgba(250, 204, 21, 0.35); box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.08) inset; }
 .live-card .kpi .val { font-size: 26px; }
 .hidden { display: none !important; }
@@ -132,6 +134,21 @@ footer { color: var(--dim); font-size: 11px; margin-top: 22px; text-align: cente
       <button class="pill btn" id="logout" title="Kilépés">🚪</button>
     </div>
   </header>
+
+  <section class="card sec focus-card" id="focus-card">
+    <div class="ttl"><h2>🎯 FÓKUSZ · uni hold (Base, 30s) – csak tiszta tokenek</h2><small id="f-note">–</small></div>
+    <div class="grid kpis" style="margin-top:10px">
+      <div class="card kpi"><div class="lab">🧪 Aktuális időszak</div><div class="val" id="f-cur">–</div><div class="note" id="f-cur-n">–</div></div>
+      <div class="card kpi"><div class="lab">📚 09-30 óta</div><div class="val" id="f-all">–</div><div class="note" id="f-all-n">–</div></div>
+      <div class="card kpi"><div class="lab">🎲 Véletlen kontroll (tiszta)</div><div class="val" id="f-rc">–</div><div class="note" id="f-rc-n">–</div></div>
+      <div class="card kpi"><div class="lab">🏁 Döntésig</div><div class="val" id="f-dec">–</div><div class="note" id="f-dec-n">–</div><div class="prog"><i id="f-bar" style="width:0%"></i></div></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="ttl"><h2>📌 Nyitott tiszta pozíciók</h2><small id="f-open-n">–</small></div>
+      <div class="pos" id="f-open"></div>
+      <div class="note" id="f-flag" style="margin-top:10px;color:var(--muted);font-size:13px">–</div>
+    </div>
+  </section>
 
   <section class="card sec live-card" id="live-card">
     <div class="ttl"><h2>🔵 ÉLŐ · Base</h2><small id="l-note">–</small></div>
@@ -392,6 +409,30 @@ function renderLive(l, p) {
   }
 }
 
+/** Fókusz-blokk: base_uni_hold a csalásszűrt tokeneken (aktuális időszak + 09-30 óta), viszonyítás: véletlen kontroll (tiszta). */
+function renderFocus(f) {
+  if (!f) return;
+  const fmt = (c) => c && c.n ? `${sgn(c.mean)}$` : "–";
+  const note = (c) => c && c.n ? `n=${c.n}${c.ciLow !== null ? ` · 90% CI ${sgn(c.ciLow)}…${sgn(c.ciHigh)}` : ""}${c.ciLow > 0 ? " ⏳" : ""} · nagy nyerő ${c.big}` : "még nincs lezárt";
+  const cur = f.current.base_uni_hold?.clean, all = f.overall.base_uni_hold?.clean, rc = f.current.random_control?.clean;
+  $("f-note").textContent = `${f.period.name} · ${new Date(f.period.from).toLocaleString("hu-HU", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} óta · 1$-os árnyék, élő terv`;
+  $("f-cur").textContent = fmt(cur); $("f-cur").className = "val " + cls(cur?.mean); $("f-cur-n").textContent = note(cur);
+  $("f-all").textContent = fmt(all); $("f-all").className = "val " + cls(all?.mean); $("f-all-n").textContent = note(all);
+  $("f-rc").textContent = fmt(rc); $("f-rc").className = "val " + cls(rc?.mean); $("f-rc-n").textContent = rc && rc.n ? `n=${rc.n} · ugyanebben az időszakban` : "–";
+  const n = cur?.n ?? 0; $("f-dec").textContent = `${n} / ${f.need}`; $("f-bar").style.width = `${Math.min(100, n / f.need * 100)}%`;
+  $("f-dec-n").textContent = cur && cur.n >= f.need && cur.ciLow > 0 ? "✅ élesítés-jelölt (2. időszak kell)" : cur && cur.ciLow > 0 ? "⏳ CI nulla fölött – gyűjtés" : "gyűjtés";
+  const box = $("f-open"); box.replaceChildren(); $("f-open-n").textContent = `${f.open.length} nyitott`;
+  if (!f.open.length) box.append(el("div", "empty", "nincs nyitott tiszta pozíció 💤"));
+  for (const o of f.open) {
+    const card = el("div", "p"), top = el("div", "top");
+    top.append(el("div", "sym", `🔵 ${o.symbol}`), el("div", "mono " + cls(o.x === null ? null : o.x - 1), o.x === null ? "ár még nincs" : `${o.x.toFixed(2)}x`));
+    const meta = el("div", "meta"); meta.append(el("span", "", `${o.ageMin < 120 ? Math.round(o.ageMin) + " p" : (o.ageMin / 60).toFixed(1) + " ó"}${o.peakX ? ` · csúcs ${o.peakX.toFixed(2)}x` : ""}`));
+    card.append(top, meta); box.append(card);
+  }
+  const fl = f.current.base_uni_hold?.flagged;
+  $("f-flag").textContent = `Kiszűrt (csalásgyanús) tokeneken ugyanez a kar: ${fl && fl.n ? `${sgn(fl.mean)}$ (n=${fl.n})` : "–"} – élesben nem elérhető, nem számít a döntésbe. 09-30 óta: ${f.overall.base_uni_hold?.flagged?.n ? sgn(f.overall.base_uni_hold.flagged.mean) + "$ (n=" + f.overall.base_uni_hold.flagged.n + ")" : "–"}`;
+}
+
 function renderPeriods(ps) {
   const card = $("periods-card"), box = $("periods"); if (!ps || !ps.length) { card.hidden = true; return; }
   card.hidden = false; box.replaceChildren();
@@ -509,7 +550,7 @@ async function refresh(fresh = false) {
   try {
     const d = await fetch("/api/all" + (fresh ? "?fresh=1" : "") + (token ? `${fresh ? "&" : "?"}t=${encodeURIComponent(token)}` : ""), { cache: "no-store" })
       .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
-    renderSummary(d.summary); renderLive(d.summary.baseLive, "l"); renderLive(d.summary.bnbLive, "b"); renderPositions(d.positions); renderWinners(d.winners); renderSystem(d.system); renderPeriods(d.periods);
+    renderSummary(d.summary); renderFocus(d.focus); renderLive(d.summary.baseLive, "l"); renderLive(d.summary.bnbLive, "b"); renderPositions(d.positions); renderWinners(d.winners); renderSystem(d.system); renderPeriods(d.periods);
     const age = Math.max(0, Math.round((Date.now() - d.computedAt) / 1000));
     $("upd").textContent = `adat ${hhmm(d.computedAt)}${age > 5 ? ` (${age} mp)` : ""}`; $("live-dot").classList.remove("off");
   } catch (e) {
