@@ -74,7 +74,7 @@ export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
     const plans = PLANS.map((plan) => {
       const rows = db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t, p.opened_at o, c.me_lo_stage st, c.me_lo_ratio rt, p.ring_n rg,
         (SELECT 1 FROM bnb_reactive_marks m WHERE (m.kind = 'code' AND m.value = c.code_hash) OR (m.kind = 'via' AND m.value = c.whale_via)) rx FROM bnb_shadow_positions p
-        LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = ? AND p.closed_at IS NOT NULL AND p.opened_at > ?`).all(baseArm, arm, plan, sinceMs) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; o: number; st: number | null; rt: number | null; rg: number | null; rx: number | null }>;
+        LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = ? AND p.closed_at IS NOT NULL AND COALESCE(p.close_reason,'') NOT LIKE 'invalid%' AND p.opened_at > ?`).all(baseArm, arm, plan, sinceMs) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; o: number; st: number | null; rt: number | null; rg: number | null; rx: number | null }>;
       const adjOf = (r: typeof rows[number]) => taxedNet(r.v, r.s, r.txs, 0.006, r.b ?? 0, r.t ?? 0)!;
       const pass = rows.filter((r) => r.st === 5 && (r.rt ?? 0) >= 0.85 && (r.rg ?? 0) < RING_MIN_BUYERS && !r.rx); // honeypot-teszt + gyűrű + reaktív gyár (2026-10-08)
       const rawAll = rows.map(adjOf), adjPass = pass.map(adjOf);
@@ -94,7 +94,7 @@ export function hudBnb(db: DB, sinceMs: number, now = Date.now()) {
       const base = arm.replace(/_d(5|10)$/, "");
       const r = db.prepare("SELECT COUNT(*) n, SUM(me_hi_stage = 5) me, SUM(fresh_stage = 5) fr FROM bnb_sim_checks WHERE arm = ? AND at > ?").get(base, sinceMs) as { n: number; me: number | null; fr: number | null };
       const f = db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t FROM bnb_shadow_positions p JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ?
-        WHERE p.arm = ? AND p.plan = 'tp2_sl40' AND p.closed_at IS NOT NULL AND c.me_hi_stage = 5`).all(base, arm) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null }>;
+        WHERE p.arm = ? AND p.plan = 'tp2_sl40' AND p.closed_at IS NOT NULL AND COALESCE(p.close_reason,'') NOT LIKE 'invalid%' AND c.me_hi_stage = 5`).all(base, arm) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null }>;
       const fv = f.map((x) => taxedNet(x.v, x.s, x.txs, 0.006, x.b ?? 0, x.t ?? 0)!);
       if (r.n) sim = { n: r.n, meOk: r.me ?? 0, freshOk: r.fr ?? 0, filteredN: fv.length, filteredMean: fv.length ? fv.reduce((a, b) => a + b, 0) / fv.length : null };
     } catch { /* nincs tábla */ }
@@ -121,7 +121,7 @@ export function hudBnbLive(db: DB, cfg: Config, now = Date.now()) {
       nowX: r.last_price ? r.last_price / r.entry_price : null, peakX: r.peak_price ? r.peak_price / r.entry_price : null, phase: r.phase, value: r.last_price ? (r.last_price / r.entry_price - 1) * r.spent_usd : null }));
   const recent = (db.prepare("SELECT token, close_reason r, net_usd v, closed_at c, spent_usd s FROM bnb_live_positions WHERE closed_at IS NOT NULL AND arm <> 'fustproba' ORDER BY closed_at DESC LIMIT 10").all() as Array<{ token: string; r: string; v: number; c: number; s: number }>)
     .map((r) => ({ symbol: `${r.token.slice(0, 6)}…${r.token.slice(-4)}`, reason: r.r, net: r.v, closedAt: r.c, spentUsd: r.s }));
-  const sh = db.prepare("SELECT COUNT(*) n, AVG(net_usd) m FROM bnb_shadow_positions WHERE arm = ? AND plan = 'tp2_sl40' AND closed_at IS NOT NULL AND opened_at > ?").get(L.arm, (closedRows[0] ? Math.min(...closedRows.map((r) => r.o)) : now) - 1) as { n: number; m: number | null };
+  const sh = db.prepare("SELECT COUNT(*) n, AVG(net_usd) m FROM bnb_shadow_positions WHERE arm = ? AND plan = 'tp2_sl40' AND closed_at IS NOT NULL AND COALESCE(close_reason,'') NOT LIKE 'invalid%' AND opened_at > ?").get(L.arm, (closedRows[0] ? Math.min(...closedRows.map((r) => r.o)) : now) - 1) as { n: number; m: number | null };
   return {
     enabled: L.enabled, mode: L.mode, arm: L.arm, positionUsd: comp?.position_usd ?? L.position_usd, maxOpen: L.max_open,
     walletBnb, walletUsd: walletBnb !== null && bnbUsd ? walletBnb * bnbUsd : null,
@@ -327,7 +327,7 @@ export function hudPeriods(db: DB, cfg: Config, now = Date.now()) {
   let bnbOk = true; try { db.prepare("SELECT 1 FROM bnb_shadow_positions LIMIT 1").get(); } catch { bnbOk = false; }
   // BNB: ahol van honeypot-szimuláció, csak az átmentek (élesben is így szűrünk); az 1. időszakban még nem volt → szűretlen
   const bnb = (arm: string, from: number, to: number) => !bnbOk ? [] : (db.prepare(`SELECT p.net_usd v, p.size_usd s, p.txs, p.buy_tax b, p.sell_tax t, c.me_lo_stage st, c.me_lo_ratio rt, p.ring_n rg FROM bnb_shadow_positions p
-    LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = 'tp2_sl40' AND p.opened_at >= ? AND p.opened_at < ? AND p.closed_at IS NOT NULL`)
+    LEFT JOIN bnb_sim_checks c ON c.pair = p.pair AND c.arm = ? WHERE p.arm = ? AND p.plan = 'tp2_sl40' AND p.opened_at >= ? AND p.opened_at < ? AND p.closed_at IS NOT NULL AND COALESCE(p.close_reason,'') NOT LIKE 'invalid%'`)
     .all(arm.replace(/_d(5|10)$/, ""), arm, from, to) as Array<{ v: number; s: number; txs: number; b: number | null; t: number | null; st: number | null; rt: number | null; rg: number | null }>)
     .filter((r) => (r.rg ?? 0) < RING_MIN_BUYERS && (r.st === null || (r.st === 5 && (r.rt ?? 0) >= 0.85))).map((r) => taxedNet(r.v, r.s, r.txs, 0.006, r.b ?? 0, r.t ?? 0)!);
   return allPeriods(cfg).filter((p) => p.to !== null && p.to <= now).map((p) => {

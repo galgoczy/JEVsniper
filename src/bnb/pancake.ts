@@ -164,18 +164,22 @@ export class PancakeRecorder {
   /** Swap és Sync események feldolgozása (tesztelhető). Vétel = WBNB megy a párba; az ár a legutóbbi Sync tartalékaiból. */
   ingestPairLogs(logs: Array<Log>, head: bigint, nowMs: number) {
     const ins = this.d.db.prepare("INSERT OR IGNORE INTO bnb_pair_trades(pair, tx, log_index, block, at, side, to_addr, bnb, price) VALUES (?,?,?,?,?,?,?,?,?)");
-    for (const l of logs) {
+    // 2026-10-14: blokkonként csak a pár UTOLSÓ Sync-je megy tovább „reserve” eseményként – a tranzakción belüli átmeneti állapot
+    // (pl. égetés + sync → ár-tüske, majd ugyanabban a tx-ben a kiürítés) kívülről nem kereskedhető (BNB árnyék: 9338x-os „eladás”).
+    const lastSync = new Map<string, number>();
+    logs.forEach((l, i) => { const p = this.pairs.get(l.address.toLowerCase()); if (!p) return; try { if (decodeEventLog({ abi: PAIR_ABI, data: l.data, topics: l.topics }).eventName === "Sync") lastSync.set(`${p.pair}|${l.blockNumber}`, i); } catch { /* nem pár-esemény */ } });
+    for (const [i, l] of logs.entries()) {
       const p = this.pairs.get(l.address.toLowerCase()); if (!p) continue;
       let d; try { d = decodeEventLog({ abi: PAIR_ABI, data: l.data, topics: l.topics }); } catch { continue; }
       const a = d.args as Record<string, bigint | string>;
       if (d.eventName === "Sync") {
         const rW = Number(p.wbnbIs0 ? a.reserve0 : a.reserve1), rT = Number(p.wbnbIs0 ? a.reserve1 : a.reserve0);
         p.liq = rW / 1e18; p.peakLiq = Math.max(p.peakLiq, p.liq); if (rT > 0) p.price = rW / rT;
-        if (p.refPrice && p.price > 0) { const x = p.price / p.refPrice; p.maxX = Math.max(p.maxX, x); p.minX = Math.min(p.minX, x); }
+        if (p.refPrice && p.price > 0 && lastSync.get(`${p.pair}|${l.blockNumber}`) === i) { const x = p.price / p.refPrice; p.maxX = Math.max(p.maxX, x); p.minX = Math.min(p.minX, x); }
         if (p.refPrice) p.minLiq = Math.min(p.minLiq, p.liq);
         // 2026-10-08: a likviditás-kivétel (Sync swap nélkül) is jusson el az árnyékhoz/élő karhoz – különben a kiürülést csak a 30 perces
         // tartalék-frissítés vette észre (10-07: két élő pozíció „kiürülése” 30,5 percnél)
-        if (rT > 0) this.d.onEvent?.({ pair: p.pair, token: p.token, createdAt: p.createdAt, at: this.atOf(head, nowMs, l.blockNumber ?? head), kind: "reserve", price: p.price, liq: p.liq });
+        if (rT > 0 && lastSync.get(`${p.pair}|${l.blockNumber}`) === i) this.d.onEvent?.({ pair: p.pair, token: p.token, createdAt: p.createdAt, at: this.atOf(head, nowMs, l.blockNumber ?? head), kind: "reserve", price: p.price, liq: p.liq });
       } else {
         const wIn = Number(p.wbnbIs0 ? a.amount0In : a.amount1In) / 1e18, wOut = Number(p.wbnbIs0 ? a.amount0Out : a.amount1Out) / 1e18;
         const isBuy = wIn > 0 && wOut === 0, at = this.atOf(head, nowMs, l.blockNumber ?? head);

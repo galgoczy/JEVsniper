@@ -672,3 +672,8 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - Utólagos (teljes élettartamú) átvilágítás: a base_uni_hold 30s tiszta pozíciói (3. időszak n=16 + 09-30 óta a ≥1 USD nyerők, összesen 21) mind tiszták maradtak (nincs farm-router, kényszerített átutalás, beégetett cím; a vevők fizetnek, fő routerek: Universal Router, 0xd8ba9d1a…, 0x80656aa3… kereskedőbotok). 3. időszak tiszta +0,27 (n=16), 09-30 óta a tiszta nagy nyerők +2,46 (n=5).
 - A felhasználó kérésére a base_uni_hold (tiszta) a HUD élén (hudFocus): aktuális időszak, 09-30 óta, véletlen kontroll (tiszta), döntésig, nyitott tiszta pozíciók, a kiszűrt tokenek értéke külön.
 - 3. időszak lezárva 2026-10-14 06:30 UTC; 4. időszak (csalásszűrt v2: marked_router, farm-küszöb 5) indul. A régi időszakok megmaradnak (HUD „Lezárt időszakok”, npm run allas -- --period N).
+
+## 2026-10-14 – BNB árnyék mérési hiba: tranzakción belüli ár-tüske
+- A bnb_whale (szűrt) 3. időszakban +231 USD/pozíció volt: egy pozíció 9338x-on „adott el” (9195 USD 1 USD-ből, ~13 BNB-s poolból). Ok: a felvevő MINDEN Sync-et továbbadott; a csaló egy tx-ben égeti a pool tokenjeit + sync (ár-tüske), majd ugyanabban a tx-ben kiüríti → az átmeneti ár kívülről nem kereskedhető.
+- Javítás (src/bnb/pancake.ts): blokkonként csak a pár utolsó Sync-je megy tovább „reserve” eseményként, és a kimenet-követés (max_x/min_x) is csak ebből számol. 5 sor (received_bnb > 0,3 × belépéskori likviditás) érvénytelenítve: close_reason „invalid_intratx_price:…”; a HUD BNB-lekérdezései kizárják az invalid sorokat.
+- Javítás után: bnb_whale szűrt 3. időszak +1,31 (n=39), 10-04 óta +0,65 (n=85) – de 2 kiugró nyerőn (42,9x, 11,4x) múlik, nélkülük ~−0,1. bnb_all60 szűrt −0,15 (n=1086).
