@@ -42,3 +42,5 @@ A felhasználó nem programozó: magyarul, egyszerűen fogalmazz, a parancsokat 
 - Jev ki van kapcsolva (nem hozott mérhető előnyt).
 - Döntési szabály változatlan: élesítés-jelölt csak ≥ 100 lezárt pozíció, teljesen nulla fölötti 90% CI, és egy második független időszakban is tartson. Élesítésről csak a felhasználó dönt.
 - Tervezett karbantartás: a `wallet_trades` tábla gyorsan nő (~1 millió sor/nap) – 1–2 hét múlva automatikus törlés a régi sorokra.
+- 2026-10-14: fókusz a Base `base_uni_hold` (30 mp) a csalásszűrt (tiszta) tokeneken – HUD fókusz-blokk, 4. mérési időszak 10-14 06:30 UTC-től. `grad_at` kikapcsolva (`graduation.grad_at: false`: az induló pool-ár nem vásárolható).
+- Figyelésre félretéve (minden rendszeres ellenőrzésnél nézd meg, röviden jelentsd): Solana „hold + tiszta, farm < 20%” (H3) és „hold + tiszta” (H2) – `npm run sol:replay4 -- --since 2026-10-14T06:36Z` (csak a 10-14 utáni, független adat; H3 ~3 poz./nap). Nem árnyékkar, nem élesítés-jelölt; csak ha a friss adaton is tartósan pozitív, akkor egyeztess a felhasználóval.

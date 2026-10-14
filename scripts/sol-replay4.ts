@@ -1,6 +1,8 @@
 /**
  * Solana negyedik kör (2026-10-14, előre rögzítve: docs/FELTETELEZESEK.md): a Base csalásszűrt `base_uni_hold`
- * megfelelője a Pump.fun-görbén, „tiszta” tokeneken. npm run sol:replay4 [-- --latency-sec 2]
+ * megfelelője a Pump.fun-görbén, „tiszta” tokeneken. npm run sol:replay4 [-- --latency-sec 2] [-- --since 2026-10-14T06:36Z]
+ * --since: csak az ezután indult tokenek eredménye (a farm-előzmény a korábbi adatból is számol) – 10-14 óta a H3 figyelésre
+ * félretéve (a felhasználó kérésére); a rendszeres ellenőrzésnél ezzel nézzük a friss, független adaton.
  * Két menet: (1) az első 30 mp vételei időrendben → vevőszámok, csomagolás, farm-tárca arány (csak belépés előtti adat);
  * (2) a kiválasztott tokenek ár-útvonala (indexelt lekérdezés tokenenként) → visszajátszás a meglévő motorral.
  */
@@ -17,6 +19,7 @@ const solUsd = Number((db.prepare("SELECT value FROM meta WHERE key='sol_usd'").
 if (!(solUsd > 0)) { console.log("❌ nincs SOL/USD ár"); process.exit(1); }
 const sizeSol = 1 / solUsd;
 const RING_MIN = 20, DAY = 86_400_000;
+const si = process.argv.indexOf("--since"); const SINCE = si >= 0 ? Date.parse(process.argv[si + 1]!) : 0;
 
 type Tok = { mint: string; created: number; creator: string; prior: number; ub15: Set<string>; ub30: Set<string>; firstSec: number; ring: number; snap30?: Snap; snap60?: Snap };
 type Snap = { ub: number; price: number; cs: number };
@@ -70,6 +73,7 @@ const CANDS: Array<{ name: string; w: 30 | 60; pick: (t: Tok) => boolean }> = [
   { name: "H5 hold 60s + tiszta", w: 60, pick: (t) => t.snap60!.ub >= 10 && t.snap60!.ub < 30 && t.snap30!.ub > 0 && t.snap60!.ub / t.snap30!.ub >= 2 && t.snap60!.cs === 0 && clean(t) },
 ];
 const sel = new Map<string, Array<{ c: number; t: Tok }>>();
+for (const [m, t] of toks) if (t.created < SINCE) { toks.delete(m); continue; }
 CANDS.forEach((c, i) => { if (i === 1) return; for (const t of toks.values()) if (c.pick(t)) (sel.get(t.mint) ?? sel.set(t.mint, []).get(t.mint)!).push({ c: i, t }); });
 console.error(`útvonal-lekérés: ${sel.size} token`);
 const q = db.prepare("SELECT at, price FROM sol_trades WHERE mint = ? ORDER BY at");
@@ -108,5 +112,5 @@ L.push("|---|" + days.map(() => "---").join("|") + "|");
 CANDS.forEach((c, i) => { const r = res[i]!.filter((x) => x.plan === "live"); L.push(`| ${c.name} | ` + days.map((d) => { const xs = r.filter((x) => new Date(x.created).toISOString().slice(5, 10) === d).map((x) => x.net); return xs.length ? `${f(m(xs), 2)} (${xs.length})` : "-"; }).join(" | ") + " |"); });
 const out = L.join("\n"); console.log(out);
 fs.mkdirSync(cfg.report.output_dir, { recursive: true });
-const file = `${cfg.report.output_dir}/sol_4kor_${new Date().toISOString().slice(0, 10)}.md`; fs.writeFileSync(file, out); console.log(`\n✅ mentve: ${file}`);
+const file = `${cfg.report.output_dir}/sol_4kor_${new Date().toISOString().slice(0, 10)}${SINCE ? "_since" : ""}.md`; fs.writeFileSync(file, out); console.log(`\n✅ mentve: ${file}`);
 db.close();
