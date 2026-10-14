@@ -30,7 +30,7 @@ test("graduáció: belépés graduáláskor a pool induló árán, +15 percnél 
     VALUES ('robinhood', '0x9999999999999999999999999999999999999999', 'pons', 'bonding_curve', '0x1111111111111111111111111111111111111111', '0x0000000000000000000000000000000000000000', 18, 0, 1)`).run().lastInsertRowid);
   const opened: Array<{ arm: string; price: number; liq: number | null }> = [];
   let next = snap();
-  const g = new GraduationTracker({ db, cfg: { ...cfg, graduation: { enabled: true, delay_min: 15 } }, collect: async () => next, saveSnapshot: () => {},
+  const g = new GraduationTracker({ db, cfg: { ...cfg, graduation: { enabled: true, delay_min: 15, grad_at: true } }, collect: async () => next, saveSnapshot: () => {},
     openShadow: (_t: TokenRow, arm, price, _eth, liq) => { opened.push({ arm, price, liq }); return 7; }, ethUsd: async () => 3000 });
   // token > ETH(0x0) → a token currency1; sqrtP = 1 → ár = 1/1 = 1 ETH/token (18 tizedes)
   await g.onGraduation(id, 2n ** 96n);

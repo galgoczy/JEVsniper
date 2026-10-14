@@ -249,6 +249,7 @@ bnb_live:
 graduation:
   enabled: true
   delay_min: 15
+  grad_at: false   # 2026-10-14: elengedve – az induló pool-ár nem vásárolható (a felhasználó kérésére)
 
 # Futás közbeni figyelő (Telegram): szól, ha egy árnyékstratégia ígéretes lesz (90% CI > 0, n ≥ 20),
 # élesítés-jelölt lesz (n ≥ 100), vagy kiesik; és ha egy token 10x fölé megy. A szabályokon nem változtat.

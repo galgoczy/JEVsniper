@@ -677,3 +677,11 @@ gas műveletenként, fills a DB-ben. `/stop` és `/panic` a futó boton Telegram
 - A bnb_whale (szűrt) 3. időszakban +231 USD/pozíció volt: egy pozíció 9338x-on „adott el” (9195 USD 1 USD-ből, ~13 BNB-s poolból). Ok: a felvevő MINDEN Sync-et továbbadott; a csaló egy tx-ben égeti a pool tokenjeit + sync (ár-tüske), majd ugyanabban a tx-ben kiüríti → az átmeneti ár kívülről nem kereskedhető.
 - Javítás (src/bnb/pancake.ts): blokkonként csak a pár utolsó Sync-je megy tovább „reserve” eseményként, és a kimenet-követés (max_x/min_x) is csak ebből számol. 5 sor (received_bnb > 0,3 × belépéskori likviditás) érvénytelenítve: close_reason „invalid_intratx_price:…”; a HUD BNB-lekérdezései kizárják az invalid sorokat.
 - Javítás után: bnb_whale szűrt 3. időszak +1,31 (n=39), 10-04 óta +0,65 (n=85) – de 2 kiugró nyerőn (42,9x, 11,4x) múlik, nélkülük ~−0,1. bnb_all60 szűrt −0,15 (n=1086).
+
+## 2026-10-14 – grad_at elengedve; Solana negyedik kör: a Base „uni hold” megfelelője tiszta tokeneken (előre rögzítve)
+- grad_at: ugyanazon tokenre a 30 mp-cel későbbi (grad_30s) belépési ár átlagosan 1,79× a graduációs induló árnak (50 pár 10-05 óta; 18-nál > 1,2×) → az induló ár nem vásárolható, a kar eredménye elméleti. 10-05 óta így is −0,10 (n=138), a grad_30s −0,10 (n=40). A felhasználó kérésére (10-14) a grad_at nem nyit új pozíciót és lekerül a HUD-ról / állásról; az adatai megmaradnak.
+- Solana jelöltek (a futtatás ELŐTT rögzítve; `npm run sol:replay4`): a Base-en a csalásszűrt `base_uni_hold` (30 mp, 10–29 tartó, gyorsuló vevőszám) az egyetlen tiszta jelölt → Solana-megfelelő. Belépés 2 mp késéssel (a jelzés utáni első, ≥ 2 mp-cel későbbi kötés ára), terv live és C, időrendi bontás (2/3 tanító, 1/3 ellenőrző), 90% bootstrap CI.
+  - K0 véletlen (5%, 30 mp), K1 minden token (30 mp);
+  - H1 „hold” 30 mp: egyedi vevők(30 mp) 10–29 és vevők(15–30 mp) ≥ 2× vevők(0–15 mp);
+  - tisztaság (csak a belépés előtti adatból): nem csomagolt (≤ 1 nem-készítő vétel az első mp-ben), a készítő nem adott el, a készítőnek nincs korábbi tokenje (a felvétel óta), és a korai vevők < 50%-a „farm-tárca” (az előző 24 órában ≥ 20 másik token első 30 mp-ében vásárolt);
+  - H2 = H1 + tiszta; H3 = H1 + tiszta, farm-arány < 20%; H4 = tiszta + vevők(30 mp) ≥ 10 (gyorsulás nélkül); H5 = H1 a 60 mp-es ablakkal (vevők(60) 10–29, vevők(60)/vevők(30) ≥ 2) + tiszta.

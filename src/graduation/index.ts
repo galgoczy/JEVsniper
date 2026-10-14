@@ -10,7 +10,7 @@ import { log } from "../logger.js";
 
 /**
  * V2 – graduációs szakasz (PONS: a bonding curve-ről Uniswap v4 poolba lépés). Árnyékkarok:
- *  grad_at      – belépés a graduáció észlelésekor, a pool induló árán (alapvonal: minden graduált token)
+ *  grad_at      – belépés a graduáció észlelésekor, a pool induló árán (alapvonal; 2026-10-14 óta alapból KI: az ár nem vásárolható)
  *  grad_30s     – 30 mp-cel később, friss pillanatkép VALÓDI pool-árán, szűrő nélkül (2026-10-05: a grad_at induló ára
  *                 valószínűleg elérhetetlen – a gyors botok előbb vesznek; a kettő különbsége az ár-optimizmus mértéke)
  *  grad_15_all  – 15 perccel később, minden graduált token, amely átmegy a kemény szűrőn (azonos időzítésű alapvonal)
@@ -62,7 +62,7 @@ export class GraduationTracker {
     const tokenIsC0 = BigInt(t.address) < BigInt(pair);
     const gradPrice = priceFromSqrtX96(initSqrtPriceX96, tokenIsC0, t.decimals ?? 18);
     const eth = await this.d.ethUsd();
-    if (typeof eth === "number" && gradPrice > 0 && this.d.openShadow(t, "grad_at", gradPrice, eth, null) > 0) this.stats.entries++;
+    if (cfg.graduation.grad_at && typeof eth === "number" && gradPrice > 0 && this.d.openShadow(t, "grad_at", gradPrice, eth, null) > 0) this.stats.entries++;
     // 30 mp múlva: reális késéssel, a valódi pool-áron
     const h30 = setTimeout(() => { this.timers.delete(h30); void this.delayed30(tokenId).catch((e) => e instanceof StaleSnapshotError ? undefined : log.warn("graduáció +30 mp hiba", { token: t.symbol, error: (e as Error).message.slice(0, 160) })); }, 30_000);
     this.timers.add(h30);

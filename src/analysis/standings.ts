@@ -74,7 +74,7 @@ const SHORT: Record<string, string> = { pons_flip95: "flip95",
   pons_pregrad_50: "pregrad_50", pons_pregrad_80: "pregrad_80", grad_15_all: "grad_15", grad_30s: "grad_30s", random_control: "véletlen",
 };
 /** Robinhood-blokk (2026-10-03): a Base-jelölt élő kar RH-eredménye („ha éled a tömeg”), a graduációs és a graduáció előtti karok. */
-const RH_ARMS: Array<[string, number | "live"]> = [["rule_v2_strict", "live"], ["pons_pregrad_50", 0], ["pons_pregrad_80", 0], ["grad_at", 0], ["grad_30s", 0], ["grad_15_all", 0], ["pons_flip95", 0]];
+const RH_ARMS: Array<[string, number | "live"]> = [["rule_v2_strict", "live"], ["pons_pregrad_50", 0], ["pons_pregrad_80", 0], ["grad_30s", 0], ["grad_15_all", 0], ["pons_flip95", 0]];
 /** A telefonos nézet jelölt karjai (a Jev nélküli, eddig nyereséges család) és a viszonyítási alapvonalak. */
 const CANDIDATES = ["rule_v2_strict", "rule_v2", "rule_v2_nofactory", "base_uni_hold", "base_uni_hold_nofactory"];
 const BASELINES: Array<[string, number | "live"]> = [["base_uni_all", "live"], ["copy_smart", 0], ["pons_all", "live"]];

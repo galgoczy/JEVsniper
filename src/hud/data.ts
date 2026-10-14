@@ -20,7 +20,7 @@ import { currentPeriod } from "../analysis/periods.js";
 const V2_ARMS = ["rule_v2", "rule_v2_strict", "rule_v2_nofactory"];
 const PREGRAD_ARMS = ["pons_pregrad_50", "pons_pregrad_80"];
 const BASE_ARMS = ["rule_v2_strict", "rule_v2", "rule_v2_nofactory", "base_uni_hold", "base_uni_hold_nofactory"];
-const RH_ARMS: Array<[string, number | "live"]> = [["rule_v2_strict", "live"], ["pons_pregrad_50", 0], ["pons_pregrad_80", 0], ["grad_at", 0], ["grad_30s", 0], ["grad_15_all", 0]];
+const RH_ARMS: Array<[string, number | "live"]> = [["rule_v2_strict", "live"], ["pons_pregrad_50", 0], ["pons_pregrad_80", 0], ["grad_30s", 0], ["grad_15_all", 0]];
 // a pons_flip95 a saját („flip”) tervével számít – külön sorban (lásd hudSummary)
 const BASELINES: Array<[string, string, number | "live"]> = [["random_control", "base", "live"], ["base_uni_all", "base", "live"], ["copy_smart", "base", 0], ["pons_all", "robinhood", "live"]];
 const LABEL: Record<string, string> = {

@@ -28,7 +28,8 @@
     "hud:jelszo": "tsx scripts/hud-jelszo.ts",
     "tg": "tsx scripts/tg-send.ts",
     "scam:backfill": "tsx scripts/base-scam-backfill.ts",
-    "replay:solbnb": "NODE_OPTIONS=--max-old-space-size=8192 tsx scripts/replay-solbnb.ts"
+    "replay:solbnb": "NODE_OPTIONS=--max-old-space-size=8192 tsx scripts/replay-solbnb.ts",
+    "sol:replay4": "NODE_OPTIONS=--max-old-space-size=8192 tsx scripts/sol-replay4.ts"
   },
   "repository": {
     "type": "git",

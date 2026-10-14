@@ -193,7 +193,9 @@ export const ConfigSchema = z.object({
   graduation: z.object({
     enabled: z.boolean().default(true),
     delay_min: z.number().positive().default(15),
-  }).default({ enabled: true, delay_min: 15 }),
+    // 2026-10-14: a grad_at a pool INDULÓ árán lép be, ami nem vásárolható (30 mp múlva átlag 1,79×) → alapból kikapcsolva
+    grad_at: z.boolean().default(false),
+  }).default({ enabled: true, delay_min: 15, grad_at: false }),
   // BNB / PancakeSwap ÉLŐ kereskedés (2026-10-07): a BNB árnyékkarok egyikének jelzéseire valódi vétel/eladás BSC-n, ugyanazzal a tárcával.
   // Csak `mode: live` ÉS `bnb_live.enabled: true` mellett küld tranzakciót; dry_run-ban csak „BELÉPNE” jelzés. Élesítésről csak a felhasználó dönt.
   bnb_live: z.object({
