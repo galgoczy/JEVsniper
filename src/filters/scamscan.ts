@@ -1,5 +1,6 @@
 import { type Address, type PublicClient, getAddress, parseAbiItem, isAddressEqual } from "viem";
 import { ADDRESSES } from "../chains/addresses.js";
+import type { ChainKey } from "../chains/index.js";
 
 /**
  * Base csalásszűrő (2026-10-11). Az élő tapasztalat: minden élő veszteség csalásból jött (BNB: honeypot, címtiltás,
@@ -15,8 +16,8 @@ const TRANSFER = parseAbiItem("event Transfer(address indexed from, address inde
 const DEAD = getAddress("0x000000000000000000000000000000000000dEaD");
 
 /** Infrastruktúra-címek, amelyek egy tisztességes token kódjában is előfordulhatnak (nem „üzemeltető”). */
-export function infraAddresses(): Set<string> {
-  const A = ADDRESSES.base;
+export function infraAddresses(chain: ChainKey = "base"): Set<string> {
+  const A = ADDRESSES[chain] as Partial<typeof ADDRESSES.base>;
   const list = [A.weth, A.uniswapV4PoolManager, A.universalRouter, A.permit2, A.uniswapV2Factory, A.uniswapV3Factory, A.clankerV4Factory, A.v4Quoter, DEAD,
     "0x0000000000000000000000000000000000000000", "0xffffffffffffffffffffffffffffffffffffffff"];
   return new Set(list.filter(Boolean).map((a) => (a as string).toLowerCase()));
@@ -63,13 +64,13 @@ export interface ScamScan {
 }
 
 /** Döntés a jelekből. Szigorú, de egyszerű: bármelyik erős jel → nem tiszta. */
-export function scamFlags(s: Omit<ScamScan, "flags">, marked: Set<string> = new Set()): string[] {
+export function scamFlags(s: Omit<ScamScan, "flags">, marked: Set<string> = new Set(), chain: ChainKey = "base"): string[] {
   const f: string[] = [];
   if (s.embedded.some((a) => marked.has(a))) f.push("marked_operator");     // ismert (tanult) üzemeltető-cím a kódban
   if (s.embedded.length) f.push("embedded_operator");
   // 2026-10-14: a 0xe264-család már kódba égetés nélkül is indít (UKFLMS) → ismert farm-router a vevők élén, vételszám-küszöb nélkül
   if (s.topRouter && marked.has(s.topRouter.toLowerCase())) f.push("marked_router");
-  if (s.buys >= 5 && (s.topRouterShare ?? 0) >= 0.5 && (s.topRouterValue0 ?? 0) >= 0.8 && s.topRouter !== ADDRESSES.base.universalRouter?.toLowerCase()) f.push("farm_router");
+  if (s.buys >= 5 && (s.topRouterShare ?? 0) >= 0.5 && (s.topRouterValue0 ?? 0) >= 0.8 && s.topRouter !== ADDRESSES[chain].universalRouter?.toLowerCase()) f.push("farm_router");
   if (s.topRouterEmbedded) f.push("router_in_code");
   if (s.forced > 0) f.push("forced_transfer");
   return f;
@@ -79,10 +80,11 @@ export function scamFlags(s: Omit<ScamScan, "flags">, marked: Set<string> = new 
  * Vizsgálat a [fromBlock, toBlock] tartományban (indulás → belépés). A getLogs-ot kis szeletekben kéri (a publikus RPC-k
  * blokk-tartomány korlátja miatt), legfeljebb `maxTx` vételi tx-et néz meg részletesen.
  */
-export async function scanToken(c: PublicClient, token: Address, fromBlock: bigint, toBlock: bigint, opts: { maxTx?: number; step?: bigint; marked?: Set<string>; codeAt?: bigint } = {}): Promise<ScamScan> {
-  const PM = getAddress(ADDRESSES.base.uniswapV4PoolManager!);
+export async function scanToken(c: PublicClient, token: Address, fromBlock: bigint, toBlock: bigint, opts: { maxTx?: number; step?: bigint; marked?: Set<string>; codeAt?: bigint; chain?: ChainKey } = {}): Promise<ScamScan> {
+  const chain = opts.chain ?? "base";
+  const PM = getAddress(ADDRESSES[chain].uniswapV4PoolManager!);
   const code = (await c.getCode({ address: token, ...(opts.codeAt ? { blockNumber: opts.codeAt } : {}) })) ?? "0x";
-  const embedded = operatorAddresses(code);
+  const embedded = operatorAddresses(code, infraAddresses(chain));
   const step = opts.step ?? 400n;
   const logs: Array<{ from: Address; to: Address; tx: `0x${string}` }> = [];
   for (let b = fromBlock; b <= toBlock; b += step) {
@@ -96,14 +98,14 @@ export async function scanToken(c: PublicClient, token: Address, fromBlock: bigi
   }
   const buyTx = [...new Set(logs.filter((l) => isAddressEqual(l.from, PM)).map((l) => l.tx))].slice(0, opts.maxTx ?? 30);
   const routers = new Map<string, { n: number; v0: number }>();
-  await Promise.all(buyTx.map(async (h) => {
+  for (let i = 0; i < buyTx.length; i += 5) await Promise.all(buyTx.slice(i, i + 5).map(async (h) => { // 5-ösével (a publikus RPC-k kéréskorlátja)
     const tx = await c.getTransaction({ hash: h });
     const r = (tx.to ?? "0x").toLowerCase(), e = routers.get(r) ?? { n: 0, v0: 0 };
     e.n++; if (tx.value === 0n) e.v0++; routers.set(r, e);
   }));
   // kényszerített átutalás: egy tulajdonos tokenje égetésbe (0xdEaD / 0x0) vagy a kódba égetett címre kerül úgy, hogy NEM ő küldte a tx-et,
   // és nem a pool / router / Permit2 mozgatta. A telepítő tx (tx.to = null) és a token saját mozgásai kimaradnak.
-  const okMovers = new Set([PM, ADDRESSES.base.universalRouter, ADDRESSES.base.permit2].filter(Boolean).map((a) => (a as string).toLowerCase()));
+  const okMovers = new Set([PM, ADDRESSES[chain].universalRouter, ADDRESSES[chain].permit2].filter(Boolean).map((a) => (a as string).toLowerCase()));
   const ZERO = "0x0000000000000000000000000000000000000000";
   const suspects = logs.filter((l) => !isAddressEqual(l.from, PM) && l.from !== ZERO && !isAddressEqual(l.from, token) && !okMovers.has(l.from.toLowerCase())
     && (isAddressEqual(l.to, DEAD) || l.to === ZERO || embedded.includes(l.to.toLowerCase())));
@@ -117,5 +119,14 @@ export async function scanToken(c: PublicClient, token: Address, fromBlock: bigi
   const top = [...routers].sort((a, b) => b[1].n - a[1].n)[0];
   const base = { embedded, buys: buyTx.length, topRouter: top?.[0] ?? null, topRouterShare: top ? top[1].n / buyTx.length : null,
     topRouterValue0: top ? top[1].v0 / top[1].n : null, topRouterEmbedded: !!top && embedded.includes(top[0]), forced };
-  return { ...base, flags: scamFlags(base, opts.marked) };
+  return { ...base, flags: scamFlags(base, opts.marked, chain) };
+}
+
+/**
+ * 10x-riasztás szűrése (2026-10-16, a felhasználó kérésére: a farm/csalás-tokenek 10x-riasztása félrevezető).
+ * Robinhoodon a kódba égetett cím jelét nem használjuk (a PONS hivatalos sablonjára nincs ellenőrizve), csak a vevő-/átutalás-jeleket.
+ */
+export function alertBlockingFlags(flags: string[], chain: ChainKey): string[] {
+  const ignore = chain === "base" ? [] : ["embedded_operator", "router_in_code"];
+  return flags.filter((f) => !ignore.includes(f));
 }

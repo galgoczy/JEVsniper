@@ -11,6 +11,7 @@ import { PriceFeed, type Tracked } from "./pricefeed.js";
 import { planAction, emergencyReason, checkIntervalSec, type PosState, type Phase } from "./plans.js";
 import { shadowCost } from "./costmodel.js";
 import { log } from "../logger.js";
+import { scanToken, alertBlockingFlags } from "../filters/scamscan.js";
 
 export interface PosRow extends Omit<PosState, "entry_price" | "peak_price"> {
   entry_price_native: number; peak_price_native: number | null;
@@ -119,6 +120,24 @@ export class PositionMonitor {
     }
   }
 
+  /** Base: a meglévő csalásszűrő-sor (belépéskori) + friss vizsgálat; Robinhood: friss vizsgálat az utolsó ~15 perc vételein. */
+  private async bigWinnerScan(tokenId: number, chain: ChainKey, address: string): Promise<{ flags: string[]; error: boolean }> {
+    const old = this.d.db.prepare("SELECT flags FROM base_scam_checks WHERE token_id = ? AND error IS NULL").get(tokenId) as { flags: string } | undefined;
+    const prior = chain === "base" && old?.flags ? old.flags.split(",") : [];
+    const ex = this.d.executors[chain]; if (!ex) return { flags: prior, error: !prior.length };
+    try {
+      const head = await ex.client.getBlockNumber();
+      const back = await ex.client.getBlock({ blockNumber: head > 1000n ? head - 1000n : 0n }), now = await ex.client.getBlock({ blockNumber: head });
+      const perSec = 1000 / Math.max(1, Number(now.timestamp - back.timestamp)); // blokk/mp
+      const tk = this.d.db.prepare("SELECT discovered_block FROM tokens WHERE id = ?").get(tokenId) as { discovered_block: number | null } | undefined;
+      let from = head - BigInt(Math.ceil(perSec * 900));
+      if (tk?.discovered_block != null && BigInt(tk.discovered_block) > from) from = BigInt(tk.discovered_block) - 3n;
+      const marked = new Set((this.d.db.prepare("SELECT addr FROM base_scam_marks").all() as { addr: string }[]).map((r) => r.addr));
+      const s = await scanToken(ex.client, getAddress(address), from, head, { marked, chain, step: chain === "base" ? 400n : 2000n });
+      return { flags: [...new Set([...prior, ...alertBlockingFlags(s.flags, chain)])], error: false };
+    } catch { return { flags: prior, error: !prior.length }; }
+  }
+
   private async bigWinner(tokenId: number, mult: number) {
     const t = this.d.db.prepare("SELECT chain, launchpad, symbol, address FROM tokens WHERE id = ?").get(tokenId) as { chain: string; launchpad: string; symbol: string | null; address: string } | undefined;
     const sn = this.d.db.prepare("SELECT params_json FROM snapshots WHERE token_id = ? AND window_sec = ?").get(tokenId, this.d.cfg.evaluation.live_window_sec) as { params_json: string } | undefined;
@@ -129,7 +148,15 @@ export class PositionMonitor {
       if (p) feat = `\n60 mp-nél: holderek ${p.holders?.count}, likviditás ${typeof p.contract?.liquidity_usd === "number" ? Math.round(p.contract.liquidity_usd) + " USD" : "?"}, LP: ${p.contract?.lp_owner}, készítő korábbi tokenjei: ${p.creator?.prior_tokens}, vevő-gyorsulás ${typeof p.dynamics?.buyer_acceleration === "number" ? p.dynamics.buyer_acceleration.toFixed(1) : "?"}`;
     } catch { /* hiányos pillanatkép */ }
     const arms = (this.d.db.prepare("SELECT DISTINCT arm FROM positions WHERE token_id = ? AND arm != 'random_control'").all(tokenId) as { arm: string }[]).map((r) => r.arm);
+    // csalásszűrő a riasztás előtt (2026-10-16): farm/csalás tokenre nincs 10x-riasztás (félrevezető), csak napló
+    const scam = await this.bigWinnerScan(tokenId, t.chain as ChainKey, t.address);
+    if (scam.flags.length) {
+      log.info("10x-riasztás elnyomva (csalásszűrő)", { token: t.symbol, chain: t.chain, mult: Math.round(mult), flags: scam.flags.join(",") });
+      this.d.db.prepare("INSERT INTO meta(key, value) VALUES ('bigwin_suppressed', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1").run();
+      return;
+    }
     await this.d.notify(`🚀 ${mult.toFixed(0)}x ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${t.address}${feat}
+csalásszűrő: ${scam.error ? "nem sikerült – óvatosan" : "tiszta (farm-minta / elvett token nincs)"}
 árnyékstratégiák benne: ${arms.join(", ") || "egyik sem"}`);
   }
 

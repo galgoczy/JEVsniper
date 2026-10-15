@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { embeddedAddresses, operatorAddresses, looksLikeAddress, scamFlags } from "../src/filters/scamscan.js";
+import { embeddedAddresses, operatorAddresses, looksLikeAddress, scamFlags, alertBlockingFlags } from "../src/filters/scamscan.js";
+import { ADDRESSES } from "../src/chains/addresses.js";
 
 const OP = "e264430807f0b62688420ac17faad06b3ed40873";
 test("scamscan: kódba égetett üzemeltető-cím felismerése, PUSH-adat átugrása, szöveg/infrastruktúra kiszűrése", () => {
@@ -25,4 +26,17 @@ test("scamscan: jelek – farm-router, kódban lévő router, kényszerített á
   assert.deepEqual(scamFlags({ ...base, topRouter: "0x6ff5693b99212da76ad316178a184ab56d299b43" }), []); // Universal Router
   assert.deepEqual(scamFlags({ ...base, topRouterValue0: 0, embedded: ["0x" + OP], topRouterEmbedded: true, forced: 2 }, new Set(["0x" + OP])),
     ["marked_operator", "embedded_operator", "router_in_code", "forced_transfer"]);
+});
+
+test("10x-riasztás szűrése: Base-en minden jel blokkol, Robinhoodon a kódba égetett cím nem", () => {
+  assert.deepEqual(alertBlockingFlags(["embedded_operator", "farm_router"], "base"), ["embedded_operator", "farm_router"]);
+  assert.deepEqual(alertBlockingFlags(["embedded_operator", "router_in_code"], "robinhood"), []);
+  assert.deepEqual(alertBlockingFlags(["farm_router", "forced_transfer"], "robinhood"), ["farm_router", "forced_transfer"]);
+});
+
+test("farm_router: Robinhoodon a saját Universal Router nem farm", () => {
+  const ur = ADDRESSES.robinhood.universalRouter!.toLowerCase();
+  const base = { embedded: [], buys: 20, topRouter: ur, topRouterShare: 0.9, topRouterValue0: 0.9, topRouterEmbedded: false, forced: 0 };
+  assert.deepEqual(scamFlags(base, new Set(), "robinhood"), []);
+  assert.deepEqual(scamFlags({ ...base, topRouter: "0xd6d35b5600000000000000000000000000000000" }, new Set(), "robinhood"), ["farm_router"]);
 });
