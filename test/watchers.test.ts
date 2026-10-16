@@ -57,3 +57,8 @@ test("források láncenként", () => {
   assert.deepEqual(sourcesFor("robinhood", {}).map((s) => s.key), ["clanker", "pons", "uniswap_v4"]);
   assert.deepEqual(sourcesFor("robinhood", { clanker: false }).map((s) => s.key), ["pons", "uniswap_v4"]);
 });
+
+test("minden cím érvényes checksum-formájú", async () => {
+  const { getAddress } = await import("viem");
+  for (const book of Object.values(ADDRESSES)) for (const [k, v] of Object.entries(book)) if (v) assert.equal(v, getAddress(v), k);
+});

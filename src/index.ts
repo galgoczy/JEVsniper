@@ -8,6 +8,39 @@ import { stopFileExists, createStopFile, removeStopFile } from "./killswitch.js"
 import { log } from "./logger.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { ChainWatcher } from "./watchers/index.js";
+import { Collector, CollectorScheduler, EthPrice, tokenRow, type TokenRow } from "./collector/index.js";
+import { applyHardFilters } from "./filters/index.js";
+import { Executor } from "./exec/executor.js";
+import { routeFor } from "./exec/routes.js";
+import { rpcUrls } from "./chains/index.js";
+import { RegimeGate } from "./decision/regime.js";
+import { DecisionEngine } from "./decision/engine.js";
+import { PriceFeed } from "./exit/pricefeed.js";
+import { PositionMonitor } from "./exit/monitor.js";
+import { CompoundManager } from "./compound/index.js";
+import { writeReport } from "./report/index.js";
+import { checkArms } from "./analysis/watch.js";
+import { standings, standingsCompact, reportCompact } from "./analysis/standings.js";
+import { CopyTracker } from "./copy/tracker.js";
+import { ListingWatcher } from "./listing/watcher.js";
+import { GraduationTracker } from "./graduation/index.js";
+import { currentPositionUsd, shadowSizeUsd } from "./decision/risk.js";
+import { getAddress, isAddressEqual, type Address } from "viem";
+import { ADDRESSES, ZERO } from "./chains/addresses.js";
+import { PreGradArms } from "./graduation/pregrad.js";
+import { FlipArm, FLIP_ARM } from "./graduation/flip.js";
+import { BnbRecorder } from "./bnb/recorder.js";
+import { PancakeRecorder } from "./bnb/pancake.js";
+import { BnbShadow } from "./bnb/shadow.js";
+import { BnbLive } from "./bnb/live.js";
+import { BnbCompound } from "./bnb/compound.js";
+import { currentSince } from "./analysis/periods.js";
+import { BNB_RECEIPT_RPC } from "./bnb/addresses.js";
+import { createPublicClient, http, type PublicClient } from "viem";
+import { bsc } from "viem/chains";
+import { SolRecorder } from "./sol/recorder.js";
+import { SolAmmRecorder } from "./sol/amm.js";
+import { startHud } from "./hud/server.js";
 
 /**
  * Főprogram – 1. lépés: váz. Indul, ellenőrzi a configot/env-et, megnyitja a DB-t,
@@ -25,6 +58,31 @@ async function main() {
   const open = openPositions(db, "live");
 
   const jev = new JevClient(db, cfg, env.TYPESAFE_API_KEY);
+  const ethPrice = new EthPrice(publicClient("base", env.BASE_RPC_URL));
+  // 5. lépés: végrehajtók láncenként (küldés a privát/MEV-védett RPC-n, ha van, különben az első RPC-n)
+  const executors: Partial<Record<ChainKey, Executor>> = {};
+  for (const key of ["base", "robinhood"] as ChainKey[]) {
+    if (!cfg.chains[key].enabled) continue;
+    const sendUrl = (key === "base" ? env.BASE_PRIVATE_TX_RPC_URL : env.ROBINHOOD_PRIVATE_TX_RPC_URL) || rpcUrls(key === "base" ? env.BASE_RPC_URL : env.ROBINHOOD_RPC_URL)[0]!;
+    executors[key] = new Executor(key, publicClient(key, key === "base" ? env.BASE_RPC_URL : env.ROBINHOOD_RPC_URL), db, cfg, env.WALLET_PRIVATE_KEY as `0x${string}`, sendUrl, () => ethPrice.get());
+  }
+  /** /panic: minden nyitott élő pozíció eladása azonnal, magas csúszással. */
+  const panicSellAll = async (): Promise<string> => {
+    const rows = db.prepare("SELECT t.*, p.id AS position_id, p.tokens_remaining FROM positions p JOIN tokens t ON t.id = p.token_id WHERE p.arm = 'live' AND p.closed_at IS NULL").all() as Array<TokenRow & { position_id: number; tokens_remaining: number }>;
+    const out: string[] = [];
+    for (const r of rows) {
+      const ex = executors[r.chain as ChainKey]; if (!ex) continue;
+      try {
+        const route = await routeFor(ex.client, r.chain as ChainKey, r);
+        const bal = await ex.tokenBalance(getAddress(r.address));
+        const res = await ex.sell(route, getAddress(r.address), bal, cfg.execution.panic_slippage_pct, { positionId: r.position_id, panic: true });
+        db.prepare("UPDATE positions SET tokens_remaining = ?, phase = ?, closed_at = ?, close_reason = 'panic' WHERE id = ?").run(res.unsellable ? Number(r.tokens_remaining) : 0, res.unsellable ? "unsellable" : "closed", res.unsellable ? null : Date.now(), r.position_id);
+        out.push(`${r.symbol ?? r.address}: ${res.unsellable ? "NEM ELADHATÓ" : "eladva"} ${res.hash ?? ""}`);
+      } catch (e) { out.push(`${r.symbol ?? r.address}: hiba ${(e as Error).message.slice(0, 80)}`); }
+    }
+    if (bnbLive) out.push(await bnbLive.panic().catch((e) => `BNB pánik hiba: ${(e as Error).message.slice(0, 80)}`)); // BNB élő pozíciók is (2026-10-07)
+    return out.length ? out.join("\n") : "nincs nyitott élő pozíció";
+  };
   const tg = new Telegram(env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, cfg.telegram.poll_interval_ms);
 
   const rpc: Record<ChainKey, string> = { base: env.BASE_RPC_URL, robinhood: env.ROBINHOOD_RPC_URL };
@@ -40,15 +98,120 @@ async function main() {
     }
   }
 
+  // 3. lépés: paramétergyűjtő (30/60/180 mp-nél pillanatkép minden új tokenről)
+  const clients = { base: publicClient("base", rpc.base), robinhood: publicClient("robinhood", rpc.robinhood) };
+  const collector = new Collector(db, clients, ethPrice);
+  // 6. lépés: rezsim-kapu (óránként) + döntési motor
+  const regime = new RegimeGate(db, cfg, jev, () => ethPrice.get(), async () => ({
+    base: cfg.chains.base.enabled ? Number(await clients.base.getGasPrice().catch(() => 0)) / 1e9 : null,
+    robinhood: cfg.chains.robinhood.enabled ? Number(await clients.robinhood.getGasPrice().catch(() => 0)) / 1e9 : null,
+  }));
+  const engine = new DecisionEngine({ db, cfg, jev, regime, executors, ethUsd: () => ethPrice.get(), notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
+  await regime.refresh(true).catch((e) => log.warn("rezsim init hiba", { error: (e as Error).message }));
+  // 7. lépés: tartás-figyelés, kiszállás (élő + árnyék), 24 órás kimenet-követés
+  const feeds = { base: new PriceFeed("base", clients.base, db), robinhood: new PriceFeed("robinhood", clients.robinhood, db) };
+  // 8. lépés: compound-kezelő (lezárt élő pozíciók könyvelése, napi méret-újraszámolás)
+  const compoundMgr = new CompoundManager(db, cfg, (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)));
+  const compoundTimer = compoundMgr.schedule();
+  // RH saját stratégia: graduáció előtti árnyékbelépés a PONS-görbéken (az árfigyelő görbe-haladásából)
+  const pregrad = new PreGradArms(async (tokenId, arm, price, liq) => {
+    const row = tokenRow(db, tokenId); const eth = await ethPrice.get();
+    return row && typeof eth === "number" ? engine.openShadowAt(row, arm, 0, price, shadowSizeUsd(cfg), eth, liq) : 0;
+  });
+  // RH mérőkar: 95%-on be, graduáción ki (gyors görbe-lekérdezés 85% fölött)
+  const flip = new FlipArm({ db, client: clients.robinhood, open: async (tokenId, price, liq) => {
+    const row = tokenRow(db, tokenId); const eth = await ethPrice.get();
+    return row && typeof eth === "number" ? engine.openShadowAt(row, FLIP_ARM, 0, price, shadowSizeUsd(cfg), eth, liq, null, ["flip", "live"]) : 0;
+  } });
+  if (cfg.graduation.enabled && cfg.chains.robinhood.enabled) flip.start();
+  const monitor = new PositionMonitor({ db, cfg, jev, executors, feeds, ethUsd: () => ethPrice.get(), regime: () => regime.regime,
+    notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)), onLiveClosed: (p) => compoundMgr.onLiveClosed(p.net_pnl_usd),
+    onCurve: cfg.graduation.enabled ? async (o) => {
+      const nativeQuote = !o.pairToken || isAddressEqual(o.pairToken as Address, ZERO) || isAddressEqual(o.pairToken as Address, ADDRESSES[o.chain].weth);
+      await pregrad.observe({ ...o, nativeQuote });
+      if (o.chain === "robinhood") await flip.observe({ ...o, nativeQuote });
+    } : undefined });
+  monitor.start(15_000);
+  // Copy trading árnyékteszt: tárcakövetés láncenként
+  const copyTrackers = (["base", "robinhood"] as ChainKey[]).filter((k) => cfg.chains[k].enabled).map((k) => new CopyTracker({ db, cfg, chain: k, client: clients[k],
+    ethUsd: () => ethPrice.get(), openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, shadowSizeUsd(cfg), eth, liq) }));
+  copyTrackers.forEach((c) => c.start());
+  // V2: graduációs szakasz (PONS curve → v4)
+  const graduation = new GraduationTracker({ db, cfg, collect: (t, w, d) => collector.collect(t, w, d), saveSnapshot: (t, snap) => collector.saveSnapshot(t, snap, cfg.db.max_snapshot_bytes),
+    openShadow: (t, arm, price, eth, liq) => engine.openShadowAt(t, arm, 0, price, shadowSizeUsd(cfg), eth, liq), ethUsd: () => ethPrice.get() });
+  // Listázás-figyelő (Coinbase / Robinhood)
+  const listing = new ListingWatcher({ db, cfg, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)) });
+  listing.start();
+  const bnbRecorder = cfg.bnb.enabled ? new BnbRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms }) : null;
+  bnbRecorder?.start();
+  // BNB árnyékkarok (bnb_all60, bnb_whale) – a PancakeSwap-felvevő eseményeiből (2026-10-07)
+  let bnbShadow: BnbShadow | null = null;
+  const bnbUsd = () => { const r = db.prepare("SELECT value FROM meta WHERE key = 'bnb_usd'").get() as { value: string } | undefined; const v = Number(r?.value); return v > 0 ? v : null; };
+  const pcsRecorder = cfg.bnb.enabled && cfg.bnb.pancake ? new PancakeRecorder({ db, rpcUrl: env.BNB_RPC_URL || undefined, pollMs: cfg.bnb.poll_ms,
+    onEvent: (e) => bnbShadow?.onEvent(e), onStep: async () => { await bnbShadow?.step(); } }) : null;
+  // BNB ÉLŐ végrehajtó (2026-10-07, a felhasználó kérésére): csak bnb_live.enabled ÉS bnb_live.mode = live mellett küld tranzakciót; ugyanaz a tárca
+  const bnbCompound = pcsRecorder ? new BnbCompound(db, cfg, (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false))) : null;
+  const bnbCompoundTimer = bnbCompound?.schedule() ?? null;
+  const bnbLive = pcsRecorder ? new BnbLive({ db, cfg, privateKey: env.WALLET_PRIVATE_KEY as `0x${string}`, rpcUrl: env.BNB_RPC_URL || undefined, bnbUsd, notify: (m) => (cfg.telegram.enabled ? tg.send(m) : Promise.resolve(false)), positionUsd: () => bnbCompound!.positionUsd() }) : null;
+  if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, receiptClient: createPublicClient({ chain: bsc, transport: http(BNB_RECEIPT_RPC, { timeout: 15_000, retryCount: 1 }) }) as PublicClient, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg), simAddress: account.address,
+    live: bnbLive && cfg.bnb_live.enabled ? { onSignal: (pair, token, arm, price, liq, at) => bnbLive.onSignal(pair, token, arm, price, liq, at), step: (st) => bnbLive.step(st) } : undefined });
+  // 2026-10-08: az árnyék (és az élő kar) saját 2 mp-es ütemben is lép – a felvevő köre (héjak, kimenetek) időnként 15–30 mp, ez késleltette a belépést
+  const bnbStepTimer = bnbShadow ? setInterval(() => void bnbShadow!.step().catch((e) => log.debug("BNB árnyék ütem hiba", { error: (e as Error).message.slice(0, 120) })), 2_000) : null;
+  if (bnbLive && cfg.bnb_live.enabled) log.info(`BNB élő kar: ${cfg.bnb_live.arm}, ${bnbLive.posUsd().toFixed(2)} USD (alap ${cfg.bnb_live.position_usd}), max ${cfg.bnb_live.max_open} nyitott, mód: ${cfg.bnb_live.mode}`);
+  pcsRecorder?.start();
+  const solRecorder = cfg.sol.enabled ? new SolRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
+  solRecorder?.start();
+  const solAmm = cfg.sol.enabled && cfg.sol.amm ? new SolAmmRecorder({ db, wsUrl: env.SOL_WS_URL || undefined }) : null;
+  solAmm?.start();
+  const hud = cfg.hud.enabled ? startHud({ db, cfg, port: cfg.hud.port, host: cfg.hud.host, token: env.HUD_TOKEN || undefined, passwordHash: env.HUD_PASSWORD_HASH || undefined }) : null;
+  // 9. lépés: napi riport (config report.daily_time_utc) + /report parancs
+  // Telegram-riport (2026-10-03): időarányos + állás + visszaforgatás, telefonra; a teljes markdown riport fájlba (napi, 24 órás)
+  const telegramReport = () => {
+    const file = writeReport(db, cfg).file;
+    return reportCompact(db, currentSince(cfg), cfg) + `\nTeljes: ${file}`;
+  };
+  const [rh, rm] = cfg.report.daily_time_utc.split(":").map(Number) as [number, number];
+  const reportTimer = setInterval(() => {
+    const d = new Date();
+    if (d.getUTCHours() === rh && d.getUTCMinutes() === rm) { try { void tg.send(telegramReport()); } catch (e) { log.warn("riport hiba", { error: (e as Error).message }); } }
+  }, 60_000);
+  // Tárca-ellenőrzés (2026-10-03): a Base-egyenleg és az ETH-ár mentése 10 percenként a meta táblába – az állás-lekérés ebből számol
+  const saveWallet = async () => {
+    const ex = executors.base; if (!ex) return;
+    const [bal, eth] = await Promise.all([ex.nativeBalance(), ethPrice.get()]);
+    if (typeof eth !== "number") return;
+    const put = db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)");
+    put.run("wallet_base_eth", String(Number(bal) / 1e18)); put.run("wallet_eth_usd", String(eth)); put.run("wallet_at", String(Date.now()));
+  };
+  void saveWallet().catch(() => undefined);
+  const walletTimer = setInterval(() => void saveWallet().catch((e) => log.debug("tárca-egyenleg hiba", { error: (e as Error).message.slice(0, 100) })), 10 * 60_000);
+  const regimeTimer = setInterval(() => void regime.refresh().catch(() => undefined), 60_000);
+  // Futás közbeni figyelő: állapotváltáskor Telegram-üzenet (legfeljebb 6 sor egyszerre)
+  const alertTimer = setInterval(() => {
+    if (!cfg.alerts.enabled) return;
+    try {
+      const msgs = checkArms(db, currentSince(cfg)); // az aktuális értékelési időszak (éjfélkor vált)
+      if (msgs.length) void tg.send(["📈 Árnyékstratégia-figyelő", ...msgs.slice(0, 6), ...(msgs.length > 6 ? [`…és még ${msgs.length - 6} változás (npm run report -- --since ${cfg.alerts.since})`] : [])].join("\n"));
+    } catch (e) { log.warn("figyelő hiba", { error: (e as Error).message.slice(0, 160) }); }
+  }, cfg.alerts.interval_min * 60_000);
+
+  // 4. lépés: kemény szűrők minden pillanatképre; 6. lépés: döntés (élő ablakban belépés, máshol árnyék)
+  const scheduler = new CollectorScheduler(db, collector, cfg.evaluation.windows_sec, cfg.db.max_snapshot_bytes, async (t, snap) => {
+    const f = applyHardFilters(db, cfg, t, snap);
+    await engine.onSnapshot(t, snap, f.pass);
+  }, { sec: cfg.evaluation.late_window_sec, scope: cfg.evaluation.late_scope });
+
   // 2. lépés: tokenfigyelés láncenként
   const watchers: ChainWatcher[] = [];
   for (const key of ["base", "robinhood"] as ChainKey[]) {
     if (!cfg.chains[key].enabled) continue;
-    const w = new ChainWatcher(key, publicClient(key, rpc[key]), db, {
+    const w = new ChainWatcher(key, clients[key], db, {
       pollIntervalMs: cfg.watcher[key].poll_interval_ms,
       maxBlockRange: cfg.watcher[key].max_block_range,
       confirmations: cfg.watcher[key].confirmations,
       enabledSources: cfg.watcher[key].sources,
+      onToken: (_t, id) => { const row = tokenRow(db, id); if (row) scheduler.schedule(row); },
+      onGraduation: (id, sqrt) => graduation.onGraduation(id, sqrt),
     });
     watchers.push(w);
     void w.start();
@@ -58,15 +221,26 @@ async function main() {
 
   const status = () => [
     `Jev Sniper – ${cfg.mode}`,
+    `élő kar: ${cfg.live_entry.arm} (${cfg.evaluation.live_window_sec} mp, terv ${cfg.live_entry.exit_plan})`,
     `wallet: ${account.address}`,
     ...chainStatus,
-    `nyitott élő pozíciók: ${open.length}`,
+    `nyitott élő pozíciók: ${(db.prepare("SELECT COUNT(*) n FROM positions WHERE arm='live' AND closed_at IS NULL").get() as { n: number }).n}, árnyék: ${(db.prepare("SELECT COUNT(*) n FROM positions WHERE arm NOT IN ('live','day1_test') AND closed_at IS NULL").get() as { n: number }).n}, lezárt élő (24h): ${(db.prepare("SELECT COUNT(*) n, COALESCE(SUM(net_pnl_usd),0) s FROM positions WHERE arm='live' AND closed_at > ?").get(Date.now() - 86_400_000) as { n: number; s: number }).n}`,
     `ma: belépés ${daily.entries}/${cfg.risk.max_entries_per_day}, PnL ${daily.realized_pnl_usd.toFixed(2)} USD, Jev-költség ${jev.dailyCostUsd().toFixed(4)} USD`,
     `compound: betét ${compound.deposit_usd}, kassza ${compound.growth_pool_usd.toFixed(2)}, tartalék ${compound.reserve_usd.toFixed(2)}, pozícióméret ${compound.position_usd.toFixed(2)} USD`,
     `tokenek (24h): ${tokenCounts().map((r) => `${r.chain}/${r.launchpad}=${r.n}`).join(", ") || "még nincs"}`,
+    `szűrőn kiesett (24h): ${(db.prepare("SELECT COUNT(DISTINCT token_id) n FROM filter_log WHERE at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
+    `pillanatképek (24h): ${(db.prepare("SELECT COUNT(*) n FROM snapshots WHERE taken_at > ?").get(Date.now() - 86_400_000) as { n: number }).n}`,
     `watcher: ${watchers.map((w) => `${w.stats.lastBlock} blokk, ${w.stats.tokens} token, ${w.stats.errors} hiba`).join(" | ")}`,
+    ...(bnbRecorder ? [`BNB felvevő: ${bnbRecorder.stats.tokens} token, ${bnbRecorder.stats.trades} kötés, ${bnbRecorder.stats.grads} graduáció (indulás óta), ${bnbRecorder.stats.errors} hiba, blokk ${bnbRecorder.stats.lastBlock}`] : []),
+    ...(bnbLive && cfg.bnb_live.enabled ? [`BNB ÉLŐ (${cfg.bnb_live.arm}, ${cfg.bnb_live.mode}): ${bnbLive.stats.signals} jelzés, ${bnbLive.stats.buys} vétel, ${bnbLive.stats.sells} eladás, ${bnbLive.openCount} nyitott, hiba ${bnbLive.stats.failed}, blokkolt ${bnbLive.stats.blocked} (honeypot-teszt ${bnbLive.stats.simBlocked}, gyűrű ${bnbLive.stats.ringBlocked}, reaktív gyár ${bnbLive.stats.reactiveBlocked})`] : []),
+    ...(bnbShadow ? [`BNB árnyék: ${bnbShadow.stats.signals} jelzés, ${bnbShadow.stats.opened} belépés, ${bnbShadow.stats.closed} zárás; kiszűrve: honeypot ${bnbShadow.stats.honeypot}, nincs tulajdonos ${bnbShadow.stats.noHolder}, hiba ${bnbShadow.stats.checkErr}, késő ${bnbShadow.stats.late}`] : []),
+    ...(pcsRecorder ? [`PancakeSwap felvevő: ${pcsRecorder.stats.shells} új WBNB-pár (héj), ${pcsRecorder.stats.waiting} vár likviditásra, ${pcsRecorder.stats.pairs} valódi indítás, ${pcsRecorder.stats.trades} kötés, ${pcsRecorder.stats.snapshots} pillanatkép, követett ${pcsRecorder.stats.tracked}, hiba ${pcsRecorder.stats.errors}`] : []),
+    ...(solRecorder ? [`SOL felvevő: ${solRecorder.stats.tokens} token, ${solRecorder.stats.trades} kötés mentve, ${solRecorder.stats.snapshots} pillanatkép, ${solRecorder.stats.completes} görbe-teljesülés, ${solRecorder.stats.migrations} migráció, követett ${solRecorder.stats.tracked}, túlélő ${solRecorder.stats.survivors}, újracsatlakozás ${solRecorder.stats.reconnects}, hiba ${solRecorder.stats.errors}`] : []),
+    ...(solAmm ? [`SOL PumpSwap felvevő: ${solAmm.stats.pools} pool (${solAmm.stats.fromMigrate} a migrációból), ${solAmm.stats.trades} kötés, ${solAmm.stats.snapshots} pillanatkép, követett ${solAmm.stats.tracked}, hiba ${solAmm.stats.errors}`] : []),
+    `pillanatkép kihagyva késés miatt (indulás óta): Base ${collector.staleSkipped.base}, Robinhood ${collector.staleSkipped.robinhood}`,
     `STOP fájl: ${stopFileExists() ? "AKTÍV (nincs új belépés)" : "nincs"}`,
-    `Jev: ${jev.paused ? "szünetel" : "ok"}`,
+    `Jev: ${jev.disabled ? "kikapcsolva" : jev.paused ? "szünetel" : "ok"}, rezsim: ${regime.regime}`,
+    `döntések (24h): ${(db.prepare("SELECT SUM(arm='live' AND enter=1) l, SUM(arm='live_rule' AND enter=1) lr, SUM(arm='random_control' AND enter=1) rc, COUNT(DISTINCT token_id) n FROM decisions WHERE decided_at > ?").get(Date.now() - 86_400_000) as { l: number; lr: number; rc: number; n: number }).n} token címkézve`,
   ].join("\n");
 
   log.info("Indulás", { mode: cfg.mode, wallet: account.address, openPositions: open.length });
@@ -77,10 +251,16 @@ async function main() {
     switch (cmd) {
       case "status": return status();
       case "stop": createStopFile("telegram /stop"); logEvent(db, "stop", "telegram"); return "⛔ STOP: nincs új belépés. /resume old fel.";
-      case "resume": removeStopFile(); logEvent(db, "resume", "telegram"); return "▶️ STOP feloldva.";
-      case "panic": logEvent(db, "panic", "telegram"); createStopFile("telegram /panic");
-        return "🚨 PANIC fogadva. (A tényleges eladás az 5. lépésben – végrehajtási modul – kerül be.)";
-      case "help": return "/status /stop /resume /panic";
+      case "resume": removeStopFile(); bnbLive?.resetFailed(); logEvent(db, "resume", "telegram"); return "▶️ STOP feloldva.";
+      case "panic": {
+        logEvent(db, "panic", "telegram"); createStopFile("telegram /panic");
+        await tg.send("🚨 PANIC: STOP beállítva, minden nyitott élő pozíció eladása indul…");
+        return "🚨 PANIC eredmény:\n" + (await panicSellAll());
+      }
+      case "report": { try { return telegramReport(); } catch (e) { return `riport hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "allas": { try { return standingsCompact(db, currentSince(cfg), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "allas_reszletes": { try { return standings(db, currentSince(cfg), cfg.evaluation.live_window_sec, Date.now(), cfg); } catch (e) { return `állás hiba: ${(e as Error).message.slice(0, 120)}`; } }
+      case "help": return "/status /allas /report /allas_reszletes /stop /resume /panic";
     }
   });
 
@@ -89,10 +269,30 @@ async function main() {
     logEvent(db, "shutdown", sig);
     tg.stopPolling();
     watchers.forEach((w) => w.stop());
+    scheduler.stop();
+    clearInterval(regimeTimer);
+    clearInterval(walletTimer);
+    monitor.stop();
+    clearInterval(compoundTimer);
+    clearInterval(reportTimer);
+    clearInterval(alertTimer);
+    copyTrackers.forEach((c) => c.stop());
+    listing.stop();
+    bnbRecorder?.stop();
+    pcsRecorder?.stop();
+    if (bnbCompoundTimer) clearInterval(bnbCompoundTimer);
+    if (bnbStepTimer) clearInterval(bnbStepTimer);
+    solRecorder?.stop();
+    solAmm?.stop();
+    hud?.close();
+    graduation.stop();
+    flip.stop();
     if (cfg.telegram.enabled) await tg.send(`🔴 Bot leáll (${sig})`);
     db.close();
     process.exit(0);
   };
+  // 2026-10-06: egy háttérfeladat kezeletlen (pl. RPC 403) hibája ne állítsa le az egész botot – naplózzuk
+  process.on("unhandledRejection", (e) => log.warn("Kezeletlen aszinkron hiba (a bot fut tovább)", { error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }));
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 

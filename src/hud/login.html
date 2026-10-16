@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#0b0d1a">
+<title>Belépés · Jev Sniper HUD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root { --bg:#0b0d1a; --text:#eef0ff; --muted:#8e93b8; --line:rgba(255,255,255,.1); --a1:#8b5cff; --a2:#27d3ff; --a3:#b4ff5c; --down:#ff5c8a; --up:#3ef0a0; --grad:linear-gradient(120deg,var(--a1),var(--a2) 55%,var(--a3)); }
+* { box-sizing:border-box; }
+body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px; color:var(--text); font-family:"Space Grotesk",system-ui,sans-serif;
+  background: radial-gradient(900px 500px at 15% -10%, #231a52 0%, transparent 60%), radial-gradient(700px 400px at 110% 20%, #0f3a4f 0%, transparent 55%), var(--bg); }
+.box { width:100%; max-width:380px; background:rgba(255,255,255,.045); border:1px solid var(--line); border-radius:22px; padding:26px; backdrop-filter:blur(8px); }
+.logo { width:52px; height:52px; border-radius:16px; background:var(--grad); display:grid; place-items:center; font-size:26px; transform:rotate(-6deg); margin-bottom:14px; box-shadow:0 8px 28px rgba(139,92,255,.35); }
+h1 { margin:0 0 4px; font-size:22px; } h1 span { background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+p { color:var(--muted); margin:0 0 18px; font-size:14px; }
+button, input { width:100%; font:inherit; border-radius:14px; padding:13px 14px; }
+button { border:0; cursor:pointer; font-weight:700; }
+.pk { background:var(--grad); color:#0b0d1a; font-size:16px; }
+.pw { background:rgba(255,255,255,.08); color:var(--text); margin-top:10px; }
+input { background:rgba(0,0,0,.25); border:1px solid var(--line); color:var(--text); margin-top:14px; }
+.or { text-align:center; color:var(--muted); font-size:12px; margin:16px 0 0; }
+.msg { min-height:20px; margin-top:12px; font-size:13px; } .err { color:var(--down); } .ok { color:var(--up); }
+.hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="logo">🎯</div>
+  <h1>Jev Sniper <span>HUD</span></h1>
+  <p>Csak neked. Lépj be passkey-vel vagy jelszóval.</p>
+  <button class="pk hidden" id="pk">🔑 Belépés passkey-vel</button>
+  <form id="pwf" class="hidden">
+    <div class="or" id="or">vagy jelszóval</div>
+    <input type="password" id="pw" autocomplete="current-password" placeholder="jelszó" required>
+    <button class="pw" type="submit">Belépés</button>
+  </form>
+  <div class="msg" id="msg"></div>
+</div>
+<script src="/auth/webauthn.js"></script>
+<script>
+"use strict";
+const msg = (t, ok) => { const m = document.getElementById("msg"); m.textContent = t; m.className = "msg " + (ok ? "ok" : "err"); };
+const post = (u, b) => fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }).then(async (r) => ({ ok: r.ok, j: await r.json().catch(() => ({})) }));
+fetch("/auth/state").then((r) => r.json()).then((s) => {
+  if (s.loggedIn) { location.href = "/"; return; }
+  if (s.passkeyHere && s.passkeys > 0 && window.PublicKeyCredential) document.getElementById("pk").classList.remove("hidden");
+  if (s.password) document.getElementById("pwf").classList.remove("hidden"); else if (!s.passkeys) msg("Nincs beállított belépési mód (jelszó: npm run hud:jelszo).");
+  if (!(s.passkeyHere && s.passkeys > 0)) document.getElementById("or").classList.add("hidden");
+});
+document.getElementById("pk").onclick = async () => {
+  try {
+    const o = await post("/auth/passkey/login/options"); if (!o.ok) return msg(o.j.error || "hiba");
+    const resp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: o.j });
+    const v = await post("/auth/passkey/login/verify", resp); if (!v.ok) return msg(v.j.error || "sikertelen");
+    msg("Bent vagy 🎉", true); location.href = "/";
+  } catch (e) { msg("Megszakítva vagy sikertelen: " + (e.message || e)); }
+};
+document.getElementById("pwf").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const r = await post("/auth/password", { password: document.getElementById("pw").value });
+  if (!r.ok) return msg(r.j.error || "hiba");
+  msg("Bent vagy 🎉", true); location.href = "/";
+};
+</script>
+</body>
+</html>
