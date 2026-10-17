@@ -8,7 +8,7 @@ import { parseCommand } from "../src/telegram.js";
 
 test("config.yaml valid és a kockázati limitek a specifikáció szerintiek", () => {
   const c = loadConfig("config.yaml");
-  assert.equal(c.risk.base_position_usd, 0.2); // 2026-10-08: Base élő teszt 0,2 USD
+  assert.equal(c.risk.base_position_usd, 0.1); // 2026-10-17: uni hold élő teszt 0,1 USD
   assert.equal(c.evaluation.shadow_size_usd, 1);
   assert.equal(c.risk.max_position_usd, null);
   assert.equal(c.risk.deposit_cap_usd, 3);
@@ -19,7 +19,7 @@ test("config.yaml valid és a kockázati limitek a specifikáció szerintiek", (
 test("hibás config elutasítva", () => {
   const c = loadConfig("config.yaml");
   const broken = structuredClone(c) as Record<string, unknown>;
-  (broken.risk as Record<string, number>).max_position_usd = 0.1; // ha van plafon, nem lehet az alap alatt
+  (broken.risk as Record<string, number>).max_position_usd = (c.risk.base_position_usd as number) / 2; // ha van plafon, nem lehet az alap alatt
   assert.equal(ConfigSchema.safeParse(broken).success, false);
 });
 
@@ -71,4 +71,11 @@ test("értékelési időszakok: az aktuális a legutolsó elkezdődött; a HUD l
   const p = hudPeriods(db, cfg, Date.parse("2026-10-08T06:00:00Z"));
   assert.equal(p.length, 1); assert.ok(p[0]!.rows.some((r) => r.group === "BNB" && r.arm === "bnb_all60_d5"));
   db.close();
+});
+
+test("élő kar ablaka: live_entry.window_sec, hiányában evaluation.live_window_sec; a config.yaml-ban uni hold 30 mp, dry_run", async () => {
+  const { liveWindow } = await import("../src/config.js");
+  const c = loadConfig("config.yaml");
+  assert.equal(c.live_entry.arm, "base_uni_hold"); assert.equal(liveWindow(c), 30); assert.equal(c.mode, "dry_run");
+  assert.equal(liveWindow({ ...c, live_entry: { ...c.live_entry, window_sec: undefined } }), c.evaluation.live_window_sec);
 });

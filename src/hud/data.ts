@@ -1,5 +1,5 @@
 import type { DB } from "../db/index.js";
-import type { Config } from "../config.js";
+import { liveWindow, type Config } from "../config.js";
 import { armStats, nextState } from "../analysis/watch.js";
 import { DECISION_MIN_N } from "../report/index.js";
 import { positionValue } from "../analysis/explore.js";
@@ -176,7 +176,7 @@ export function hudBaseLive(db: DB, cfg: Config, now = Date.now()) {
 }
 
 export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now()) {
-  const w = cfg.evaluation.live_window_sec, live = cfg.live_entry.arm, plan = cfg.live_entry.exit_plan, liveSize = currentPositionUsd(db, cfg);
+  const w = cfg.evaluation.live_window_sec, lw = liveWindow(cfg), live = cfg.live_entry.arm, plan = cfg.live_entry.exit_plan, liveSize = currentPositionUsd(db, cfg);
   const closed = db.prepare(`SELECT chain, arm, window_sec w, opened_at o, closed_at c, net_pnl_usd v FROM positions
     WHERE exit_plan = 'live' AND opened_at > ? AND closed_at IS NOT NULL AND close_reason NOT LIKE 'invalid%' AND arm NOT IN ('live','day1_test')`).all(sinceMs) as Array<{ chain: string; arm: string; w: number; o: number; c: number; v: number }>;
   const group = (chain: string, arm: string, win: number) => closed.filter((r) => r.chain === chain && r.arm === arm && r.w === win);
@@ -189,18 +189,18 @@ export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now(
   const openCount = (chain: string, arm: string, win: number) => (db.prepare("SELECT count(*) n FROM positions WHERE chain = ? AND arm = ? AND window_sec = ? AND exit_plan = 'live' AND closed_at IS NULL AND opened_at > ?").get(chain, arm, win, sinceMs) as { n: number }).n;
 
   // élő kar: Base-eredmény napra bontva + nyitott pozíciók becsült értéke
-  const liveBase = group("base", live, w);
+  const liveBase = group("base", live, lw);
   const days = new Map<string, { sum: number; n: number }>();
   for (const r of liveBase) { const k = dayKey(r.c); const e = days.get(k) ?? { sum: 0, n: 0 }; e.sum += r.v; e.n++; days.set(k, e); }
   const perDay = [...days].sort((a, b) => a[0].localeCompare(b[0])).slice(-14).map(([day, e]) => ({ day, sum: e.sum, n: e.n }));
   const today = dayKey(now), todaySum = days.get(today)?.sum ?? 0;
   const openLive = db.prepare(`SELECT opened_at at, closed_at, net_pnl_usd, size_usd, size_native, native_received, tokens_remaining, last_price_native, gas_usd, liquidity_at_entry, chain, '' launchpad, '' p
-    FROM positions WHERE chain = 'base' AND arm = ? AND window_sec = ? AND exit_plan = ? AND closed_at IS NULL AND opened_at > ?`).all(live, w, plan, sinceMs) as Parameters<typeof positionValue>[0][];
+    FROM positions WHERE chain = 'base' AND arm = ? AND window_sec = ? AND exit_plan = ? AND closed_at IS NULL AND opened_at > ?`).all(live, lw, plan, sinceMs) as Parameters<typeof positionValue>[0][];
   const unreal = openLive.reduce((a, r) => a + (positionValue(r, cfg.cost_model)?.value ?? 0), 0);
   const realized = liveBase.reduce((a, r) => a + r.v, 0);
 
   const stats = new Map(armStats(db, sinceMs).map((s) => [s.key, s]));
-  const allLive = stats.get(`${live}|${w}|${plan}`);
+  const allLive = stats.get(`${live}|${lw}|${plan}`);
   const st = allLive ? nextState("none", allLive) : "none";
   const wn = walletNeed(db, cfg, sinceMs, liveSize, now), bal = savedWalletBalance(db), sim = compoundSim(db, sinceMs, cfg, now);
   const cs = db.prepare("SELECT growth_pool_usd FROM compound_state WHERE id = 1").get() as { growth_pool_usd: number } | undefined;
@@ -209,7 +209,7 @@ export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now(
 
   return {
     now, since: sinceMs, mode: cfg.mode,
-    live: { arm: live, label: LABEL[live] ?? live, window: w, plan, chains: cfg.live_entry.chains, sizeUsd: liveSize, shadowSizeUsd: cfg.evaluation.shadow_size_usd },
+    live: { arm: live, label: LABEL[live] ?? live, window: lw, plan, chains: cfg.live_entry.chains, sizeUsd: liveSize, shadowSizeUsd: cfg.evaluation.shadow_size_usd },
     pnl: {
       realized, todayRealized: todaySum, unrealized: unreal, openPositions: openLive.length, n: liveBase.length,
       mean: liveBase.length ? realized / liveBase.length : null,
@@ -218,7 +218,7 @@ export function hudSummary(db: DB, cfg: Config, sinceMs: number, now = Date.now(
     },
     decision: { nAll: allLive?.n ?? 0, nBase: liveBase.length, need: DECISION_MIN_N, ciLow: allLive?.ci?.[0] ?? null, ciHigh: allLive?.ci?.[1] ?? null, state: st },
     random: armRow("base", "random_control", w),
-    base: BASE_ARMS.map((a) => armRow("base", a, w)),
+    base: BASE_ARMS.map((a) => armRow("base", a, a === live ? lw : w)),
     rh: RH_ARMS.map(([a, win]) => armRow("robinhood", a, win === "live" ? w : win)),
     baselines: BASELINES.map(([a, chain, win]) => armRow(chain, a, win === "live" ? w : win)),
     bnb: hudBnb(db, sinceMs, now),
@@ -241,8 +241,8 @@ export function hudPositions(db: DB, cfg: Config, sinceMs: number, now = Date.no
   const rows = db.prepare(`SELECT p.id, p.arm, p.chain, p.token_id, t.symbol, t.address, t.launchpad, p.opened_at, p.entry_price_native, p.last_price_native, p.last_price_at, p.peak_price_native, p.phase, p.stages_done,
       p.size_usd, p.size_native, p.native_received, p.tokens_remaining, p.gas_usd, p.liquidity_at_entry, p.closed_at, p.net_pnl_usd
     FROM positions p JOIN tokens t ON t.id = p.token_id
-    WHERE p.exit_plan = 'live' AND p.closed_at IS NULL AND p.opened_at > ? AND p.chain = 'base' AND p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?
-    ORDER BY p.opened_at DESC`).all(sinceMs, ...V2_ARMS, w) as Array<Record<string, unknown> & { token_id: number; arm: string; opened_at: number; entry_price_native: number; last_price_native: number | null; peak_price_native: number | null }>;
+    WHERE p.exit_plan = 'live' AND p.closed_at IS NULL AND p.opened_at > ? AND p.chain = 'base' AND ((p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?) OR (p.arm = ? AND p.window_sec = ?))
+    ORDER BY p.opened_at DESC`).all(sinceMs, ...V2_ARMS, w, cfg.live_entry.arm, liveWindow(cfg)) as Array<Record<string, unknown> & { token_id: number; arm: string; opened_at: number; entry_price_native: number; last_price_native: number | null; peak_price_native: number | null }>;
   const byTok = new Map<number, Record<string, unknown> & { arms: string[] }>();
   for (const r of rows) {
     const e = byTok.get(r.token_id);
@@ -277,8 +277,8 @@ export function hudPositions(db: DB, cfg: Config, sinceMs: number, now = Date.no
 /** Kötésfolyam: belépések és (rész)eladások a v2 / pregrad karokban, időrendben visszafelé, tokenenként összevonva. */
 export function hudFeed(db: DB, cfg: Config, sinceMs: number, limit = 40) {
   const w = cfg.evaluation.live_window_sec;
-  const armSql = `((p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?) OR p.arm IN (${PREGRAD_ARMS.map(() => "?").join(",")}))`;
-  const args = [...V2_ARMS, w, ...PREGRAD_ARMS];
+  const armSql = `((p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?) OR (p.arm = ? AND p.window_sec = ?) OR p.arm IN (${PREGRAD_ARMS.map(() => "?").join(",")}))`;
+  const args = [...V2_ARMS, w, cfg.live_entry.arm, liveWindow(cfg), ...PREGRAD_ARMS];
   const opens = db.prepare(`SELECT 'open' kind, p.opened_at at, p.token_id, t.symbol, p.chain, group_concat(DISTINCT p.arm) arms, NULL reason, NULL x, NULL pnl
     FROM positions p JOIN tokens t ON t.id = p.token_id WHERE p.exit_plan = 'live' AND p.opened_at > ? AND ${armSql} AND (p.close_reason IS NULL OR p.close_reason NOT LIKE 'invalid%')
     GROUP BY p.token_id ORDER BY at DESC LIMIT ?`).all(sinceMs, ...args, limit) as Array<Record<string, unknown>>;
@@ -300,7 +300,7 @@ export function hudWinners(db: DB, cfg: Config, sinceMs: number, limit = 15) {
   const rows = db.prepare(`SELECT p.token_id, t.symbol, t.address, p.chain, p.arm, p.net_pnl_usd v, p.peak_price_native / p.entry_price_native peak_x, p.opened_at, p.closed_at, p.close_reason
     FROM positions p JOIN tokens t ON t.id = p.token_id
     WHERE p.exit_plan = 'live' AND p.closed_at IS NOT NULL AND p.opened_at > ? AND p.close_reason NOT LIKE 'invalid%'
-      AND ((p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?) OR p.arm IN (${PREGRAD_ARMS.map(() => "?").join(",")}))`).all(sinceMs, ...V2_ARMS, w, ...PREGRAD_ARMS) as Array<{ token_id: number; symbol: string; address: string; chain: string; arm: string; v: number; peak_x: number; opened_at: number; closed_at: number; close_reason: string }>;
+      AND ((p.arm IN (${V2_ARMS.map(() => "?").join(",")}) AND p.window_sec = ?) OR (p.arm = ? AND p.window_sec = ?) OR p.arm IN (${PREGRAD_ARMS.map(() => "?").join(",")}))`).all(sinceMs, ...V2_ARMS, w, live, liveWindow(cfg), ...PREGRAD_ARMS) as Array<{ token_id: number; symbol: string; address: string; chain: string; arm: string; v: number; peak_x: number; opened_at: number; closed_at: number; close_reason: string }>;
   const by = new Map<number, { symbol: string; address: string; chain: string; arms: string[]; pnl: number; peakX: number; openedAt: number; closedAt: number; reason: string; holdMin: number }>();
   for (const r of rows) {
     const e = by.get(r.token_id);

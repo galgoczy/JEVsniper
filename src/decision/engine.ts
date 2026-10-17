@@ -1,7 +1,7 @@
 import { getAddress, parseEther } from "viem";
 import type { DB } from "../db/index.js";
 import { nowMs, todayUtc } from "../db/index.js";
-import { capPositionUsd, type Config } from "../config.js";
+import { capPositionUsd, liveWindow, type Config } from "../config.js";
 import type { ParamSnapshot } from "../collector/types.js";
 import type { TokenRow } from "../collector/index.js";
 import { simRoundTripV4, FRESH_ADDRESS_BASE } from "../exec/simV4.js";
@@ -94,12 +94,12 @@ export class DecisionEngine {
     }
 
     // 2026-10-08: Base honeypot-teszt (mérés): az élő ablakban, ha bármelyik kar belépett, vétel+eladás szimuláció a saját és egy friss címről
-    if (t.chain === "base" && w === cfg.evaluation.live_window_sec && supported && t.pool_key_json && arms.some((a) => a.res.enter)) void this.simBase(t).catch(() => undefined);
+    if (t.chain === "base" && w === liveWindow(cfg) && supported && t.pool_key_json && arms.some((a) => a.res.enter)) void this.simBase(t).catch(() => undefined);
     // 2026-10-11: Base csalásszűrő (mérés): az első olyan ablakban, ahol bármelyik kar belép – a belépésig ismert adatból
     if (t.chain === "base" && supported && arms.some((a) => a.res.enter)) void this.scanBase(t, snap).catch(() => undefined);
 
     // 3) élő belépés csak az élő ablakban: a config live_entry.arm kar dönt (2026-10-01-ig fixen a Jev-címkés live_rule volt)
-    if (w !== cfg.evaluation.live_window_sec) return;
+    if (w !== liveWindow(cfg)) return;
     const liveArm = cfg.live_entry.arm;
     const live = arms.find((a) => a.arm === liveArm)?.res; // live_rule címkék nélkül nincs → nincs élő döntés
     if (!live?.enter) return;

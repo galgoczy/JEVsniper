@@ -1,7 +1,7 @@
 import type { DB } from "../db/index.js";
 import { armStats, nextState, type ArmStat } from "./watch.js";
 import { DECISION_MIN_N } from "../report/index.js";
-import type { Config } from "../config.js";
+import { liveWindow, type Config } from "../config.js";
 import { listingSummary } from "../listing/watcher.js";
 import { positionValue } from "./explore.js";
 import { walletLine, walletNeed, savedWalletBalance } from "./wallet.js";
@@ -98,8 +98,11 @@ export function standingsCompact(db: DB, sinceMs: number, cfg: Config, now = Dat
   const hours = Math.round((now - sinceMs) / 3_600_000);
   const L: string[] = [`📋 Állás · ${hours} óra (${new Date(sinceMs).toISOString().slice(5, 10)} óta)`, `Véletlen: ${rc ? `${f(rc.mean)} (n${rc.n})` : "-"}`, ""];
 
-  const live = cfg.live_entry.arm, liveAll = stats.get(`${live}|${w}|${cfg.live_entry.exit_plan}`), liveBase = base.get(live);
-  L.push(`🎯 Élő kar · ${live}`);
+  const live = cfg.live_entry.arm, lw = liveWindow(cfg), liveAll = stats.get(`${live}|${lw}|${cfg.live_entry.exit_plan}`);
+  const liveBase = lw === w ? base.get(live) : (db.prepare(`SELECT arm, COUNT(*) n, AVG(net_pnl_usd) mean, SUM(net_pnl_usd) sum FROM positions
+    WHERE chain = 'base' AND arm = ? AND window_sec = ? AND exit_plan = 'live' AND opened_at > ? AND closed_at IS NOT NULL AND close_reason NOT LIKE 'invalid%' GROUP BY arm`)
+    .get(live, lw, sinceMs) as { arm: string; n: number; mean: number; sum: number } | undefined);
+  L.push(`🎯 Élő kar · ${live}${lw !== w ? ` (${lw}s)` : ""}`);
   L.push(liveBase ? `Base: ${f(liveBase.mean)} · n${liveBase.n} · Σ${f1(liveBase.sum)}` : "Base: még nincs lezárt");
   if (liveAll) L.push(`Össz: ${f(liveAll.mean)} · n${liveAll.n}${mark(liveAll)}`, `Döntésig: ${liveAll.n}/${DECISION_MIN_N}`);
   L.push("");
@@ -162,7 +165,7 @@ export function tempoLines(db: DB, sinceMs: number, cfg: Config, now = Date.now(
   const perDay = (chain: string, arm: string, win: number) => { const r = by.get(`${chain}|${arm}|${win}`); return r ? r.sum / Math.max(activeDays(r.first, now), 1e-9) : -Infinity; };
   const line = (chain: string, arm: string, win: number) => {
     const r = by.get(`${chain}|${arm}|${win}`); if (!r) return null;
-    const name = `${SHORT[arm] ?? arm}${arm === cfg.live_entry.arm && chain === "base" ? "★" : ""}`.padEnd(12);
+    const name = `${SHORT[arm] ?? arm}${arm === cfg.live_entry.arm && chain === "base" && win === liveWindow(cfg) ? "★" : ""}`.padEnd(12);
     const d = activeDays(r.first, now); if (d < 0.25) return `${name}kevés idő (n${r.n})`;
     return `${name}${s(r.sum / d).padStart(7)} ·${(r.n / d).toFixed(0).padStart(3)}p`;
   };
@@ -180,7 +183,7 @@ export function tempoLines(db: DB, sinceMs: number, cfg: Config, now = Date.now(
 export function compoundSim(db: DB, sinceMs: number, cfg: Config, now = Date.now()): { size: number; pool: number; reserve: number; closes: number } {
   const rows = db.prepare(`SELECT opened_at o, closed_at c, net_pnl_usd v, size_usd s FROM positions WHERE arm = ? AND chain = 'base' AND window_sec = ? AND exit_plan = ?
     AND opened_at > ? AND closed_at IS NOT NULL AND close_reason NOT LIKE 'invalid%' ORDER BY closed_at`)
-    .all(cfg.live_entry.arm, cfg.evaluation.live_window_sec, cfg.live_entry.exit_plan, sinceMs) as Array<{ o: number; c: number; v: number; s: number }>;
+    .all(cfg.live_entry.arm, liveWindow(cfg), cfg.live_entry.exit_plan, sinceMs) as Array<{ o: number; c: number; v: number; s: number }>;
   const [hh, mm] = cfg.compound.recalc_time_local.split(":").map(Number) as [number, number];
   const recalcAt = (t: number) => { const d = new Date(t); d.setUTCHours(hh, mm, 0, 0); return d.getTime() <= t ? d.getTime() : d.getTime() - 86_400_000; };
   let st: CompoundState = { deposit_usd: cfg.risk.deposit_cap_usd, growth_pool_usd: 0, reserve_usd: 0, working_capital_peak_usd: cfg.risk.deposit_cap_usd, position_usd: cfg.risk.base_position_usd, updated_at: 0 };

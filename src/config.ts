@@ -120,6 +120,8 @@ export const ConfigSchema = z.object({
     // 2026-10-08: kötelező Base honeypot-teszt az élő vétel előtt (vétel+eladás szimuláció a saját címről, az élő mérettel)
     sim_filter: z.boolean().default(true),
     min_roundtrip_ratio: z.number().min(0).max(1).default(0.85),
+    // 2026-10-17: az élő kar saját ablaka (mp); hiányában evaluation.live_window_sec (a base_uni_hold 30 mp-es)
+    window_sec: z.number().int().positive().optional(),
     // 2026-10-11: Base csalásszűrő (src/filters/scamscan.ts) – ezen jelek bármelyike → nincs élő vétel
     scam_block_flags: z.array(z.string()).default(["marked_operator", "marked_router", "embedded_operator", "farm_router", "router_in_code", "forced_transfer"]),
   }).default({ arm: "live_rule", exit_plan: "live", chains: [], sim_filter: true, min_roundtrip_ratio: 0.85,
@@ -254,3 +256,6 @@ export function loadConfig(file = process.env.CONFIG_PATH ?? "config.yaml"): Con
   }
   return parsed.data;
 }
+
+/** Az élő vétel ablaka (mp): live_entry.window_sec, ha meg van adva, különben evaluation.live_window_sec. */
+export const liveWindow = (c: Pick<Config, "live_entry" | "evaluation">): number => c.live_entry.window_sec ?? c.evaluation.live_window_sec;

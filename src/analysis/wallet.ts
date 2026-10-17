@@ -1,5 +1,5 @@
 import type { DB } from "../db/index.js";
-import type { Config } from "../config.js";
+import { liveWindow, type Config } from "../config.js";
 
 /**
  * Tárca-igény (2026-10-03): ha a beállított élő kar (live_entry.arm, élő ablak, live_entry.exit_plan) élesben futott volna
@@ -11,7 +11,7 @@ export interface WalletNeed { positions: number; peakOpen: number; peakAt: numbe
 export function walletNeed(db: DB, cfg: Config, sinceMs: number, liveSizeUsd: number, now = Date.now()): WalletNeed {
   const rows = db.prepare(`SELECT opened_at o, closed_at c FROM positions WHERE arm = ? AND window_sec = ? AND exit_plan = ? AND chain = 'base'
     AND opened_at > ? AND (close_reason IS NULL OR close_reason NOT LIKE 'invalid%')`)
-    .all(cfg.live_entry.arm, cfg.evaluation.live_window_sec, cfg.live_entry.exit_plan, sinceMs) as Array<{ o: number; c: number | null }>;
+    .all(cfg.live_entry.arm, liveWindow(cfg), cfg.live_entry.exit_plan, sinceMs) as Array<{ o: number; c: number | null }>;
   // eseménysöprés: nyitás +1, zárás −1 (azonos időpontban előbb a zárás)
   const ev = rows.flatMap((r) => [[r.o, 1], [r.c ?? now + 1, -1]] as Array<[number, number]>).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   let cur = 0, peak = 0, peakAt: number | null = null;

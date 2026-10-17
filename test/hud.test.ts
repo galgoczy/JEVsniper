@@ -1,15 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openDb } from "../src/db/index.js";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, liveWindow } from "../src/config.js";
 import { hudSummary, hudPositions, hudFeed } from "../src/hud/data.js";
 import { startHud } from "../src/hud/server.js";
 
-const cfg = loadConfig("config.yaml");
+// a tesztek a v2-es élő kar kódútját rögzítik (a config.yaml aktuális élő karjától függetlenül; 2026-10-17 óta ott base_uni_hold/30 s)
+const pinV2 = <T extends { live_entry: object }>(c: T): T => ({ ...c, live_entry: { ...c.live_entry, arm: "rule_v2_strict", window_sec: undefined } });
+const cfg = pinV2(loadConfig("config.yaml"));
 
 function seed(file = ":memory:") {
   const db = openDb(file);
-  const w = cfg.evaluation.live_window_sec, now = Date.parse("2026-10-04T12:00:00Z");
+  const w = liveWindow(cfg), now = Date.parse("2026-10-04T12:00:00Z");
   const tok = db.prepare("INSERT INTO tokens(id, chain, address, creator, launchpad, mechanics, discovered_at, symbol) VALUES (?,?,?,?,?,?,?,?)");
   const pos = db.prepare(`INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason, net_pnl_usd, last_price_native, peak_price_native)
     VALUES (?,?,?,'live',?,?,1,1,0.0004,1,?,?,?,?,?,?,?)`);

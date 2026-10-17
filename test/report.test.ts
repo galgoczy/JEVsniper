@@ -1,13 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, liveWindow } from "../src/config.js";
 import { openDb } from "../src/db/index.js";
 import { buildReport, DECISION_MIN_N } from "../src/report/index.js";
 import { lateSurvivorArm } from "../src/decision/rules.js";
 import { CollectorScheduler, type Collector } from "../src/collector/index.js";
 import type { ParamSnapshot } from "../src/collector/types.js";
 
-const cfg = loadConfig("config.yaml");
+// a tesztek a v2-es élő kar kódútját rögzítik (a config.yaml aktuális élő karjától függetlenül; 2026-10-17 óta ott base_uni_hold/30 s)
+const pinV2 = <T extends { live_entry: object }>(c: T): T => ({ ...c, live_entry: { ...c.live_entry, arm: "rule_v2_strict", window_sec: undefined } });
+const cfg = pinV2(loadConfig("config.yaml"));
 
 function seed(db: ReturnType<typeof openDb>, arm: string, n: number, pnl: (i: number) => number, closedAt: number, offset: number) {
   const tok = db.prepare("INSERT INTO tokens(chain, address, launchpad, mechanics, discovered_at) VALUES ('base', ?, 'uniswap', 'v4', ?)");
@@ -82,13 +84,13 @@ test("tárca-igény: az élő kar egyidejűleg nyitott pozícióinak csúcsa × 
   const { walletNeed, walletLine } = await import("../src/analysis/wallet.js");
   const { openDb } = await import("../src/db/index.js");
   const { loadConfig } = await import("../src/config.js");
-  const cfg = loadConfig("config.yaml");
+  const cfg = pinV2(loadConfig("config.yaml"));
   const db = openDb(":memory:");
   for (let i = 1; i <= 7; i++) db.prepare("INSERT INTO tokens(id, chain, address, creator, launchpad, mechanics, discovered_at) VALUES (?,'base',?,'0xc','uniswap','v4',0)").run(i, `0x${i}`);
   let tid = 0;
   const stmt = db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, closed_at, close_reason) VALUES (?,?,?,?,?,?,1,1,0,1,1,?,?)");
   const ins = { run: (...a: unknown[]) => stmt.run(++tid, ...a) };
-  const arm = cfg.live_entry.arm, w = cfg.evaluation.live_window_sec, plan = cfg.live_entry.exit_plan;
+  const arm = cfg.live_entry.arm, w = liveWindow(cfg), plan = cfg.live_entry.exit_plan;
   ins.run("base", arm, plan, w, 1000, 5000, "x");     // 1000–5000
   ins.run("base", arm, plan, w, 2000, 3000, "x");     // átfed → 2
   ins.run("base", arm, plan, w, 2500, 4000, "x");     // átfed → 3 (2500–3000)
@@ -112,9 +114,9 @@ test("telefonos állás: rövid sorok, élő kar Base-eredménye, jelöltek Σ-v
   const { standingsCompact } = await import("../src/analysis/standings.js");
   const { openDb } = await import("../src/db/index.js");
   const { loadConfig } = await import("../src/config.js");
-  const cfg = loadConfig("config.yaml");
+  const cfg = pinV2(loadConfig("config.yaml"));
   const db = openDb(":memory:");
-  const w = cfg.evaluation.live_window_sec;
+  const w = liveWindow(cfg);
   let id = 0;
   const pos = (chain: string, arm: string, net: number) => {
     id++;
@@ -143,14 +145,14 @@ test("riport: aktív napok a kiesett időszak levonásával; USD/nap sor; vissza
   assert.ok(Math.abs(activeDays(b, b + 2 * day) - 2) < 1e-9);                 // utána indult kar: nincs levonás
   const { openDb } = await import("../src/db/index.js");
   const { loadConfig } = await import("../src/config.js");
-  const loaded = loadConfig("config.yaml");
+  const loaded = pinV2(loadConfig("config.yaml"));
   const cfg = { ...loaded, risk: { ...loaded.risk, base_position_usd: 2 } }; // a példa 2 USD-s élő mérettel számol (a config.yaml értékétől függetlenül)
   const db = openDb(":memory:");
   const now = Date.parse("2026-10-10T00:00:00Z"), start = now - 2 * day;
   for (let i = 1; i <= 4; i++) {
     db.prepare("INSERT INTO tokens(id, chain, address, creator, launchpad, mechanics, discovered_at) VALUES (?,'base',?,'0xc','uniswap','v4',0)").run(i, `0x${i}`);
     db.prepare("INSERT INTO positions(token_id, chain, arm, exit_plan, window_sec, opened_at, entry_price_native, size_usd, size_native, tokens_bought, tokens_remaining, phase, closed_at, close_reason, net_pnl_usd) VALUES (?,'base',?,'live',?,?,1,1,0,1,0,'closed',?,'x',3)")
-      .run(i, cfg.live_entry.arm, cfg.evaluation.live_window_sec, start + i, start + i + 1000);
+      .run(i, cfg.live_entry.arm, liveWindow(cfg), start + i, start + i + 1000);
   }
   const txt = reportCompact(db, start - 1, cfg, now);
   assert.match(txt, /v2_strict★ +\+6\.0 · +2p/);   // 12 USD / 2 nap = +6/nap, 2 belépés/nap
