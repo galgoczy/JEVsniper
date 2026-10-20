@@ -112,6 +112,11 @@ export class DecisionEngine {
     ins.run(t.id, "live", w, regime, nowMs(), block ? 0 : 1, block ?? `enter:${liveArm}`, block ? null : posUsd * live.sizeMultiplier, callId);
     if (block) {
       log.info(`Élő belépés blokkolva: ${block}`, { token: t.symbol, arm: liveArm });
+      // 2026-10-20: dry_run-ban is a csalásszűrő dönt a „BELÉPNE” jelzés előtt – farm/csalás tokenre nincs jelzés (élesben a kapu úgyis kiszűrné)
+      if (block === "dry_run" && t.chain === "base" && cfg.live_entry.scam_block_flags.length) {
+        const hit = (await this.scanBase(t, snap)).filter((f) => cfg.live_entry.scam_block_flags.includes(f) || f === "scan_error" || f === "no_scan");
+        if (hit.length) { db.prepare("UPDATE decisions SET reason = ? WHERE id = (SELECT MAX(id) FROM decisions WHERE token_id = ? AND arm = 'live' AND reason = 'dry_run')").run(`dry_run:scam_block:${hit.join("+")}`, t.id); log.info("dry_run: BELÉPNE-jelzés elnyomva (csalásszűrő)", { token: t.symbol, flags: hit }); return; }
+      }
       if (block === "dry_run") await this.d.notify(`🧪 dry_run: az élő kar (${liveArm}) BELÉPNE ${t.chain}/${t.launchpad} ${t.symbol ?? "?"} ${posUsd.toFixed(2)} USD-vel${labels ? ` (P(2x)=${labels.p_tp1.toFixed(2)}, vevőminőség ${labels.buyer_quality}, ${labels.trade_pattern}, ${labels.entry_timing})` : ""}`);
       return;
     }
