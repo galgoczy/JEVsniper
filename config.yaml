@@ -212,7 +212,7 @@ hud:
 # Nem kereskedik és nem nyit árnyékpozíciót.
 sol:
   enabled: true
-  amm: true   # 10-05: graduáció utáni PumpSwap-kereskedés felvétele (sol_amm_*): új megközelítés – a túlélők/graduáltak órás távon
+  amm: false  # 10-23: KIKAPCSOLVA (a PumpSwap-irány 10-07 óta lezárt; a sok írás terhelte az fseventsd-t). 10-05: graduáció utáni PumpSwap-kereskedés felvétele (sol_amm_*)
 
 listing:
   enabled: true

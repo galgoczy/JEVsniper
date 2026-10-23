@@ -250,7 +250,7 @@ test("BNB gyűrű-szűrő: csak a ≥2 rossz párban vásárló tárca tag; a je
   const OWN = "0x00000000000000000000000000000000000000ee", R1 = "0x00000000000000000000000000000000000000a1", R2 = "0x00000000000000000000000000000000000000a2", V = "0x00000000000000000000000000000000000000b1";
   buy("0xbad1", 1, R1); buy("0xbad1", 2, R2); buy("0xbad1", 3, OWN); buy("0xbad1", 4, V);    // V: egyszeri áldozat
   buy("0xbad2", 1, R1); buy("0xbad2", 2, R2);
-  learnRingFromPair(db, "0xbad1", OWN); learnRingFromPair(db, "0xbad2", OWN);
+  learnRingFromPair(db, "0xbad1", OWN, 0); learnRingFromPair(db, "0xbad2", OWN, 0);   // a tanulás ideje a jelzések előtt
   assert.equal(ringSize(db), 2);                                                          // R1, R2 – V és a saját cím nem
   buy("0xnew", 100, R1); buy("0xnew", 200, V);
   assert.equal(ringBuyers(db, "0xnew", 150), 1);                                          // a jelzés előtt 1 tag
@@ -269,4 +269,23 @@ test("BNB reaktív-gyár szűrő: listás kódsablon vagy csali-szerződés → 
   assert.equal(isReactive(db, "0xother", "0xbait"), "csali-szerződés");
   assert.equal(isReactive(db, "0xother", "0x10ed43c718714eb63d5aa57b78b54704e256024e"), null);
   db.close();
+});
+
+test("BNB csapda-pumpa: egy nagy vétel ≥10x, utána kívülálló nem ad el → tanult gyűrű; csak a jelzés előtt felismert csapdából", async () => {
+  const { findTrapPump, learnRingFromTraps, ringBuyers, TRAP_WINDOW_MS } = await import("../src/bnb/ring.js");
+  const t0 = 1_000_000;
+  const trap = [{ at: t0, side: "buy", bnb: 0.1, price: 1, to: "0xa" }, { at: t0 + 1000, side: "buy", bnb: 10, price: 30, to: "0xb" }, { at: t0 + 60_000, side: "sell", bnb: 12, price: 0.5, to: "0x10ed" }, { at: t0 + 70_000, side: "sell", bnb: 0.1, price: 0.4, to: "0x10ed" }];
+  assert.equal(findTrapPump(trap), t0 + 1000 + TRAP_WINDOW_MS);
+  assert.equal(findTrapPump(trap, t0 + 2000), null);                                   // az ablak még nem telt le
+  const liquid = [...trap.slice(0, 2), ...Array.from({ length: 10 }, (_, i) => ({ at: t0 + 2000 + i, side: "sell", bnb: 0.3, price: 20, to: "0x10ed" }))];
+  assert.equal(findTrapPump(liquid), null);                                            // sokan eladnak a csúcson → valódi piac
+  const db = openDb(":memory:");
+  const ins = db.prepare("INSERT INTO bnb_pair_trades(pair, tx, log_index, block, at, side, to_addr, bnb, price) VALUES (?,?,?,?,?,?,?,?,?)");
+  let k = 0;
+  for (const [pair, off] of [["0xp1", 0], ["0xp2", 10_000_000]] as const) for (const x of trap) ins.run(pair, `0x${++k}`, 0, 1, x.at + off, x.side, x.to, x.bnb, x.price);
+  ins.run("0xp3", "0xz", 0, 1, t0 + 20_000_000, "buy", "0xa", 0.1, 1);              // a gyűrű-tag (0xa) korán vesz egy új párban
+  const r = learnRingFromTraps(db, 0, t0 + 30_000_000);
+  assert.equal(r.traps, 2);
+  assert.equal(ringBuyers(db, "0xp3", t0 + 20_000_001), 1);                            // 2 korábbi csapdában vett → tag
+  assert.equal(ringBuyers(db, "0xp3", t0 + 5_000_000), 0);                             // ekkor még csak 1 csapda volt ismert
 });

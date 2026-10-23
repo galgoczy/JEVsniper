@@ -32,6 +32,7 @@ import { FlipArm, FLIP_ARM } from "./graduation/flip.js";
 import { BnbRecorder } from "./bnb/recorder.js";
 import { PancakeRecorder } from "./bnb/pancake.js";
 import { BnbShadow } from "./bnb/shadow.js";
+import { learnRingFromTraps } from "./bnb/ring.js";
 import { BnbLive } from "./bnb/live.js";
 import { BnbCompound } from "./bnb/compound.js";
 import { currentSince } from "./analysis/periods.js";
@@ -156,6 +157,8 @@ async function main() {
   if (pcsRecorder) bnbShadow = new BnbShadow({ db, client: pcsRecorder.client, receiptClient: createPublicClient({ chain: bsc, transport: http(BNB_RECEIPT_RPC, { timeout: 15_000, retryCount: 1 }) }) as PublicClient, bnbUsd, sizeUsd: () => shadowSizeUsd(cfg), simAddress: account.address,
     live: bnbLive && cfg.bnb_live.enabled ? { onSignal: (pair, token, arm, price, liq, at) => bnbLive.onSignal(pair, token, arm, price, liq, at), step: (st) => bnbLive.step(st) } : undefined });
   // 2026-10-08: az árnyék (és az élő kar) saját 2 mp-es ütemben is lép – a felvevő köre (héjak, kimenetek) időnként 15–30 mp, ez késleltette a belépést
+  // BNB gyűrű-tanulás csapda-pumpákból (2026-10-23): 5 percenként az utóbbi órában kereskedett párok
+  const ringTimer = pcsRecorder ? setInterval(() => { try { const r = learnRingFromTraps(db, Date.now() - 3_600_000); if (r.added) log.info("BNB gyűrű: csapda-pumpa tanulva", r); } catch (e) { log.debug("BNB gyűrű-tanulás hiba", { error: (e as Error).message.slice(0, 120) }); } }, 5 * 60_000) : null;
   const bnbStepTimer = bnbShadow ? setInterval(() => void bnbShadow!.step().catch((e) => log.debug("BNB árnyék ütem hiba", { error: (e as Error).message.slice(0, 120) })), 2_000) : null;
   if (bnbLive && cfg.bnb_live.enabled) log.info(`BNB élő kar: ${cfg.bnb_live.arm}, ${bnbLive.posUsd().toFixed(2)} USD (alap ${cfg.bnb_live.position_usd}), max ${cfg.bnb_live.max_open} nyitott, mód: ${cfg.bnb_live.mode}`);
   pcsRecorder?.start();
@@ -282,6 +285,7 @@ async function main() {
     pcsRecorder?.stop();
     if (bnbCompoundTimer) clearInterval(bnbCompoundTimer);
     if (bnbStepTimer) clearInterval(bnbStepTimer);
+    if (ringTimer) clearInterval(ringTimer);
     solRecorder?.stop();
     solAmm?.stop();
     hud?.close();

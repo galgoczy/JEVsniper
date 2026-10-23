@@ -29,7 +29,8 @@
     "tg": "tsx scripts/tg-send.ts",
     "scam:backfill": "tsx scripts/base-scam-backfill.ts",
     "replay:solbnb": "NODE_OPTIONS=--max-old-space-size=8192 tsx scripts/replay-solbnb.ts",
-    "sol:replay4": "NODE_OPTIONS=--max-old-space-size=8192 tsx scripts/sol-replay4.ts"
+    "sol:replay4": "NODE_OPTIONS=--max-old-space-size=8192 tsx scripts/sol-replay4.ts",
+    "bnb:trap-backfill": "tsx scripts/bnb-trap-backfill.ts"
   },
   "repository": {
     "type": "git",
