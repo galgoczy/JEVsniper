@@ -1,4 +1,4 @@
-import type { Address } from "viem";
+import { getAddress, type Address } from "viem";
 import type { ChainKey } from "./index.js";
 
 /**
@@ -7,7 +7,7 @@ import type { ChainKey } from "./index.js";
  */
 export const ZERO: Address = "0x0000000000000000000000000000000000000000";
 
-export const ADDRESSES: Record<ChainKey, {
+type AddressBook = {
   weth: Address;
   clankerV4Factory?: Address;
   ponsV2Factory?: Address;
@@ -15,7 +15,13 @@ export const ADDRESSES: Record<ChainKey, {
   uniswapV2Factory?: Address;
   uniswapV3Factory?: Address;
   uniswapV4PoolManager?: Address;
-}> = {
+  chainlinkEthUsd?: Address;
+  universalRouter?: Address;
+  v4Quoter?: Address;
+  permit2?: Address;
+};
+
+const RAW: Record<ChainKey, AddressBook> = {
   base: {
     // OP-stack előre telepített WETH9 (Base docs)
     weth: "0x4200000000000000000000000000000000000006",
@@ -27,6 +33,13 @@ export const ADDRESSES: Record<ChainKey, {
     uniswapV3Factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
     // Uniswap v4 deployments (Base); BaseScan "Uniswap V4: Pool Manager"
     uniswapV4PoolManager: "0x498581fF718922c3f8e6A244956aF099B2652b2b",
+    // Chainlink ETH/USD aggregátor Base-en (docs.chain.link price feed lista)
+    chainlinkEthUsd: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
+    // Uniswap v4 Base: BaseScan "Uniswap V4: Universal Router" / "Quoter" (docs.uniswap.org v4 deployments)
+    universalRouter: "0x6fF5693b99212Da76ad316178A184AB56D299b43",
+    v4Quoter: "0x0d5e0F971ED27FBfF6c2837bf31316121532048D",
+    // Permit2 kanonikus cím (minden láncon ugyanaz)
+    permit2: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
   },
   robinhood: {
     // Robinhood Chain WETH címét hivatalos forrásból még nem erősítettem meg → a v4 poolokban
@@ -39,5 +52,14 @@ export const ADDRESSES: Record<ChainKey, {
     ponsV2Hook: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044",
     // Uniswap v4 PoolManager Robinhood Chainen: pons-sdk MAINNET_DEPLOYMENT.addresses.poolManager (+ ponscli)
     uniswapV4PoolManager: "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+    // Uniswap v4 Robinhood Chain: Uniswap docs (2026-07-06 újratelepített Universal Router), Quoter egyezik a pons-sdk quoterrel
+    universalRouter: "0x06afBA43fd06227fA663b0dAeCF536F6eaA6BF99",
+    v4Quoter: "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
+    permit2: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
   },
 };
+
+/** Minden cím EIP-55 checksum formára hozva (a viem elutasítja a rossz kis-nagybetű-mintát). */
+export const ADDRESSES: Record<ChainKey, AddressBook> = Object.fromEntries(
+  Object.entries(RAW).map(([chain, book]) => [chain, Object.fromEntries(Object.entries(book).map(([k, v]) => [k, v ? getAddress(v.toLowerCase()) : v]))]),
+) as Record<ChainKey, AddressBook>;
