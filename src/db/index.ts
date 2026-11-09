@@ -5,14 +5,64 @@ import { fileURLToPath } from "node:url";
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 7;
+
+/** Meglévő DB-hez hozzáadott oszlopok (a CREATE TABLE IF NOT EXISTS ezeket nem pótolja). */
+const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
+  ["tokens", "pair_token", "TEXT"],
+  ["tokens", "graduated_at", "INTEGER"],
+  ["tokens", "bytecode_hash", "TEXT"],
+  ["tokens", "graduation_threshold", "TEXT"],
+  ["tokens", "pool_key_json", "TEXT"],
+  ["positions", "stages_done", "INTEGER NOT NULL DEFAULT 0"],
+  ["positions", "native_received", "REAL NOT NULL DEFAULT 0"],
+  ["positions", "next_check_at", "INTEGER"],
+  ["positions", "creator_balance_at_entry", "REAL"],
+  ["positions", "liquidity_at_entry", "REAL"],
+  ["tokens", "decimals", "INTEGER"],
+  ["positions", "last_price_native", "REAL"],
+  ["positions", "last_price_at", "INTEGER"],
+  ["positions", "liq_rebased", "INTEGER NOT NULL DEFAULT 0"],
+  ["bnb_pairs", "pair_created_block", "INTEGER"],
+  ["positions", "low_price_native", "REAL"],
+  ["positions", "low_price_since", "INTEGER"],
+  ["sol_outcomes", "ref30_price", "REAL"],
+  ["bnb_shadow_positions", "buy_tax", "REAL"],
+  ["listing_events", "entry_at", "INTEGER"],
+  ["bnb_shadow_positions", "ring_n", "INTEGER"],
+  ["bnb_sim_checks", "code_hash", "TEXT"],
+  ["bnb_sim_checks", "whale_via", "TEXT"],
+  ["bnb_shadow_positions", "sell_tax", "REAL"],
+  ["bnb_shadow_positions", "tax_n", "TEXT"],
+  ["sol_outcomes", "max_x30", "REAL"],
+  ["sol_outcomes", "min_x30", "REAL"],
+  ["sol_grads", "quote_mint", "TEXT"],
+];
+
+function migrate(db: DB) {
+  // token_outcomes v2: ablakonként külön sor (a régi, egyablakos adat torzított volt → eldobjuk)
+  const ocCols = (db.prepare("PRAGMA table_info(token_outcomes)").all() as { name: string }[]).map((c) => c.name);
+  if (ocCols.length && !ocCols.includes("window_sec")) {
+    db.exec("DROP TABLE token_outcomes");
+    db.exec(`CREATE TABLE token_outcomes (token_id INTEGER NOT NULL REFERENCES tokens(id), window_sec INTEGER NOT NULL, ref_price REAL NOT NULL, ref_at INTEGER NOT NULL,
+      max_multiple REAL NOT NULL DEFAULT 1, min_multiple REAL NOT NULL DEFAULT 1, first_hit TEXT, hit_at INTEGER, done_at INTEGER, PRIMARY KEY (token_id, window_sec))`);
+  }
+  for (const [table, column, ddl] of ADDED_COLUMNS) {
+    const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
 
 export function openDb(file: string): DB {
   fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   const db = new Database(file);
+  // WAL (2026-10-06): az olvasók (HUD-szál, riportok) ne blokkolják a bot írásait, és fordítva
+  if (file !== ":memory:") db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
   const schemaPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "schema.sql");
   db.exec(fs.readFileSync(schemaPath, "utf8"));
-  db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
+  migrate(db);
+  db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
   return db;
 }
 

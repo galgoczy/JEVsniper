@@ -6,3 +6,4 @@ data/*.db-*
 STOP
 *.log
 reports/
+logs/
